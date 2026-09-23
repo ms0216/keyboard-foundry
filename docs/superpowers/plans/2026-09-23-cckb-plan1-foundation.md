@@ -19,7 +19,8 @@
 - 検査を足すときは、**故意に壊して落ちることを確かめてから**入れる（壊した結果を作業記録に書く）
 - 接頭辞で走査しない（`re.fullmatch`）
 - 機種名 `cckb`・基板に刷る名前 `CCKB`。他社の商標（HHKB）を基板に刷らない
-- スイッチ Kailh Choc V1（PG1350）・62 個・19.05mm ピッチ・直付け。プレート FR4 1.2mm
+- スイッチ Kailh Choc V1（PG1350）・62 個・19.05mm ピッチ・直付け。プレート PLA 1.2mm（自分で刷る）・キーキャップも自分で刷る
+- 印刷は A1 mini。**印刷する部品はすべて平面で 168.4mm 角以内**（設計書 D12）。この計画のプレートは 1 枚のままで、分割は計画 2
 - コミットは触ったファイルだけ名指しで stage（`git add -A` 禁止）。commit の直前に `git status -sb` の 1 行目を別の呼び出しで読む
 - 利用者への報告は日本語
 
@@ -562,89 +563,161 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 
 ---
 
-### Task 3: Choc スタビの寸法を外の事実で確定する（設計書 §8 O2 を含む）
+### Task 3: Choc スタビ（2u）の寸法を入れる（出典 2 つで一致した値）
 
-**なぜ要るか:** Enter・左 Shift・スペース左右の 4 キー（2.25u）にスタビが要る。プレートの開口と、基板に穴が要るかどうかは、スタビの寸法で決まる。**kiswitch にも Kailh の図面集にも Choc スタビの図は無かった**（2026-09-23 に確認）。推測で開口を切ると、刷った板・発注した基板が無駄になる。
+**なぜ要るか:** Enter・左 Shift・スペース左右の 4 キー（2.25u）にスタビが要る。プレートの開口と基板の逃げ穴はスタビの寸法で決まる。
+
+**値と出典（2026-09-23 に確かめ済み）:**
+- **支点の間隔 24.0mm（半間隔 12.0）**: Kailh 系の製造図（AliExpress の商品画像 `https://ae01.alicdn.com/kf/HTB1uuM3cqSs3KVjSZPiq6AsiVXaH.jpg`。中国語の工場図面。2u のワイヤ 24.00（0/−0.05）・脚 10.00±0.1・φ1.00、長いワイヤ 76.00±0.1、ハウジング幅 6.30・奥行 6.60・突起 3.20・高さ 4.30）と、Keebio の `Kailh-PG1350-Stab-Cutout.kicad_mod`（開口の中心 x=±12.0）が一致
+- **プレートの開口の輪郭**: Keebio のファイル（右側。KiCad 座標＝Y 下向きで (8.85,3.05)(8.85,−3.8)(10.2,−3.8)(10.2,−8.45)(13.8,−8.45)(13.8,−3.8)(15.15,−3.8)(15.15,3.05)。左は鏡像）。製造図のハウジング 6.30×6.60・突起 3.20 に対し、奥行 +0.25・切り欠き +0.4 の隙間で筋が通る
+- **ワイヤは常に奥**（切り欠きが奥側）。Choc では最前列でも回さない
+- Keebio のファイルのスイッチ開口 14.0 は MX と共用の値。**Kailh の図面は 13.8**（Task 2）なので使わない
+- プレートの下に出る量は二次情報のみ（2.5〜3.5mm）。**基板には逃げ穴を開ける**（ハウジングはプレート 1.2＋隙間 1.0 より高い 4.30 なので下に出るのは確か）
 
 **Files:**
-- Modify: `foundry/mech.py`（`CHOC_V1` の `stab_offset`・`stab_fp`・`stab_kind`）
+- Create: `projects/cckb/docs/references/Kailh-PG1350-Stab-Cutout.kicad_mod`（Keebio から写す。出典の保存）
+- Create: `projects/cckb/docs/references/kailh_choc_stab_drawing.png`（製造図。WebP を PNG にして保存）
+- Modify: `foundry/mech.py`（`CHOC_STAB_OUTLINE`・`CHOC_V1` の `stab_offset`・`stab_kind`）
 - Modify: `foundry/plate.py`（`stab_kind == "choc"` の開口）
-- Create: `projects/cckb/docs/decisions/2026-09-XX-choc-stabilizer.md`（Task 4 の後に置く。日付は実施日）
+- Create: `projects/cckb/docs/decisions/2026-09-23-choc-stabilizer.md`（Task 4 で `projects/cckb/` ができてから。Task 4 の後に回してよい）
 - Test: `tests/test_choc.py` に追記
 
 **Interfaces:**
-- Produces: `mech.SWITCHES["choc_v1"].stab_offset_for(2.25) -> float`（支点の半間隔）、`stab_kind == "choc"`、`plate.choc_stab_polygon(s, at, flipped) -> list[tuple[float, float]]`
+- Produces: `mech.CHOC_STAB_OUTLINE: tuple[tuple[float, float], ...]`（右側の開口。**支点を原点**・Y 上向き・奥が +y）、`mech.SWITCHES["choc_v1"].stab_offset_for(2.25) == 12.0`・`stab_kind == "choc"`、`plate.choc_stab_polygons(s, at) -> list[list[tuple[float, float]]]`（左右 2 つの多角形）
 
-- [ ] **Step 1: 図面を探す（上から順に。見つかったら止める）**
+- [ ] **Step 1: 出典を保存する**
 
-1. Kailh 公式（kailh.com / kailhswitch.com）の「Choc stabilizer」「PG1350 stabilizer」の製品ページと PDF
-2. 遊舎工房の商品ページ（`https://shop.yushakobo.jp/products/a0500st-00-1`）の画像・寸法
-3. EasyEDA の部品「KAILH PG1350 CHOC 2U STABILIZER PCB CUTOUT」（`https://easyeda.com/components/KAILH-PG1350-CHOC-2U-STABILIZER-PCB-CUTOUT_1fa68b8ca3bd48e5ad9f008e6bba0314`）
-4. 公開されている Choc 配列のキーボードで、スタビを使っている KiCad / プレートの DXF（例: Keebio の Choc 対応基板、Sofle Choc）。**2 つ以上の独立した出所で一致した値だけを使う**
-
-書き取る値: 支点の半間隔（2u 用）・プレート開口の輪郭（各頂点）・プレートの下に出る部分の寸法（基板との隙間 1.0mm に収まるか。収まらなければ基板の逃げ穴の位置と径）・**CFX の 2.25u キャップのステム位置と合うか**（設計書 O2）。
-
-- [ ] **Step 2: 分岐**
-
-- **2 つ以上の出所で一致した**: Step 3 へ
-- **見つからない／一致しない**: ここで止める。`projects/cckb/docs/open-gaps.md` の「★ 発注をせき止めているもの」に「Choc スタビの寸法」を立て、**利用者に「本番の品番（Kailh Choc スタビ 2u・遊舎工房 ¥550）と CFX の 2.25u キャップを先に買い、ノギスで採寸する」ことを提案する**（購入は利用者の判断）。Task 5 のプレートと Task 6 の基板は、スタビの無いキーだけで進められないので、Task 4・7・8 を先にやる
-
-- [ ] **Step 3: 検査を先に書く** — `tests/test_choc.py` に追記。値は Step 1 の出所の値
-
-```python
-# Choc スタビ（2u）。出所を 2 つ書く（例: Kailh の図面・EasyEDA の外形）
-STAB = {"half_span": None, "outline": None}   # ← Step 1 の値で置き換える（None のまま残さない）
-
-
-def test_the_stab_table_matches_the_sources():
-    sw = SWITCHES["choc_v1"]
-    assert STAB["half_span"] is not None, "Step 1 の値を入れる"
-    assert sw.stab_kind == "choc"
-    for w in (2.0, 2.25):
-        assert abs(sw.stab_offset_for(w) - STAB["half_span"]) < 1e-3
-
-
-def test_the_plate_opening_is_the_sourced_outline():
-    from foundry.plate import choc_stab_polygon
-
-    pts = choc_stab_polygon(STAB["half_span"])
-    assert [(round(x, 3), round(y, 3)) for x, y in pts] == \
-        [(round(x, 3), round(y, 3)) for x, y in STAB["outline"]]
+```bash
+mkdir -p projects/cckb/docs/references
+curl -sL -o projects/cckb/docs/references/Kailh-PG1350-Stab-Cutout.kicad_mod \
+  https://raw.githubusercontent.com/keebio/Keebio-Parts.pretty/master/Kailh-PG1350-Stab-Cutout.kicad_mod
+curl -sL -A "Mozilla/5.0" -o /tmp/stab.webp https://ae01.alicdn.com/kf/HTB1uuM3cqSs3KVjSZPiq6AsiVXaH.jpg
+sips -s format png /tmp/stab.webp --out projects/cckb/docs/references/kailh_choc_stab_drawing.png
 ```
 
-- [ ] **Step 4: 落ちることを確かめる**（`choc_stab_polygon` が無い・`stab_kind` が None）
+（`projects/cckb/` は Task 4 で作る。Task 3 を Task 4 の後に行うか、ここで先にディレクトリを作る。new_project.py は既存のディレクトリを上書きしないので、**先に作るなら references/ だけを作り、Task 4 の new_project の前に一時的に退避して戻す**のではなく、Task 4 を先に済ませる方が素直。実施順は 1 → 2 → 4 → 3 → 5 → 6 → 7 → 8 とする）
 
-Run: `.venv/bin/pytest tests/test_choc.py -q` → FAIL
+- [ ] **Step 2: 失敗する検査を書く** — `tests/test_choc.py` に追記
 
-- [ ] **Step 5: 実装する**
+```python
+REF = ROOT / "projects" / "cckb" / "docs" / "references"
 
-`foundry/plate.py` に、出所の輪郭を返す関数（`stab_polygon` と同じ規約: 中心 `at`、`flipped` でワイヤを奥へ、Y 上向き）を足し、`build_plate` の `stab_kind` の分岐を次にする:
+
+def _keebio_right_cutout():
+    """Keebio の開口のうち右側（x > 8）の頂点を、Y 上向き・支点原点に直して返す。"""
+    pts = set()
+    for x1, y1, x2, y2 in re.findall(
+            r"\(fp_line \(start ([-\d.]+) ([-\d.]+)\) \(end ([-\d.]+) ([-\d.]+)\) \(layer Edge.Cuts\)",
+            (REF / "Kailh-PG1350-Stab-Cutout.kicad_mod").read_text()):
+        for x, y in ((x1, y1), (x2, y2)):
+            if float(x) > 8.0:
+                pts.add((round(float(x) - 12.0, 3), round(-float(y), 3)))
+    return pts
+
+
+def test_the_stab_half_span_is_the_drawings_wire():
+    """製造図のワイヤ 24.00 と Keebio の開口の中心 12.0 が一致（2 つの出典）。"""
+    sw = SWITCHES["choc_v1"]
+    assert sw.stab_kind == "choc"
+    for w in (2.0, 2.25):
+        assert sw.stab_offset_for(w) == 24.0 / 2
+
+
+def test_the_stab_outline_is_keebios():
+    from foundry.mech import CHOC_STAB_OUTLINE
+
+    ref = _keebio_right_cutout()
+    assert len(ref) == 8                                   # 空の集合で緑にしない
+    assert {(round(x, 3), round(y, 3)) for x, y in CHOC_STAB_OUTLINE} == ref
+
+
+def test_the_outline_leaves_a_web_to_the_switch_opening():
+    """スイッチの開口（13.8）とスタビの開口の間に、刷れる幅（≧ 0.4×4）の桟が残ること。"""
+    from foundry.mech import CHOC_STAB_OUTLINE
+
+    inner = 12.0 + min(x for x, _ in CHOC_STAB_OUTLINE)
+    assert inner - SWITCHES["choc_v1"].cutout / 2 >= 1.6, inner
+
+
+def test_the_plate_cuts_both_stab_openings():
+    from foundry.plate import choc_stab_polygons
+
+    polys = choc_stab_polygons(12.0, at=(100.0, 50.0))
+    assert len(polys) == 2
+    xs = sorted(sum(x for x, _ in p) / len(p) for p in polys)
+    assert abs(xs[0] - 88.0) < 0.5 and abs(xs[1] - 112.0) < 0.5
+```
+
+- [ ] **Step 3: 落ちることを確かめる**
+
+Run: `.venv/bin/pytest tests/test_choc.py -q`
+Expected: FAIL（`CHOC_STAB_OUTLINE` が無い・`stab_kind` が None）
+
+- [ ] **Step 4: `foundry/mech.py` に入れる**（`CHOC_V1` の前）
+
+```python
+# Choc スタビ（2u・プレートマウント）の右側の開口。**支点を原点**・Y 上向き・奥が +y。
+# 出典: Keebio-Parts.pretty の Kailh-PG1350-Stab-Cutout.kicad_mod（2 つめの出典の
+# Kailh 系製造図のハウジング 6.30×6.60・突起 3.20 に、奥行 +0.25・切り欠き +0.4 の隙間）。
+# 左側は x を反転。切り欠き（y > 0）がワイヤの側で、**常に奥**に置く。
+# 保存: projects/cckb/docs/references/。照合: tests/test_choc.py
+CHOC_STAB_OUTLINE = ((-3.15, -3.05), (-3.15, 3.8), (-1.8, 3.8), (-1.8, 8.45),
+                     (1.8, 8.45), (1.8, 3.8), (3.15, 3.8), (3.15, -3.05))
+```
+
+`CHOC_V1` の `stab_offset={}`・`stab_kind=None` を次に替える（支点の間隔は製造図の 2u ワイヤ 24.00）:
+
+```python
+    stab_offset={2.0: 12.0, 2.25: 12.0},
+    stab_fp={},
+    stab_kind="choc",
+```
+
+コメントの「スタビは Task 3 で外の事実から埋める。**それまでは 2u 以上のキーで落ちる。**」を消し、「スタビは CHOC_STAB_OUTLINE（出典 2 つ）。基板の逃げ穴は pcb.py ではなく計画 3 の pcb_extra で開ける（大きさは組み立てモデルで決める）」に替える。
+
+- [ ] **Step 5: `foundry/plate.py` に開口を足す**
+
+```python
+def choc_stab_polygons(s, at=(0.0, 0.0)):
+    """Choc スタビの左右 2 つの開口（mech.CHOC_STAB_OUTLINE）。ワイヤは常に奥。"""
+    from .mech import CHOC_STAB_OUTLINE
+
+    ax, ay = at
+    right = [(ax + s + x, ay + y) for x, y in CHOC_STAB_OUTLINE]
+    left = [(ax - s - x, ay + y) for x, y in reversed(CHOC_STAB_OUTLINE)]
+    return [left, right]
+```
+
+`build_plate` のスタビの分岐を次にする:
 
 ```python
                 if sw.stab_kind == "cherry":
                     add(stab_cutout_face(s, at=pos, flipped=f), mode=Mode.SUBTRACT)
                 elif sw.stab_kind == "choc":
-                    add(stab_cutout_face(s, at=pos, flipped=f, polygon=choc_stab_polygon),
-                        mode=Mode.SUBTRACT)
+                    for poly in choc_stab_polygons(s, at=pos):
+                        with BuildLine(mode=Mode.PRIVATE) as ln:
+                            Polyline(*poly, close=True)
+                        add(make_face(ln.edges(), mode=Mode.PRIVATE), mode=Mode.SUBTRACT)
                 else:
                     raise NotImplementedError(
                         f"{sw.name}: スタビ開口 {sw.stab_kind!r} の形が plate.py に無い")
 ```
 
-`stab_cutout_face` に引数 `polygon=stab_polygon` を足し、`Polyline(*polygon(s, at=at, flipped=flipped), close=True)` にする。`mech.CHOC_V1` の `stab_offset` に `{2.0: 値, 2.25: 値}`、`stab_kind="choc"`、基板に逃げ穴が要るなら `stab_fp` とフットプリント（`lib/keyswitch.pretty/`）を足す。
+（build123d の `make_face` の呼び方が合わなければ、`stab_cutout_face` と同じく `BuildSketch(mode=Mode.PRIVATE)` の中で `BuildLine` → `make_face()` にして `sk.sketch` を `add` する。**Choc の開口は広げない**（kerf 0。Keebio の輪郭が既に隙間込み）
 
 - [ ] **Step 6: 通す・壊す・戻す**
 
-`REQUIRE_KICAD=1 .venv/bin/pytest tests -q` が緑。`STAB["half_span"]` を 0.1 ずらして落ちることを見て戻す。
+`REQUIRE_KICAD=1 .venv/bin/pytest tests -q` が緑。`CHOC_STAB_OUTLINE` の 1 頂点を 0.1 ずらして `test_the_stab_outline_is_keebios` が落ちることを見る。戻す。
 
 - [ ] **Step 7: 決定記録を書き、コミット**
 
-`projects/cckb/docs/decisions/<日付>-choc-stabilizer.md`（雛形 docs/templates/decision.md）に、出所 2 つ・値・CFX 2.25u との適合・基板の逃げ穴の要否を書く。
+`projects/cckb/docs/decisions/2026-09-23-choc-stabilizer.md`（雛形 docs/templates/decision.md）に、出典 2 つ・値・Deep Research（Gemini）の報告のうち**採らなかった主張**（スイッチ開口 14.0＝誤り、プレート厚の許容 1.10〜1.30＝根拠なし、CFX 適合＝二次 1 件で、キーキャップを自分で刷るので不要になった）・未確認の事項（プレートの下に出る量。部品が届いたら試し刷りの小片で押して確かめる）を書く。
 
 ```bash
 git status -sb | head -1
-git add foundry/mech.py foundry/plate.py tests/test_choc.py projects/cckb/docs/decisions/
-git commit -m "核: Choc スタビ（2u）の寸法を 2 つの出所から入れる
+git add foundry/mech.py foundry/plate.py tests/test_choc.py projects/cckb/docs/references projects/cckb/docs/decisions/2026-09-23-choc-stabilizer.md
+git diff --cached --stat
+git commit -m "核: Choc スタビ（2u）の開口を入れる。製造図と Keebio の 2 出典で照合
 
 Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 ```
@@ -944,7 +1017,7 @@ def test_the_plate_is_1_2mm_and_printable_as_a_check(plate, tmp_path):
     assert mesh.is_watertight
 ```
 
-（FR4 で JLCPCB に出すので「刷る」わけではないが、水密は形が閉じている確認として見る）
+（この 1 枚は A1 mini には入らない。**刷る部品への分割は計画 2**。ここでは形が閉じていることを見る）
 
 - [ ] **Step 2: 失敗することを確かめる**
 
@@ -1443,10 +1516,10 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 - 回した検査（件数と結果）／回していない検査
 - `build/cckb/plate_main.png` と基板の絵（見たこと）
 - CI のビルド結果（.uf2 の大きさ）
-- **利用者にお願いすること**: 起動試験（task-10a）の実施。Task 3 が未了なら、Choc スタビと CFX 2.25u の購入の判断
+- **利用者にお願いすること**: 起動試験（task-10a）の実施
 - 計画 2（角の作図・ケース）と計画 3（基板の完成・発注データ）を書くこと
 
 ## このあと（計画 2・3。この計画の成果と試験の結果に依存するので、終わってから書く）
 
-- **計画 2**: 左右の角の平面図と断面図（XIAO・USB-C・ホルダ・電池・ふた・電源スイッチ）→ 上枠・角のふた・底板・面一の滑り止め → 組み立て検査（干渉・電池の出し入れ・USB・指・ドライバー）→ スライス → `[暫定]` の確定
+- **計画 2**: 左右の角の平面図と断面図（XIAO・USB-C・ホルダ・電池・ふた・電源スイッチ）→ **A1 mini に入る分割（プレート 2 枚・ケースの部品。継ぎ目の位置は図で利用者と決める）** → 上枠・角のふた・底板・面一の滑り止め → キーキャップ（自分で刷る。スタビの軸 ±12.0mm） → 組み立て検査（干渉・電池の出し入れ・USB・指・ドライバー・スタビの逃げ）→ A1 mini 設定でスライス → `[暫定]` の確定
 - **計画 3**: `projects/cckb/pcb_extra.py`（XIAO・595 ×2・電源経路・電池ホルダ・電源スイッチ、表側は XIAO とホルダだけ）→ 行列の決まった形の配線と Freerouting（OpenJDK を入れる）→ GND・アンテナ直下 → fab-fields・DRC・発注データ → 部品表・組み立て手順書 → `tools/kb cckb gate`
