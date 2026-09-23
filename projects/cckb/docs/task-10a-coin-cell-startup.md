@@ -36,12 +36,12 @@ CCKB は一体型でキー数も少なく無線の負荷は軽いはずだが、
 BLE 広告だけを見る構成になり、**電源の限界だけを切り出せる**（キーや 595 の
 不具合を電源の不具合と取り違えない）。
 
-> **この .uf2 は GitHub Actions が作る。** このリポジトリにはまだ git の
-> リモートが設定されていないので、CI は動いていない（open-gaps #5）。
-> **利用者がこのリポジトリを GitHub に push するかを決めて、push したあとで**
-> Actions のビルド成果物（Artifacts）から `cckb-xiao_ble__zmk-zmk.uf2` を
-> ダウンロードする。ローカルでビルドする場合は Task 7 のコミットのハッシュを
-> ファイル名と一緒に控えて、どのコミットのものかを記録に残す（HHKB の
+> **この .uf2 は GitHub Actions が作る。**2026-09-23 に
+> <https://github.com/ms0216/keyboard-foundry> へ push し、ビルドに成功した
+> （コミット 39ee666・`cckb-xiao_ble__zmk-zmk.uf2` は 423KB。BLE が入っている大きさ）。
+> 入手先: リポジトリの Actions →「Build ZMK firmware」の最新の成功した実行 →
+> Artifacts の `firmware`。手元の `build/firmware/firmware/` にも同じものがある。
+> **焼く前に、ファイル名と、どの実行（コミット）のものかを控える**（HHKB の
 > 教訓 C2「焼いたファームがどのコミットのものか確かめる」）。
 
 給電経路は **CR1632 → 直列抵抗 → ショットキー（B5819W。手持ちなら HHKB の

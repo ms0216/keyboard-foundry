@@ -352,7 +352,8 @@ def test_the_order_gate_is_closed_until_the_startup_test_and_the_case_are_done()
 
     doc = (paths.PROJECTS / "cckb" / "docs" / "open-gaps.md").read_text()
     b = set(gate.blockers(doc))
-    assert {"1", "2", "3", "4", "5"} <= b, b   # 起動試験・角の断面・ケース・配線・CI のリモート未設定
+    assert {"1", "2", "3", "4"} <= b, b        # 起動試験・角の断面・ケース・配線（#5 CI は 2026-09-23 に解消）
+    assert "5" not in b, b
     assert not gate.is_gate_open(doc)
 
 
