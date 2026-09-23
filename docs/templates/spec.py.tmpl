@@ -26,6 +26,9 @@ PCB_INSET_Y = 5.3
 # **同時に**満たすこと（HHKB で別々に確かめて 3 往復した）
 MOUNTS = {p: [] for p in PIECES}
 
+# プレートの開口（キー以外）。(中心 x, 中心 y, 幅, 奥行)。基板の表に背の高い部品を立てる所
+PLATE_OPENINGS = {p: [] for p in PIECES}
+
 # 行列。"physical"（物理の x で列を決める）か "ordinal"（段の中で左から何番目か）。
 # 個別に直すなら MATRIX_OVERRIDE = {部品: {キーマップ上の番号: (row, col)}}
 MATRIX_COLUMNS = "physical"

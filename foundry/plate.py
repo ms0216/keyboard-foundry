@@ -108,6 +108,9 @@ def build_plate(spec, keys, piece):
                 else:
                     raise NotImplementedError(
                         f"{sw.name}: スタビ開口 {sw.stab_kind!r} の形が plate.py に無い")
+            for cx, cy, ow, oh in spec.PLATE_OPENINGS[piece]:
+                with Locations((cx, cy)):
+                    Rectangle(ow, oh, mode=Mode.SUBTRACT)
             mounts = spec.MOUNTS[piece]
             if mounts:
                 with Locations(*mounts):

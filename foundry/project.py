@@ -23,7 +23,7 @@ from .matrix import assignments
 # spec.py が持たなければならない名前。**既定値で埋めない**——黙って既定値が
 # 効くと、その機種で決めていない寸法が決まったことになる。
 REQUIRED = ("NAME", "LAYOUT", "PIECES", "SWITCH", "PLATE_MARGIN_X", "PLATE_MARGIN_Y",
-            "CORNER_R", "PCB_INSET_X", "PCB_INSET_Y", "MOUNTS")
+            "CORNER_R", "PCB_INSET_X", "PCB_INSET_Y", "MOUNTS", "PLATE_OPENINGS")
 
 
 class Project:
