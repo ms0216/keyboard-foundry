@@ -115,17 +115,61 @@ def test_the_plate_is_open_at_every_key_and_at_both_corners(plate):
 
 
 def test_the_web_around_the_corner_keys_survives(plate):
-    """角の開口が隣のキー（Alt・Shift・Fn）の周りの桟を削っていないこと（Review Focus 4）。"""
+    """角の開口が隣のキー（最下段の角のキー）の自分のセルの桟を削っていないこと（Review Focus 4）。
+
+    **spec.PLATE_OPENINGS を判定に使わない。**角の開口そのものが検査対象なので、
+    それを使って「ここは角の中だから見なくてよい」と判定すると、開口を広げる
+    壊し方が自分自身を免除してしまう（実測で確認済み）。角に触れるキーは
+    レイアウトから導く（test_the_plate_openings_are_exactly_the_empty_corners と同じ手）。
+    """
+    from foundry.layout import centered
+    from foundry.mech import switch_of
+    from foundry.plate import choc_stab_polygons
+
     p, part, _, positions = plate
     keys = p.keys()
-    for (x, y), k in zip(positions, keys):
-        if k.label in ("Alt", "Meta", "Fn", "Shift"):
-            # 開口の縁（13.8/2）とキーの枠（19.05/2）の間の桟の中点
-            for dx, dy in ((8.2, 0), (-8.2, 0), (0, 8.2), (0, -8.2)):
-                inside_corner = any(abs(x + dx - cx) < w / 2 and abs(y + dy - cy) < h / 2
-                                    for cx, cy, w, h in p.spec.PLATE_OPENINGS["main"])
-                if not inside_corner:
-                    assert _solid(part, x + dx, y + dy), (k.label, dx, dy)
+    _, (kw, kh) = centered(keys)
+    sw = switch_of(p.spec)
+    bottom = [(pos, k) for pos, k in zip(positions, keys) if _row(k) == 4]
+    left_key = min(bottom, key=lambda pk: pk[0][0])
+    right_key = max(bottom, key=lambda pk: pk[0][0])
+    half_cutout = sw.cutout / 2   # 6.9: スイッチ開口の縁
+
+    def own_stab_polys(pos, k):
+        s = sw.stab_offset_for(k.w_u)
+        if s is None:
+            return []
+        return choc_stab_polygons(s, at=pos) if sw.stab_kind == "choc" else []
+
+    def in_polygon(x, y, poly):
+        # 簡易な内外判定（レイ・キャスティング）。開口はどれも軸並行に近い凸形
+        inside = False
+        n = len(poly)
+        for i in range(n):
+            x1, y1 = poly[i]
+            x2, y2 = poly[(i + 1) % n]
+            if (y1 > y) != (y2 > y):
+                xin = x1 + (y - y1) / (y2 - y1) * (x2 - x1)
+                if x < xin:
+                    inside = not inside
+        return inside
+
+    for pos, k, side in ((left_key[0], left_key[1], -1), (right_key[0], right_key[1], 1)):
+        x, y = pos
+        half_cell = k.w_mm / 2
+        stabs = own_stab_polys(pos, k)
+        checked = 0
+        for r in (7.2, 8.2, 9.2):
+            if r >= half_cell:
+                continue   # セルの外に出てしまう距離は使わない
+            px = x + side * r
+            for dy in (-5.0, 0.0, 5.0):
+                py = y + dy
+                if any(in_polygon(px, py, poly) for poly in stabs):
+                    continue   # 自分のスタビ開口の中は桟ではない
+                checked += 1
+                assert _solid(part, px, py), (k.label, side, r, dy)
+        assert checked > 0, (k.label, "probe 点が 1 つも取れなかった")
 
 
 def test_the_plate_is_1_2mm_and_printable_as_a_check(plate, tmp_path):
