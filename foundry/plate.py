@@ -66,6 +66,16 @@ def stab_cutout_face(s, at=(0.0, 0.0), kerf=STAB_KERF, flipped=False):
     return sk.sketch
 
 
+def choc_stab_polygons(s, at=(0.0, 0.0)):
+    """Choc スタビの左右 2 つの開口（mech.CHOC_STAB_OUTLINE）。ワイヤは常に奥。"""
+    from .mech import CHOC_STAB_OUTLINE
+
+    ax, ay = at
+    right = [(ax + s + x, ay + y) for x, y in CHOC_STAB_OUTLINE]
+    left = [(ax - s - x, ay + y) for x, y in reversed(CHOC_STAB_OUTLINE)]
+    return [left, right]
+
+
 def plate_size(spec, keys):
     _, (kw, kh) = centered(keys)
     return kw + spec.PLATE_MARGIN_X * 2, kh + spec.PLATE_MARGIN_Y * 2
@@ -86,10 +96,18 @@ def build_plate(spec, keys, piece):
             for pos, s, f in stabs:
                 if s is None:
                     continue
-                if sw.stab_kind != "cherry":
+                if sw.stab_kind == "cherry":
+                    add(stab_cutout_face(s, at=pos, flipped=f), mode=Mode.SUBTRACT)
+                elif sw.stab_kind == "choc":
+                    for poly in choc_stab_polygons(s, at=pos):
+                        with BuildSketch(mode=Mode.PRIVATE) as psk:
+                            with BuildLine():
+                                Polyline(*poly, close=True)
+                            make_face()
+                        add(psk.sketch, mode=Mode.SUBTRACT)
+                else:
                     raise NotImplementedError(
                         f"{sw.name}: スタビ開口 {sw.stab_kind!r} の形が plate.py に無い")
-                add(stab_cutout_face(s, at=pos, flipped=f), mode=Mode.SUBTRACT)
             mounts = spec.MOUNTS[piece]
             if mounts:
                 with Locations(*mounts):

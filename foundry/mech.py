@@ -88,7 +88,16 @@ MX_HOTSWAP = Switch(
 # fp は全幅で同じ（パッドが同一。幅つきは 18×17 ピッチのキャップ外形を描くので使わない）。
 # value は部品表の照合用。スイッチは JLCPCB に在庫が無く利用者が手はんだする（D3）。
 # ダイオードの位置は Task 6 で DRC を通して決める（ここはその初期値）。
-# スタビは Task 3 で外の事実から埋める。**それまでは 2u 以上のキーで落ちる。**
+# Choc スタビ（2u・プレートマウント）の右側の開口。**支点を原点**・Y 上向き・奥が +y。
+# 出典: Keebio-Parts.pretty の Kailh-PG1350-Stab-Cutout.kicad_mod（2 つめの出典の
+# Kailh 系製造図のハウジング 6.30×6.60・突起 3.20 に、奥行 +0.25・切り欠き +0.4 の隙間）。
+# 左側は x を反転。切り欠き（y > 0）がワイヤの側で、**常に奥**に置く。
+# 保存: projects/cckb/docs/references/。照合: tests/test_choc.py
+CHOC_STAB_OUTLINE = ((-3.15, -3.05), (-3.15, 3.8), (-1.8, 3.8), (-1.8, 8.45),
+                     (1.8, 8.45), (1.8, 3.8), (3.15, 3.8), (3.15, -3.05))
+
+# スタビは CHOC_STAB_OUTLINE（出典 2 つ）。基板の逃げ穴は pcb.py ではなく計画 3 の
+# pcb_extra で開ける（大きさは組み立てモデルで決める）。
 CHOC_V1 = Switch(
     name="choc_v1",
     cutout=13.8,
@@ -97,9 +106,9 @@ CHOC_V1 = Switch(
     value="PG1350",
     diode_offset=(7.6, -1.0),
     diode_angle=90,
-    stab_offset={},
+    stab_offset={2.0: 12.0, 2.25: 12.0},
     stab_fp={},
-    stab_kind=None,
+    stab_kind="choc",
 )
 
 SWITCHES = {s.name: s for s in (MX_HOTSWAP, CHOC_V1)}

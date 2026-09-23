@@ -150,3 +150,51 @@ def test_the_checker_notices_a_mirrored_footprint(tmp_path, monkeypatch):
     monkeypatch.setattr(test_choc, "FP", fake)
     with pytest.raises(AssertionError):
         test_choc.test_the_pins_are_where_the_datasheet_puts_them()
+
+
+REF = ROOT / "projects" / "cckb" / "docs" / "references"
+
+
+def _keebio_right_cutout():
+    """Keebio の開口のうち右側（x > 8）の頂点を、Y 上向き・支点原点に直して返す。"""
+    pts = set()
+    for x1, y1, x2, y2 in re.findall(
+            r"\(fp_line \(start ([-\d.]+) ([-\d.]+)\) \(end ([-\d.]+) ([-\d.]+)\) \(layer Edge.Cuts\)",
+            (REF / "Kailh-PG1350-Stab-Cutout.kicad_mod").read_text()):
+        for x, y in ((x1, y1), (x2, y2)):
+            if float(x) > 8.0:
+                pts.add((round(float(x) - 12.0, 3), round(-float(y), 3)))
+    return pts
+
+
+def test_the_stab_half_span_is_the_drawings_wire():
+    """製造図のワイヤ 24.00 と Keebio の開口の中心 12.0 が一致（2 つの出典）。"""
+    sw = SWITCHES["choc_v1"]
+    assert sw.stab_kind == "choc"
+    for w in (2.0, 2.25):
+        assert sw.stab_offset_for(w) == 24.0 / 2
+
+
+def test_the_stab_outline_is_keebios():
+    from foundry.mech import CHOC_STAB_OUTLINE
+
+    ref = _keebio_right_cutout()
+    assert len(ref) == 8                                   # 空の集合で緑にしない
+    assert {(round(x, 3), round(y, 3)) for x, y in CHOC_STAB_OUTLINE} == ref
+
+
+def test_the_outline_leaves_a_web_to_the_switch_opening():
+    """スイッチの開口（13.8）とスタビの開口の間に、刷れる幅（≧ 0.4×4）の桟が残ること。"""
+    from foundry.mech import CHOC_STAB_OUTLINE
+
+    inner = 12.0 + min(x for x, _ in CHOC_STAB_OUTLINE)
+    assert inner - SWITCHES["choc_v1"].cutout / 2 >= 1.6, inner
+
+
+def test_the_plate_cuts_both_stab_openings():
+    from foundry.plate import choc_stab_polygons
+
+    polys = choc_stab_polygons(12.0, at=(100.0, 50.0))
+    assert len(polys) == 2
+    xs = sorted(sum(x for x, _ in p) / len(p) for p in polys)
+    assert abs(xs[0] - 88.0) < 0.5 and abs(xs[1] - 112.0) < 0.5
