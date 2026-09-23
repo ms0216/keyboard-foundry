@@ -114,13 +114,32 @@ def test_the_plate_is_open_at_every_key_and_at_both_corners(plate):
         assert not _solid(part, cx, cy), (cx, cy)
 
 
+def _in_polygon(x, y, poly):
+    # 簡易な内外判定（レイ・キャスティング）。開口はどれも軸並行に近い凸形
+    inside = False
+    n = len(poly)
+    for i in range(n):
+        x1, y1 = poly[i]
+        x2, y2 = poly[(i + 1) % n]
+        if (y1 > y) != (y2 > y):
+            xin = x1 + (y - y1) / (y2 - y1) * (x2 - x1)
+            if x < xin:
+                inside = not inside
+    return inside
+
+
 def test_the_web_around_the_corner_keys_survives(plate):
-    """角の開口が隣のキー（最下段の角のキー）の自分のセルの桟を削っていないこと（Review Focus 4）。
+    """角の開口が隣接するキー（最下段の角のキーと、その 1 段上で角にかぶるキー）の
+    自分のセルの桟を削っていないこと（Review Focus 4）。
 
     **spec.PLATE_OPENINGS を判定に使わない。**角の開口そのものが検査対象なので、
-    それを使って「ここは角の中だから見なくてよい」と判定すると、開口を広げる
-    壊し方が自分自身を免除してしまう（実測で確認済み）。角に触れるキーは
+    それを使って「ここは角の中だから見なくてよい」と判定すると、開口を広げる・
+    ずらす壊し方が自分自身を免除してしまう（実測で確認済み）。角に触れるキーは
     レイアウトから導く（test_the_plate_openings_are_exactly_the_empty_corners と同じ手）。
+
+    左の角（x 0〜1.5u）の真上は最下段の 1 段上の左 Shift（2.25u・0〜2.25u）、
+    右の角（x 12.5〜15u）の真上は右 Shift（1.75u・12.25〜14u）と Fn（1u・14〜15u）に
+    かぶる。これらの底辺（角に向く側）もプローブする。
     """
     from foundry.layout import centered
     from foundry.mech import switch_of
@@ -133,7 +152,14 @@ def test_the_web_around_the_corner_keys_survives(plate):
     bottom = [(pos, k) for pos, k in zip(positions, keys) if _row(k) == 4]
     left_key = min(bottom, key=lambda pk: pk[0][0])
     right_key = max(bottom, key=lambda pk: pk[0][0])
-    half_cutout = sw.cutout / 2   # 6.9: スイッチ開口の縁
+
+    row3 = [(pos, k) for pos, k in zip(positions, keys) if _row(k) == 3]
+    left_edge = min(pos[0] - k.w_mm / 2 for pos, k in bottom)
+    right_edge = max(pos[0] + k.w_mm / 2 for pos, k in bottom)
+    # 角（最下段の外側）の真上にセルがかぶっている段 3 のキー
+    above_corner = [(pos, k) for pos, k in row3
+                    if pos[0] - k.w_mm / 2 < left_edge or pos[0] + k.w_mm / 2 > right_edge]
+    assert above_corner, "角の上にかぶる段 3 のキーが見つからない"
 
     def own_stab_polys(pos, k):
         s = sw.stab_offset_for(k.w_u)
@@ -141,35 +167,50 @@ def test_the_web_around_the_corner_keys_survives(plate):
             return []
         return choc_stab_polygons(s, at=pos) if sw.stab_kind == "choc" else []
 
-    def in_polygon(x, y, poly):
-        # 簡易な内外判定（レイ・キャスティング）。開口はどれも軸並行に近い凸形
-        inside = False
-        n = len(poly)
-        for i in range(n):
-            x1, y1 = poly[i]
-            x2, y2 = poly[(i + 1) % n]
-            if (y1 > y) != (y2 > y):
-                xin = x1 + (y - y1) / (y2 - y1) * (x2 - x1)
-                if x < xin:
-                    inside = not inside
-        return inside
+    checked_total = 0
 
+    # 最下段の角のキー: 角に向く横側をプローブ
     for pos, k, side in ((left_key[0], left_key[1], -1), (right_key[0], right_key[1], 1)):
         x, y = pos
         half_cell = k.w_mm / 2
         stabs = own_stab_polys(pos, k)
-        checked = 0
         for r in (7.2, 8.2, 9.2):
             if r >= half_cell:
                 continue   # セルの外に出てしまう距離は使わない
             px = x + side * r
             for dy in (-5.0, 0.0, 5.0):
                 py = y + dy
-                if any(in_polygon(px, py, poly) for poly in stabs):
+                if any(_in_polygon(px, py, poly) for poly in stabs):
                     continue   # 自分のスタビ開口の中は桟ではない
-                checked += 1
+                checked_total += 1
                 assert _solid(part, px, py), (k.label, side, r, dy)
-        assert checked > 0, (k.label, "probe 点が 1 つも取れなかった")
+
+    # 段 3 の、角にかぶるキー: 角に向く下側（-y）をプローブ
+    for pos, k in above_corner:
+        x, y = pos
+        half_cell_x = k.w_mm / 2
+        stabs = own_stab_polys(pos, k)
+        # 角にかぶっている部分の x 範囲（セルの中、角の側）
+        if x - half_cell_x < left_edge:
+            xs = [x - half_cell_x + dx for dx in (2.0, half_cell_x, half_cell_x * 1.6)
+                  if 2.0 <= dx <= half_cell_x * 2]
+        else:
+            xs = [x + half_cell_x - dx for dx in (2.0, half_cell_x, half_cell_x * 1.6)
+                  if 2.0 <= dx <= half_cell_x * 2]
+        for r in (7.2, 8.2, 9.2):
+            py = y - r
+            for px in xs:
+                in_stab = any(_in_polygon(px, py, poly) for poly in stabs)
+                if r <= 3.05:
+                    # ブリーフの前提（スタビ輪郭は中心から y=-3.05 までしか伸びない）を
+                    # 検算する。想定に反していたら assert で気づく（推測で除外しない）
+                    assert not in_stab, (k.label, r, px, "スタビの範囲の想定が外れた")
+                if in_stab:
+                    continue
+                checked_total += 1
+                assert _solid(part, px, py), (k.label, r, px)
+
+    assert checked_total > 0, "probe 点が 1 つも取れなかった"
 
 
 def test_the_plate_is_1_2mm_and_printable_as_a_check(plate, tmp_path):
