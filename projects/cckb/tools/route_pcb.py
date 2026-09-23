@@ -19,6 +19,7 @@
 置いた線が残っているかを数えるだけ（HHKB の教訓）。
 """
 
+import hashlib
 import json
 import math
 import os
@@ -61,6 +62,9 @@ FIXED = re.compile(r"COL\d+")    # 自分で引いたが、595 までの最後�
 MM = pcbnew.FromMM
 GND_CLEAR = 0.25                    # ベタとほかのネットの間
 VIA_R = VIA_D / 2
+# 縫いのビアと**同じネットの**パッドの間（銅の縁どうし）。パッドの中・縁に掛けない（はんだを
+# 吸わない）ための逃げで、電気の間隔ではない。監査 C の提案「ビアの輪 ＋ 0.1 以上」
+SAME_NET_PAD_CLEAR = 0.1
 
 
 def kpt(x, y):
@@ -212,6 +216,15 @@ class Space:
                             return False
                         continue
                 if same:
+                    # **同じネットのパッドもビアの障害物**（ビアの輪 ＋ SAME_NET_PAD_CLEAR）。
+                    # 前は飛ばしていて、縫いのビアが C_U1（JLC がリフローで付ける 0805）と
+                    # BT1 の GND パッドの**中**に落ちた（監査 C 重要 1・2026-09-24）。パッドの上の
+                    # ビアははんだを吸う（JLC PCBA FAQ Part 2 Q17）。スタビ（自分のパッドから
+                    # 出る線）は同じネットなので当ててよい——当てるのはビアの形だけ
+                    for lay, sh in shapes[:len(layers)]:
+                        if it.IsOnLayer(lay) and \
+                                it.GetEffectiveShape(lay).Collide(sh, MM(SAME_NET_PAD_CLEAR)):
+                            return False
                     continue
             elif same:
                 continue
@@ -444,7 +457,7 @@ def freeroute(board, work):
 def restore_rule_areas(board):
     """SES の往復でルール領域の層が消える（HHKB 実測）。名前で層を戻す。"""
     want = {"ANTENNA_KEEPOUT": (pcbnew.F_Cu, pcbnew.B_Cu), "XIAO_UNDERSIDE": (pcbnew.F_Cu,),
-            "EDGE_KEEPOUT": (pcbnew.F_Cu, pcbnew.B_Cu)}
+            "EDGE_KEEPOUT": (pcbnew.F_Cu, pcbnew.B_Cu), "INSERT_KEEPOUT": (pcbnew.F_Cu,)}
     seen = set()
     for z in board.Zones():
         if not z.GetIsRuleArea():
@@ -486,6 +499,10 @@ def pour(board):
         z.SetLocalClearance(MM(GND_CLEAR))
         z.SetMinThickness(MM(0.25))
         z.SetPadConnection(pcbnew.ZONE_CONNECTION_FULL)
+        # サーマルにするパッド（spec.THERMAL_PADS）のスポーク。JLC の最小の線 0.1 より十分太く、
+        # 0805 のパッドの幅 1.0 の半分以下
+        z.SetThermalReliefGap(MM(0.3))
+        z.SetThermalReliefSpokeWidth(MM(0.4))
         z.SetIslandRemovalMode(pcbnew.ISLAND_REMOVAL_MODE_NEVER)
         pts = pcbnew.VECTOR_VECTOR2I()
         for x, y in ((bb.GetLeft(), bb.GetTop()), (bb.GetRight(), bb.GetTop()),
@@ -640,6 +657,64 @@ def stitch_islands(board, space, rounds=4):
     return placed, [(lay, a) for lay, a, hit, _ in islands(board) if not hit]
 
 
+def island_vias(board):
+    """GND ベタの島ごとに [(層, 面積 mm², 島の外形, [ビアの位置])]。"""
+    vias = [t.GetPosition() for t in board.GetTracks()
+            if t.GetClass() == "PCB_VIA" and t.GetNetname() == "GND"]
+    out = []
+    for z in gnd_zones(board):
+        lay = z.GetLayer()
+        polys = z.GetFilledPolysList(lay)
+        for i in range(polys.OutlineCount()):
+            ol = polys.Outline(i)
+            area = abs(ol.Area()) / 1e12
+            inside = [v for v in vias if ol.PointInside(v) and not any(
+                polys.Hole(i, h).PointInside(v) for h in range(polys.HoleCount(i)))]
+            out.append((lay, area, ol, inside))
+    return out
+
+
+def double_single_via_islands(board, space):
+    """ビア 1 本だけで繋がった島に、そのビアから**いちばん遠い**置ける点でもう 1 本打つ。
+
+    1 本だけの島は、その 1 本を根元にした棒になり、長いと 2.4GHz で共振しうる（FR4 の λ/4 は
+    約 17mm）。監査 D 軽微 4（B.Cu の 19mm の島がビア 1 本だった）。置けた数と、置けずに
+    残った島（層・面積・長さ）を返す。
+    """
+    fill(board)
+    placed, left = 0, []
+    for lay, area, ol, inside in island_vias(board):
+        if len(inside) != 1:
+            continue
+        v0 = inside[0]
+        bb = ol.BBox()
+        step = MM(0.5)
+        cands = []
+        y = bb.GetTop() + step // 2
+        while y < bb.GetBottom():
+            x = bb.GetLeft() + step // 2
+            while x < bb.GetRight():
+                pos = pcbnew.VECTOR2I(int(x), int(y))
+                if ol.PointInside(pos):
+                    cands.append((math.hypot(pos.x - v0.x, pos.y - v0.y), pos))
+                x += step
+            y += step
+        cands.sort(key=lambda dp: -dp[0])
+        done = False
+        for d, pos in cands:
+            if d < MM(2.0):                     # 近すぎる 2 本目は棒を短くしない
+                break
+            if space.free(pos, "GND"):
+                space.add_via(pos, "GND")
+                placed += 1
+                done = True
+                break
+        if not done:
+            left.append((lay, area, pcbnew.ToMM(max(bb.GetWidth(), bb.GetHeight()))))
+    fill(board)
+    return placed, left
+
+
 def main():
     work = PROJ / "pcb" / "route_work"
     work.mkdir(exist_ok=True)
@@ -689,13 +764,15 @@ def main():
     n_ring = ring(board, space, ifc.antenna_keepout())
     n_fence, n_grid = fence_and_grid(board, space)
     n_is, left = stitch_islands(board, space)
+    n_dbl, single = double_single_via_islands(board, space)
     # 繋げなかった島は消す（浮いた銅は 2.4GHz でアンテナになりうる）。面積は記録する
     removed = sum(a for _, a in left)
     for z in gnd_zones(board):
         z.SetIslandRemovalMode(pcbnew.ISLAND_REMOVAL_MODE_ALWAYS)
     fill(board)
     print(f"   GND ビア: リング {n_ring} / フェンス {n_fence} / 格子 {n_grid} / 離島 {n_is}"
-          f" / 消した島 {len(left)} 個 {removed:.2f} mm²")
+          f" / 消した島 {len(left)} 個 {removed:.2f} mm² / 1 本の島に足した {n_dbl}"
+          f" / 1 本のまま {[(round(a, 1), round(L, 1)) for _, a, L in single]}")
 
     board.BuildConnectivity()
     unconnected = board.GetConnectivity().GetUnconnectedCount(False)
@@ -707,10 +784,18 @@ def main():
         a for l2, a, _, _ in islands(board) if l2 == lay), 1) for lay in (pcbnew.F_Cu, pcbnew.B_Cu)}
     rec = dict(board=OUT.name, unrouted=SRC.name,
                unrouted_fingerprint=boardhash.fingerprint(SRC),
+               # 指紋（boardhash）は配置・結線・外形だけで、**パッドの形とルール領域を見ない**。
+               # 配線した元のファイルそのもの（バイト列）も残す（2026-09-24: XIAO のパッドを縮め、
+               # 禁止域を足しても指紋は変わらなかった）
+               unrouted_sha256=hashlib.sha256(SRC.read_bytes()).hexdigest(),
                freerouting=JAR.name, passes=PASSES, margin_um=info["margin_um"],
                margins_tried=info["tried"],
                matrix_segments=n_mx, gnd_fanout=len(fan), ring=n_ring, fence=n_fence,
-               grid=n_grid, island_vias=n_is, islands_removed=len(left),
+               grid=n_grid, island_vias=n_is, second_island_vias=n_dbl,
+               single_via_islands=[dict(layer="F.Cu" if lay == pcbnew.F_Cu else "B.Cu",
+                                        area_mm2=round(a, 2), length_mm=round(L, 2))
+                                   for lay, a, L in single],
+               islands_removed=len(left),
                islands_removed_mm2=round(removed, 2), gnd_area_mm2=areas,
                unconnected=unconnected)
     (PROJ / "pcb" / "route.json").write_text(json.dumps(rec, ensure_ascii=False, indent=2) + "\n")

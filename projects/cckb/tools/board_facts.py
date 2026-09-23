@@ -12,7 +12,9 @@
   zones       名前・ネット・層・ルール領域か・塗った面積（層ごと）・外形
   edge        Edge.Cuts の線分（外形とスタビの逃げ穴）
   unconnected KiCad の連結で数えた未接続
-  copper_in   引数の矩形（CAD）ごとに、層ごとの銅の面積 mm²（塗ったベタ・線・ビア・パッド）
+  copper_in   引数の矩形（CAD）ごとに、層ごとの銅の面積 mm²（塗ったベタ・線・ビア・パッド）。
+              引数が "c:x,y,r" なら円（内に接する 128 角形）
+  islands     GND ベタの島ごとに 層・面積・外接矩形・中にある GND のビアの数
 座標は CAD（キー領域の中心が原点・Y 上向き・mm）。
 """
 
@@ -39,10 +41,17 @@ def box(b):
 
 
 def rect_poly(r):
-    x0, y0, x1, y1 = r
     ps = pcbnew.SHAPE_POLY_SET()
     ps.NewOutline()
-    for x, y in ((x0, y0), (x1, y0), (x1, y1), (x0, y1)):
+    if r[0] == "c":            # 円: 内に接する 128 角形（円の中だけを数える。弦と弧の差は 0.0006 以下）
+        _, cx, cy, rad = r
+        import math
+        pts = [(cx + rad * math.cos(2 * math.pi * i / 128),
+                cy + rad * math.sin(2 * math.pi * i / 128)) for i in range(128)]
+    else:
+        x0, y0, x1, y1 = r
+        pts = ((x0, y0), (x1, y0), (x1, y1), (x0, y1))
+    for x, y in pts:
         ps.Append(pcbnew.FromMM(ORIGIN[0] + x), pcbnew.FromMM(ORIGIN[1] - y))
     return ps
 
@@ -83,6 +92,9 @@ def facts(path, rects):
                 ref=fp.GetReference(), num=p.GetNumber(), net=p.GetNetname(),
                 front=p.IsOnLayer(pcbnew.F_Cu), back=p.IsOnLayer(pcbnew.B_Cu),
                 smd=p.GetAttribute() == pcbnew.PAD_ATTRIB_SMD,
+                thermal=p.GetLocalZoneConnection() == pcbnew.ZONE_CONNECTION_THERMAL,
+                round=p.GetShape(pcbnew.F_Cu if p.IsOnLayer(pcbnew.F_Cu) else pcbnew.B_Cu)
+                == pcbnew.PAD_SHAPE_CIRCLE,
                 npth=p.GetAttribute() == pcbnew.PAD_ATTRIB_NPTH,
                 pos=xy(p.GetPosition()), box=box(p.GetBoundingBox()),
                 drill=round(MM(p.GetDrillSize().x), 4)))
@@ -112,6 +124,24 @@ def facts(path, rects):
     for s in board.GetDrawings():
         if s.GetLayer() == pcbnew.Edge_Cuts:
             out["edge"].append(dict(shape=s.GetShapeStr(), a=xy(s.GetStart()), b=xy(s.GetEnd())))
+    out["islands"] = []
+    gvias = [t.GetPosition() for t in board.GetTracks()
+             if t.GetClass() == "PCB_VIA" and t.GetNetname() == "GND"]
+    for z in board.Zones():
+        if z.GetIsRuleArea() or z.GetNetname() != "GND":
+            continue
+        for n, lay in LAYERS.items():
+            if not z.IsOnLayer(lay):
+                continue
+            polys = z.GetFilledPolysList(lay)
+            for i in range(polys.OutlineCount()):
+                ol = polys.Outline(i)
+                holes = [polys.Hole(i, h) for h in range(polys.HoleCount(i))]
+                nv = sum(1 for v in gvias if ol.PointInside(v)
+                         and not any(h.PointInside(v) for h in holes))
+                out["islands"].append(dict(layer=n, area=round(abs(ol.Area()) / 1e12, 3),
+                                           box=box(ol.BBox()), vias=nv))
+    out["origin"] = list(ORIGIN)                     # CAD → KiCad（x + ox, oy − y）
     out["unconnected"] = board.GetConnectivity().GetUnconnectedCount(False)
     out["copper_in"] = []
     cu = {n: copper(board, lay) for n, lay in LAYERS.items()}
@@ -126,7 +156,8 @@ def facts(path, rects):
 
 
 if __name__ == "__main__":
-    rects = [[float(v) for v in a.split(",")] for a in sys.argv[3:]]
+    rects = [["c"] + [float(v) for v in a[2:].split(",")] if a.startswith("c:")
+             else [float(v) for v in a.split(",")] for a in sys.argv[3:]]
     data = facts(sys.argv[1], rects)
     Path(sys.argv[2]).write_text(json.dumps(data, ensure_ascii=False))
     print(f"OK 部品 {len(data['footprints'])} / パッド {len(data['pads'])} / 線 {len(data['tracks'])}"

@@ -113,8 +113,8 @@ class Case:
     # --- 導いた値（ここで新しい寸法を作らない） -----------------------------------
     @property
     def r_in(self):
-        """壁の内面の角の丸み = 基板の角 R ＋ 壁との隙（spec: 内側の角は R ≦ 1.2 で作る）。"""
-        return self.s.CORNER_R + (self.s.CASE_KEY_GAP - self.s.PLATE_MARGIN_X)
+        """壁の内面の角の丸み = 基板の角 R ＋ 壁との隙（同心。隙は interface.wall_gap）。"""
+        return self.s.CORNER_R + self.i.wall_gap
 
     @property
     def r_out(self):

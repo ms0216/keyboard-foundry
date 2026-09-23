@@ -198,8 +198,9 @@ def test_the_placement_check_notices_a_rotated_part(geo):
 
 
 def test_the_interference_check_notices_a_power_switch_moved_on_the_board(geo):
-    """板の電源スイッチを 0.6 外へ（耳の外端 142.875 → 143.475 が壁の内面 143.375 を越える）。"""
-    a = A.Assembly(geo_with(geo, "SW_PWR", dx=0.6))
+    """板の電源スイッチを 0.9 外へ（耳の外端 142.875 → 143.775 が壁の内面 143.675 を越える。
+    壁の内面は 2026-09-24 に基板から片側 0.5 へ広げた・spec.CASE_PCB_GAP）。"""
+    a = A.Assembly(geo_with(geo, "SW_PWR", dx=0.9))
     bad = A.interference(slim(a, ["psw", "tray_R", "lid_R"]))
     assert ("psw", "tray_R") in bad, bad
 

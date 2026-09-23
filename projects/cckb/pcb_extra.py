@@ -118,27 +118,59 @@ def rule_area(board, ctx, box, layers, name, fills=True):
 
 
 def xiao_underside(ifc):
-    """XIAO の下で表の銅を禁止する範囲。XIAO の外形の中で、パッドの内端から 0.2 内側。
+    """XIAO の下で表の銅を禁止する範囲。[(x0, y0, x1, y1), ...]（CAD）。
 
-    XIAO の裏には BAT± などの露出したパッドがある（公式 STEP で、キャステレーションの縁から
-    3.39 より内）。表の銅（ベタ・配線・ビア）をマスク越しに押し当てない。
+    XIAO の裏には露出したパッドが 8 個ある（spec.XIAO_BOTTOM_PADS: SWD 系 4・VBAT/GND 2・
+    NFC 2。公式 STEP と Seeed 公式のランド）。表の銅（ベタ・配線・ビア）をマスク越しに押し当てない。
+    本体: XIAO の外形の中で、手前は基板の縁から、奥は露出パッドの奥の端 ＋ XIAO_BOTTOM_CLEAR まで。
+    露出パッドが XIAO の外形の外へ出る所（NFC の 2 個はアンテナ側の端から Seeed のランドが
+    0.08 出る）は、そのパッド ＋ XIAO_BOTTOM_CLEAR の矩形を足す。
+    **奥の端は奥の列のパッド（D7 など）の内端より手前でなければならない**（越えると落とす）。
     """
     s = ifc.s
     b = ifc.xiao()
-    inner = s.XIAO_W / 2 - XIAO_PAD_IN - 0.2
+    x, y = s.XIAO_AT
+    c = s.XIAO_BOTTOM_CLEAR
+    pads = [(x + r[0] - c, y + r[1] - c, x + r[2] + c, y + r[3] + c)
+            for _, r in s.XIAO_BOTTOM_PADS.values()]
+    top = max(p[3] for p in pads)
+    pad_inner = y + s.XIAO_W / 2 - s.XIAO_PAD_IN          # 奥の列のパッドの内端
+    if top >= pad_inner:
+        raise RuntimeError(f"XIAO の下の禁止域の奥 {top:.3f} が奥の列のパッドの内端 {pad_inner:.3f} を越える")
     # 手前は基板の縁まで伸ばす: 手前の列（D0〜D6）はパッド内ビアで裏へ抜けるので、表に線は
     # 要らない。**DSN からパッドを外したら Freerouting が表の線でパッドの列を横切った**
     # （2026-09-24・VBAT_SW が D2〜D6 を短絡）。禁止域なら DSN にも Freerouting にも見える
-    return (b[0], ifc.pcb[1], b[2], s.XIAO_AT[1] + inner)
+    out = [(b[0], ifc.pcb[1], b[2], top)]
+    for p in pads:
+        if p[0] < b[0] or p[2] > b[2] or p[3] > top:
+            out.append(p)
+    return out
+
+
+def insert_keepout(ifc):
+    """左のふたの熱圧入インサート（H3）が基板の上面に当たる円 ＋ INSERT_COPPER_CLEAR。((x, y), r)。
+
+    インサートは下面から入れて面一で止まり、真鍮の縁（外径 case_spec.INSERT_OD）がネジの締め付けで
+    基板の上面を押す。その下に表の銅（配線・ビア・ベタ）を置かない（監査 E 重要 3: CS の線と GND の
+    ビアの縁が 0.02 掛かっていた。マスクが欠けると CS が GND に落ちて 595 が 2 個とも止まる）。
+    """
+    import case_spec
+    h3 = [m for m in ifc.mounts() if ifc.in_corner(m)]
+    if len(h3) != 1:
+        raise RuntimeError(f"角の取付（H3）が {len(h3)} 個")
+    return h3[0], case_spec.INSERT_OD / 2 + ifc.s.INSERT_COPPER_CLEAR
+
+
+def circle_poly(c, r, n=24):
+    """半径 r の円を**外に接する** n 角形で（円を必ず覆う）。"""
+    R = r / math.cos(math.pi / n)
+    return [(c[0] + R * math.cos(2 * math.pi * (i + 0.5) / n),
+             c[1] + R * math.sin(2 * math.pi * (i + 0.5) / n)) for i in range(n)]
 
 
 # 外形・逃げ穴の縁の、配線・ビアを入れない帯の幅。JLC の銅と外形 0.3（pcb_rules）に 0.02。
 # 自分で引く行列（matrix_routes の EDGE_GAP 0.35）はこの外にいる
 EDGE_BAND = 0.32
-
-# XIAO のパッドが縁から内へ入る長さ（lib/xiao.pretty/XIAO_nRF52840_SMD と同じ。
-# test_cckb_pcb が板の上のパッドで確かめる）
-XIAO_PAD_IN = 2.85
 
 
 def place(board, ctx):
@@ -181,10 +213,20 @@ def place(board, ctx):
     fps = {f.GetReference(): f for f in board.GetFootprints()}
     for ref, _, _ in circuit.electronics():
         _wire(fps[ref], want[ref], net)
+    # ベタへの繋ぎ方をサーマル（スポーク）にするパッド（spec.THERMAL_PADS の理由）
+    for ref, nums in s.THERMAL_PADS.items():
+        for num in nums:
+            ps = [p for p in fps[ref].Pads() if p.GetNumber() == num]
+            if len(ps) != 1 or ps[0].GetNetname() != "GND":
+                raise RuntimeError(f"{ref}.{num}: サーマルにする GND のパッドが {len(ps)} 個")
+            ps[0].SetLocalZoneConnection(pcbnew.ZONE_CONNECTION_THERMAL)
 
     # --- ルール領域 -------------------------------------------------------------
     rule_area(board, ctx, ifc.antenna_keepout(), (pcbnew.F_Cu, pcbnew.B_Cu), "ANTENNA_KEEPOUT")
-    rule_area(board, ctx, xiao_underside(ifc), (pcbnew.F_Cu,), "XIAO_UNDERSIDE")
+    for box in xiao_underside(ifc):
+        rule_area(board, ctx, box, (pcbnew.F_Cu,), "XIAO_UNDERSIDE")
+    c, r = insert_keepout(ifc)
+    rule_area(board, ctx, circle_poly(c, r), (pcbnew.F_Cu,), "INSERT_KEEPOUT")
     # 外形とスタビの逃げ穴の縁に、配線・ビアを入れない帯（ベタは入れてよい。ベタは自分の
     # 外形の逃げで離れる）。**Freerouting は外形・逃げ穴をネットクラスの間隔 0.2 でしか避けない**
     # ので、JLC の銅と外形 0.3 を割った（1 回目: 0.237・0.280）。帯は EDGE_BAND 幅

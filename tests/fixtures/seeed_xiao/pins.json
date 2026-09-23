@@ -1,0 +1,7 @@
+{
+  "source": "Seeed-Studio/OPL_Kicad_Library 'Seeed Studio XIAO Series Library/Seeed_Studio_XIAO_Series.kicad_sym' の記号 XIAO-nRF52840-SMD（commit b0035c51eb0348bb3e165fdb2f2765fa3d1d17bd）。フットプリントは同じフォルダの XIAO-nRF52840-SMD.kicad_mod（commit 3be8215d3db652e2f62269913cb1fddd5e737d38・無改変）",
+  "pins": {"1": "D0", "2": "D1", "3": "D2", "4": "D3", "5": "D4", "6": "D5", "7": "D6",
+           "8": "D7", "9": "D8", "10": "D9", "11": "D10", "12": "3V3_OUT", "13": "GND", "14": "VBUS",
+           "15": "SWDIO", "16": "SWCLK", "17": "EN", "18": "GND", "19": "VBAT", "20": "GND",
+           "21": "NFC1", "22": "NFC2"}
+}

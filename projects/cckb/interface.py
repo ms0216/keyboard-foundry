@@ -143,8 +143,13 @@ class Interface:
         return rect(0, 0, self.kw, self.kh)
 
     @property
+    def wall_gap(self):
+        """基板の外形とトレイの壁の内面の隙（片側）。**ケースの形はここからだけ読む**（裁定 R5）。"""
+        return self.s.CASE_PCB_GAP
+
+    @property
     def wall_inner(self):
-        return grow(self.key_area, self.s.CASE_KEY_GAP)
+        return grow(self.pcb, self.wall_gap)
 
     @property
     def case_outer(self):

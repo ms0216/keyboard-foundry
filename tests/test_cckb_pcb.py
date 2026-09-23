@@ -15,6 +15,7 @@ import re
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -43,16 +44,47 @@ def _control_rect(ifc):
     return (x0 + 20.0, y0, x1 + 20.0, y1)
 
 
-@pytest.fixture(scope="module")
-def facts(tmp_path_factory, ifc):
-    require(paths.KICAD_PYTHON, "板の事実の書き出し")
-    out = tmp_path_factory.mktemp("cckbpcb") / "facts.json"
-    rects = [ifc.antenna_keepout(), _control_rect(ifc)]
+def xiao_bottom_rects():
+    """XIAO の裏の露出パッド 8 個（spec.XIAO_BOTTOM_PADS）＋ XIAO_BOTTOM_CLEAR を板の上の矩形（CAD）で。
+    {パッド番号: (名前, 矩形)}。表とは別に STEP・Seeed と突き合わせる（下の検査）。"""
+    x, y = SPEC.XIAO_AT
+    c = SPEC.XIAO_BOTTOM_CLEAR
+    return {n: (name, (x + r[0] - c, y + r[1] - c, x + r[2] + c, y + r[3] + c))
+            for n, (name, r) in SPEC.XIAO_BOTTOM_PADS.items()}
+
+
+def h3_insert_circle(ifc):
+    """左のふたのインサートが基板の上面を押す円 ＋ INSERT_COPPER_CLEAR（(x, y), r）。"""
+    import case_spec
+    h3 = [m for m in ifc.mounts() if ifc.in_corner(m)]
+    assert len(h3) == 1
+    return h3[0], case_spec.INSERT_OD / 2 + SPEC.INSERT_COPPER_CLEAR
+
+
+def _rect_args(ifc):
+    """board_facts に渡す領域: [禁止域, 対照, 露出パッド 8, H3 の円, H3 の対照（D7 のパッドへ寄せた円）]。"""
+    (hx, hy), hr = h3_insert_circle(ifc)
+    d7 = (SPEC.XIAO_AT[0] + SPEC.XIAO_PIN_SHIFT + 7.62,
+          SPEC.XIAO_AT[1] + SPEC.XIAO_W / 2)            # D7 のパッドの上（銅がある所）
+    out = [",".join(str(v) for v in ifc.antenna_keepout()),
+           ",".join(str(v) for v in _control_rect(ifc))]
+    out += [",".join(str(v) for v in r) for _, r in xiao_bottom_rects().values()]
+    out += [f"c:{hx},{hy},{hr}", f"c:{d7[0]},{d7[1]},{hr}"]
+    return out
+
+
+def run_facts(board, out, ifc):
     r = subprocess.run([paths.KICAD_PYTHON, str(ROOT / "projects/cckb/tools/board_facts.py"),
-                        str(BOARD), str(out)] + [",".join(str(v) for v in b) for b in rects],
+                        str(board), str(out)] + _rect_args(ifc),
                        cwd=ROOT, capture_output=True, text=True)
     assert r.returncode == 0 and r.stdout.startswith("OK"), r.stdout + r.stderr
     return json.loads(out.read_text())
+
+
+@pytest.fixture(scope="module")
+def facts(tmp_path_factory, ifc):
+    require(paths.KICAD_PYTHON, "板の事実の書き出し")
+    return run_facts(BOARD, tmp_path_factory.mktemp("cckbpcb") / "facts.json", ifc)
 
 
 # ---------------------------------------------------------------------------
@@ -201,7 +233,10 @@ def test_the_drc_check_notices_a_short(tmp_path):
 # (c) 実装面: JLC が実装する物は全部裏（パッドの層で見る）。表は XIAO とホルダ（とスイッチの足）
 # ---------------------------------------------------------------------------
 
-JLC_REFS = re.compile(r"D\d+|U[12]|C_U[12]|R_(HI|LO)|D_PWR|SW_PWR")
+JLC_REFS = re.compile(r"D\d+|U[12]|C_U[12]|R_(HI|LO)|D_PWR")
+# 利用者が手で付ける物（BOM・CPL に載せない）。電源スイッチは 2026-09-24 の監査で JLC の実装から
+# 外した（つまみが外形から出る。spec.NOT_ASSEMBLED・決定記録 2026-09-24-audit-fixes §R2）
+HAND_REFS = ("U_MCU", "BT1", "SW_PWR")
 
 
 def side_problems(facts):
@@ -210,8 +245,8 @@ def side_problems(facts):
     for p in facts["pads"]:
         pads.setdefault(p["ref"], []).append(p)
     jlc = [f for f in facts["footprints"] if JLC_REFS.fullmatch(f["ref"])]
-    if len(jlc) != 62 + 8:
-        out.append(f"JLC が実装する部品が {len(jlc)} 個（62 + 8 のはず）")
+    if len(jlc) != 62 + 7:
+        out.append(f"JLC が実装する部品が {len(jlc)} 個（62 + 7 のはず）")
     for f in jlc:
         smd = [p for p in pads[f["ref"]] if p["smd"]]
         if not smd or any(p["front"] or not p["back"] for p in smd):
@@ -222,7 +257,7 @@ def side_problems(facts):
         front_smd = [p for p in pads.get(f["ref"], []) if p["smd"] and p["front"]]
         if front_smd and f["ref"] not in ("U_MCU", "BT1"):
             out.append(f"{f['ref']}: 表に SMD のパッド（表は XIAO とホルダだけ・D8）")
-        if f["ref"] in ("U_MCU", "BT1") and not (f["exclude_bom"] and f["exclude_pos"]):
+        if f["ref"] in HAND_REFS and not (f["exclude_bom"] and f["exclude_pos"]):
             out.append(f"{f['ref']}: 利用者が手はんだする物が BOM/CPL に載る")
         if re.fullmatch(r"SW\d+", f["ref"]) and not (f["exclude_bom"] and f["exclude_pos"]):
             out.append(f"{f['ref']}: 利用者が手はんだするスイッチが BOM/CPL に載る")
@@ -239,6 +274,105 @@ def test_the_side_check_notices_a_part_on_top(facts):
         if p["ref"] == "C_U1":
             p["front"], p["back"] = True, False
     assert any("C_U1" in b for b in side_problems(f))
+
+
+def test_the_side_check_notices_the_power_switch_back_in_the_bom(facts):
+    f = copy.deepcopy(facts)
+    for fp in f["footprints"]:
+        if fp["ref"] == "SW_PWR":
+            fp["exclude_bom"] = fp["exclude_pos"] = False
+    assert any("SW_PWR" in b for b in side_problems(f))
+
+
+# ---------------------------------------------------------------------------
+# (c2) **発注道具の出力**（Fabrication Toolkit の BOM・CPL）で JLC が置く位置 = 板のパッド
+# ---------------------------------------------------------------------------
+# 監査 B の照合: JLC は CPL の座標に**自分の部品データ（EasyEDA）の原点**を置き、回転 R をかける。
+# 裏の部品は「裏から見て反時計回りに R」（= R 回してから左右を裏返す。Fabrication Toolkit と KiKit
+# が同じ式。ほかの 3 通りの裏返し方では 69 個のうち 60 個以上が 3.3mm 以上ずれることを確かめた）。EasyEDA のパッドを番号ごとに板の同じ番号のパッドと比べる。
+# 部品データは tests/fixtures/easyeda/footprints.json（API から取った原点とパッド）
+
+FT_PLUGIN = Path.home() / "Documents/KiCad/10.0/3rdparty/plugins"
+EE_UNIT = 0.254
+
+
+def _ee_pads(part):
+    ox, oy = part["head"]
+    return {n: ((x - ox) * EE_UNIT, -(y - oy) * EE_UNIT) for n, (x, y, _, _) in part["pads"].items()}
+
+
+def cpl_misplacements(rows, lcsc_of, facts, ee, tol=0.15):
+    """[(参照名, 最大のずれ mm)] で tol を超えたもの（パッドの番号が合わない物は inf）。"""
+    ORIGIN = facts["origin"]
+    board_pads = facts["pads"]
+    out = []
+    for r in rows:
+        ref = r["Designator"]
+        pads = _ee_pads(ee[lcsc_of[ref]])
+        mid = (float(r["Mid X"]), float(r["Mid Y"]))
+        a = math.radians(float(r["Rotation"]))
+        bottom = r["Layer"] == "bottom"
+        act = {p["num"]: (p["pos"][0] + ORIGIN[0], p["pos"][1] - ORIGIN[1])     # KiCad の (x, −y)
+               for p in board_pads if p["ref"] == ref and p["num"] and not p["npth"]}
+        if set(act) != set(pads):
+            out.append((ref, math.inf))
+            continue
+        worst = 0.0
+        for n, (x, y) in pads.items():
+            rx, ry = x * math.cos(a) - y * math.sin(a), x * math.sin(a) + y * math.cos(a)
+            if bottom:                  # 回してから左右を裏返す（上から見た座標で）
+                rx = -rx
+            px, py = mid[0] + rx, mid[1] + ry
+            worst = max(worst, math.dist((px, py), act[n]))
+        if worst > tol:
+            out.append((ref, round(worst, 3)))
+    return out
+
+
+@pytest.fixture(scope="module")
+def production(tmp_path_factory):
+    """**実際に発注する道具**（Fabrication Toolkit・`-t`）を板の写しに通した BOM と CPL。"""
+    import csv
+
+    require(paths.KICAD_PYTHON, "Fabrication Toolkit")
+    if not (FT_PLUGIN / "com_github_bennymeg_JLC-Plugin-for-KiCad").exists():
+        pytest.skip("Fabrication Toolkit が入っていない")
+    d = tmp_path_factory.mktemp("ft")
+    for suf in (".kicad_pcb", ".kicad_pro"):
+        shutil.copy(BOARD.with_suffix(suf), d / ("cckb_main" + suf))
+    r = subprocess.run([paths.KICAD_PYTHON, "-m", "com_github_bennymeg_JLC-Plugin-for-KiCad.cli",
+                        "-p", str(d / "cckb_main.kicad_pcb"), "-t", "-nI", "-nB"],
+                       cwd=FT_PLUGIN, capture_output=True, text=True, timeout=600)
+    prod = d / "production"
+    assert (prod / "positions.csv").exists(), r.stdout[-2000:] + r.stderr[-2000:]
+    rows = list(csv.DictReader((prod / "positions.csv").open(encoding="utf-8-sig")))
+    bom = list(csv.DictReader((prod / "bom.csv").open(encoding="utf-8-sig")))
+    return rows, bom
+
+
+def test_jlc_places_every_part_of_the_cpl_on_its_pads(production, facts):
+    rows, bom = production
+    ee = json.loads((ROOT / "tests/fixtures/easyeda/footprints.json").read_text())["parts"]
+    lcsc_of = {d.strip(): b["LCSC Part #"] for b in bom for d in b["Designator"].split(",")}
+    refs = sorted(r["Designator"] for r in rows)
+    assert len(rows) == 62 + 7 and "SW_PWR" not in refs and sum(
+        len(b["Designator"].split(",")) for b in bom) == 69, (len(rows), bom)
+    assert set(lcsc_of) == set(refs) and all(r["Layer"] == "bottom" for r in rows)
+    assert all(c in ee for c in lcsc_of.values()), set(lcsc_of.values()) - set(ee)
+    assert cpl_misplacements(rows, lcsc_of, facts, ee) == []
+
+
+@pytest.mark.parametrize("ref, drot, dx", [("U1", 180, 0.0), ("D1", 90, 0.0), ("D_PWR", 0, 0.45)])
+def test_the_cpl_check_notices_a_turned_or_shifted_part(production, facts, ref, drot, dx):
+    """**壊すと落ちる**: 回転を 180°/90° 違える・原点を 0.45（B-1 の電源スイッチのずれ）ずらす。"""
+    rows, bom = production
+    ee = json.loads((ROOT / "tests/fixtures/easyeda/footprints.json").read_text())["parts"]
+    lcsc_of = {d.strip(): b["LCSC Part #"] for b in bom for d in b["Designator"].split(",")}
+    rows = copy.deepcopy(rows)
+    r = next(r for r in rows if r["Designator"] == ref)
+    r["Rotation"] = str((float(r["Rotation"]) + drot) % 360)
+    r["Mid X"] = str(float(r["Mid X"]) + dx)
+    assert [m[0] for m in cpl_misplacements(rows, lcsc_of, facts, ee)] == [ref]
 
 
 # ---------------------------------------------------------------------------
@@ -324,7 +458,7 @@ def test_the_routed_board_wires_every_key_as_the_transform_says():
 # ---------------------------------------------------------------------------
 
 def test_the_antenna_keepout_has_no_copper_after_the_fill(facts, ifc):
-    keep, ctrl = facts["copper_in"]
+    keep, ctrl = facts["copper_in"][:2]
     assert keep["rect"] == list(ifc.antenna_keepout())
     assert keep["area"] == {"F.Cu": 0.0, "B.Cu": 0.0}, keep
     # 対照: 同じ大きさをベタのある所へずらすと銅が数えられる（0 しか返さない検査器ではない）
@@ -341,17 +475,231 @@ def test_the_keepout_rule_area_is_where_the_antenna_is(facts, ifc):
     assert k[0] <= chip[0] and k[1] <= chip[1] and k[2] >= chip[2] and k[3] >= chip[3]
 
 
-def test_nothing_on_top_under_the_xiao(facts, ifc):
-    """XIAO の裏の露出パッドの下に表の銅を置かない（XIAO_UNDERSIDE のルール領域が塗った板で効いている）。"""
-    z = [z for z in facts["zones"] if z["name"] == "XIAO_UNDERSIDE"]
-    assert len(z) == 1 and z[0]["layers"] == ["F.Cu"] and z[0]["no_vias"]
-    x0, y0, x1, y1 = z[0]["outline"]
-    for t in facts["tracks"]:
-        if t["layer"] == "F.Cu":
-            for p in (t["a"], t["b"]):
-                assert not (x0 < p[0] < x1 and y0 < p[1] < y1), t
+def xiao_underside_problems(facts):
+    """XIAO の下の表: ルール領域 XIAO_UNDERSIDE（表だけ・配線/ビア/ベタ禁止）があり、露出パッド
+    8 個それぞれ（＋ XIAO_BOTTOM_CLEAR）を覆う。塗った後の表の銅（ベタ・線・ビア・パッド）が 8 個の
+    どの矩形の中にも 0。本体の矩形の中に表の線の端点もビアも無い。"""
+    out = []
+    zs = [z for z in facts["zones"] if z["name"] == "XIAO_UNDERSIDE"]
+    if not zs or any(z["layers"] != ["F.Cu"] or not (z["no_vias"] and z["no_tracks"] and z["no_fill"])
+                     for z in zs):
+        out.append(f"XIAO_UNDERSIDE のルール領域 {zs}")
+    rects = xiao_bottom_rects()
+    for (n, (name, r)), cu in zip(rects.items(), facts["copper_in"][2:10]):
+        if cu["rect"] != list(r):
+            out.append(f"{n} {name}: 事実の矩形の順がずれた")
+        if not any(z["outline"][0] <= r[0] + 1e-3 and z["outline"][1] <= r[1] + 1e-3 and
+                   z["outline"][2] >= r[2] - 1e-3 and z["outline"][3] >= r[3] - 1e-3 for z in zs):
+            out.append(f"{n} {name}: 禁止域に覆われていない")
+        if cu["area"]["F.Cu"] > 0:
+            out.append(f"{n} {name}: 表の銅 {cu['area']['F.Cu']} mm²")
+    body = max(zs, key=lambda z: (z["outline"][2] - z["outline"][0]) * (z["outline"][3] - z["outline"][1]))
+    x0, y0, x1, y1 = body["outline"]
+    for tr in facts["tracks"]:
+        if tr["layer"] == "F.Cu":
+            for q in (tr["a"], tr["b"]):
+                if x0 < q[0] < x1 and y0 < q[1] < y1:
+                    out.append(f"XIAO の下に表の線 {tr['net']} {q}")
     for v in facts["vias"]:
-        assert not (x0 - 0.3 < v["pos"][0] < x1 + 0.3 and y0 - 0.3 < v["pos"][1] < y1 + 0.3), v
+        if x0 - 0.3 < v["pos"][0] < x1 + 0.3 and y0 - 0.3 < v["pos"][1] < y1 + 0.3:
+            out.append(f"XIAO の下にビア {v['net']} {v['pos']}")
+    return out
+
+
+def test_nothing_on_top_under_the_xiao(facts, ifc):
+    """XIAO の裏の露出パッド 8 個（SWDIO・SWCLK・EN・GND・VBAT・GND・NFC1・NFC2）の下に表の銅を置かない。
+    **名指しで 8 個全部**（前は 6 個しか数えず、NFC2 の真下に D7 のパッドと GND のビアがあった）。"""
+    assert len(SPEC.XIAO_BOTTOM_PADS) == 8
+    assert xiao_underside_problems(facts) == []
+
+
+def test_the_underside_check_notices_the_old_long_xiao_pad(tmp_path, ifc):
+    """**板の写しで D7 のパッドを前の長さ（縁から内 2.85・パッド 3.45）に戻すと** NFC2 の下に銅が出て落ちる。"""
+    require(paths.KICAD_PYTHON, "板の事実の書き出し")
+    t = BOARD.read_text()
+    i = t.index('(property "Reference" "U_MCU"')
+    blk = t.rfind("(footprint", 0, i)
+    m = re.compile(r'\(pad "D7" smd rect\s*\(at (-?[\d.]+) (-?[\d.]+)( -?[\d.]+)?\)\s*\(size ([\d.]+) ([\d.]+)\)')
+    hit = m.search(t, blk)
+    assert hit and abs(float(hit.group(1)) - 8.09) < 1e-3 and float(hit.group(4)) == 2.8, \
+        hit and hit.group(0)
+    old = (f'(pad "D7" smd rect (at 7.765 {hit.group(2)}{hit.group(3) or ""}) (size 3.45 {hit.group(5)})')
+    b2 = tmp_path / "x.kicad_pcb"
+    b2.write_text(t[:hit.start()] + old + t[hit.end():])
+    f = run_facts(b2, tmp_path / "f.json", ifc)
+    bad = xiao_underside_problems(f)
+    assert any("NFC2" in b and "表の銅" in b for b in bad), bad
+
+
+def test_the_xiao_bottom_pads_are_the_official_ones(xiao_bottom_faces):
+    """spec.XIAO_BOTTOM_PADS = 公式 STEP の下面の露出した面（**毎回数える: 8 個**）∪ Seeed 公式の
+    フットプリント XIAO-nRF52840-SMD のパッド 15〜22（tests/fixtures/seeed_xiao）。名前は Seeed の記号。"""
+    step, seeed, names = xiao_bottom_faces
+    assert len(step) == 8 and len(seeed) == 8
+    got = {}
+    for f in step:
+        c = ((f[0] + f[2]) / 2, (f[1] + f[3]) / 2)
+        n = min(seeed, key=lambda k: math.dist(c, ((seeed[k][0] + seeed[k][2]) / 2,
+                                                  (seeed[k][1] + seeed[k][3]) / 2)))
+        s = seeed[n]
+        assert math.dist(c, ((s[0] + s[2]) / 2, (s[1] + s[3]) / 2)) < 0.15, (n, f, s)
+        got[n] = (names[n], (min(f[0], s[0]), min(f[1], s[1]), max(f[2], s[2]), max(f[3], s[3])))
+    assert sorted(got) == sorted(SPEC.XIAO_BOTTOM_PADS) == [str(i) for i in range(15, 23)]
+    for n, (name, r) in got.items():
+        want = SPEC.XIAO_BOTTOM_PADS[n]
+        assert want[0] == name and all(abs(a - b) < 2e-3 for a, b in zip(r, want[1])), (n, r, want)
+
+
+@pytest.fixture(scope="module")
+def xiao_bottom_faces():
+    """公式 STEP の下面（Y −0.24）の平らな面で、XIAO の縁（幅方向）に触れないもの＝露出パッド、と
+    Seeed 公式のフットプリントのパッド 15〜22。どちらも**板の上の向き・XIAO の本体の中心から**
+    (x0, y0, x1, y1)。"""
+    from build123d import GeomType, import_step
+
+    step = import_step(str(paths.LIB / "xiao.3dshapes" / "XIAO_nRF52840.step"))
+    board = max(step.solids(), key=lambda so: so.bounding_box().size.X * so.bounding_box().size.Z)
+    bb = board.bounding_box()
+    cx, cz = (bb.min.X + bb.max.X) / 2, (bb.min.Z + bb.max.Z) / 2
+    chip = [so for so in step.solids() if abs(so.bounding_box().size.X - 1.6) < 0.01
+            and abs(so.bounding_box().size.Z - 3.2) < 0.01][0].bounding_box()
+    front = 1 if (chip.min.Z + chip.max.Z) / 2 > cz else -1
+    faces = []
+    for f in board.faces():
+        b = f.bounding_box()
+        if f.geom_type == GeomType.PLANE and abs(b.max.Y - b.min.Y) < 1e-3 and \
+                abs(b.min.Y + 0.24) < 0.005 and \
+                not (abs(b.min.Z - bb.min.Z) < 0.01 or abs(b.max.Z - bb.max.Z) < 0.01):
+            xs = sorted([-(b.min.X - cx), -(b.max.X - cx)])
+            ys = sorted([-front * (b.min.Z - cz), -front * (b.max.Z - cz)])
+            faces.append((xs[0], ys[0], xs[1], ys[1]))
+    fx = ROOT / "tests" / "fixtures" / "seeed_xiao"
+    text = (fx / "XIAO-nRF52840-SMD.kicad_mod").read_text()
+    pads = {}
+    for m in re.finditer(r'\(pad "(\d+)" smd \w+\s*\(at ([-\d.]+) ([-\d.]+)(?: ([-\d.]+))?\)\s*'
+                         r'\(size ([\d.]+) ([\d.]+)\)', text):
+        n, x, y, r, w, h = m.groups()
+        x, y, w, h = float(x), float(y), float(w), float(h)
+        if int(float(r or 0)) % 180 == 90:
+            w, h = h, w
+        pads[n] = (x, y, w, h)
+    # ピンの並びの中心（D0 = 1・D7 = 8 の列の中点、1〜7 の長手の中点）。フットプリントの長手 y は
+    # USB が −y、幅 x は D0〜D6 が −x。板の上では長手 → x（USB が −x）・幅 → y（D0〜D6 が −y）。
+    # ピンの並びの中心は本体の中心から +x へ XIAO_PIN_SHIFT（spec）
+    gx, gy = (pads["1"][0] + pads["8"][0]) / 2, (pads["1"][1] + pads["7"][1]) / 2
+    seeed = {}
+    for n in map(str, range(15, 23)):
+        x, y, w, h = pads[n]
+        dx, dy = (y - gy) + SPEC.XIAO_PIN_SHIFT, x - gx
+        seeed[n] = (dx - h / 2, dy - w / 2, dx + h / 2, dy + w / 2)
+    names = json.loads((fx / "pins.json").read_text())["pins"]
+    return faces, seeed, names
+
+
+# ---------------------------------------------------------------------------
+# パッドの中にビアを置かない（JLC PCBA FAQ Part 2 Q17: パッドの上のビアははんだを吸う）
+# ---------------------------------------------------------------------------
+
+# 意図したパッド内ビア: XIAO の手前の列 D0〜D6 のパッドの外寄りにある同じ番号のスルーホール
+# （lib/xiao.pretty・open-gaps P6。手はんだ）。**名指しで 7 個**
+INTENDED_VIA_IN_PAD = {("U_MCU", f"D{i}") for i in range(7)}
+
+
+def via_in_pad(facts):
+    """銅のパッド（NPTH を除く全部）に、ビア（と φ0.4 以下の穴のスルーホールパッド）の輪が掛かる組。
+    [(ビアの持ち主, 位置, パッドの持ち主.番号)]。丸いパッドは円、ほかは外接矩形で見る（回っていても
+    90° おき。電源スイッチの角を落とした耳は矩形で見るので厳しい側）。"""
+    holes = [("via", v["pos"], v["d"] / 2) for v in facts["vias"]]
+    holes += [(f"{p['ref']}.{p['num']}", p["pos"], (p["box"][2] - p["box"][0]) / 2)
+              for p in facts["pads"] if not p["npth"] and 0 < p["drill"] <= 0.4]
+    out = []
+    for p in facts["pads"]:
+        if p["npth"] or p["drill"] > 0 and p["drill"] <= 0.4:
+            continue
+        b = p["box"]
+        for who, (x, y), r in holes:
+            if p["round"]:                    # 丸いパッドは円で（外接矩形の角で誤って当たる）
+                hit = math.dist((x, y), p["pos"]) < r + (b[2] - b[0]) / 2
+            else:
+                hit = math.hypot(max(b[0] - x, 0, x - b[2]), max(b[1] - y, 0, y - b[3])) < r
+            if hit:
+                out.append((who, (x, y), f"{p['ref']}.{p['num']}"))
+    return out
+
+
+def test_no_via_inside_any_pad(facts):
+    """全部の銅のパッドについて、ビアの輪が掛からない。例外は XIAO の D0〜D6 の 7 個だけ（名指し・数を固定）。
+    前は縫いのビアが C_U1（JLC がリフローで付ける 0805）と BT1 の GND パッドの中にあった（監査 C 重要 1）。"""
+    hits = via_in_pad(facts)
+    intended = [h for h in hits if tuple(h[0].split(".")) in INTENDED_VIA_IN_PAD
+                and h[2] == h[0]]
+    # XIAO のパッド内ビアは同じ番号の SMD パッドの中（別の番号には掛からない）
+    xiao = [h for h in hits if h[0].startswith("U_MCU.")]
+    assert all(h[2] == h[0] for h in xiao), xiao
+    assert len(xiao) == 7 and {h[0] for h in xiao} == {f"U_MCU.D{i}" for i in range(7)}, xiao
+    assert [h for h in hits if not h[0].startswith("U_MCU.")] == [], hits
+    assert intended == xiao
+
+
+def test_the_via_in_pad_check_notices_a_via_on_the_c_u1_pad(facts):
+    f = copy.deepcopy(facts)
+    p = next(p for p in f["pads"] if p["ref"] == "C_U1" and p["num"] == "2")
+    f["vias"].append(dict(net="GND", pos=[p["box"][0] + 0.35, p["pos"][1]], d=0.6, drill=0.3))
+    with pytest.raises(AssertionError):
+        test_no_via_inside_any_pad(f)
+
+
+# ---------------------------------------------------------------------------
+# 左のふたのインサート（H3）の下に表の銅を置かない（監査 E 重要 3）
+# ---------------------------------------------------------------------------
+
+def insert_problems(facts, ifc):
+    (hx, hy), r = h3_insert_circle(ifc)
+    out = []
+    zs = [z for z in facts["zones"] if z["name"] == "INSERT_KEEPOUT"]
+    if len(zs) != 1 or zs[0]["layers"] != ["F.Cu"] or not (zs[0]["no_tracks"] and zs[0]["no_vias"]
+                                                           and zs[0]["no_fill"]):
+        out.append(f"INSERT_KEEPOUT {zs}")
+    for tr in facts["tracks"]:
+        if tr["layer"] != "F.Cu":
+            continue
+        d = I.seg_dist((hx, hy), tr["a"], tr["b"]) - tr["w"] / 2
+        if d < r:
+            out.append(f"表の線 {tr['net']} が中心から {d + r - r:.3f}")
+    for v in facts["vias"]:
+        d = math.dist((hx, hy), v["pos"]) - v["d"] / 2
+        if d < r:
+            out.append(f"ビア {v['net']} が中心から {d:.3f}")
+    cu = facts["copper_in"][10]
+    if cu["rect"][0] != "c" or abs(cu["rect"][1] - hx) > 1e-9 or abs(cu["rect"][3] - r) > 1e-9:
+        out.append(f"事実の円がずれた {cu['rect']}")
+    elif cu["area"]["F.Cu"] > 0:
+        out.append(f"円の中の表の銅 {cu['area']['F.Cu']} mm²")
+    return out
+
+
+def test_nothing_on_top_under_the_h3_insert(facts, ifc):
+    assert insert_problems(facts, ifc) == []
+    # 対照: 同じ半径の円を D7 のパッドの上へ置くと表の銅が数えられる（数え方が 0 しか返さないのではない）
+    assert facts["copper_in"][11]["area"]["F.Cu"] > 1.0, facts["copper_in"][11]
+
+
+def test_the_insert_check_notices_a_track_under_the_insert(facts, ifc):
+    f = copy.deepcopy(facts)
+    (hx, hy), r = h3_insert_circle(ifc)
+    f["tracks"].append(dict(net="CS", layer="F.Cu", a=[hx - 3, hy + 1.6], b=[hx + 3, hy + 1.6], w=0.2))
+    assert any("CS" in b for b in insert_problems(f, ifc))
+
+
+# ---------------------------------------------------------------------------
+# ベタへの繋ぎ方（spec.THERMAL_PADS だけサーマル）
+# ---------------------------------------------------------------------------
+
+def test_the_thermal_pads_are_exactly_the_declared_ones(facts):
+    got = sorted((p["ref"], p["num"]) for p in facts["pads"] if p.get("thermal"))
+    want = sorted((r, n) for r, ns in SPEC.THERMAL_PADS.items() for n in ns)
+    assert got == want, got
+    assert all(p["net"] == "GND" for p in facts["pads"] if p.get("thermal"))
 
 
 # ---------------------------------------------------------------------------
@@ -386,6 +734,38 @@ def test_every_gnd_smd_pad_has_its_own_stub_and_via(facts):
         ends = [q for t in stubs for q in (t["a"], t["b"])]
         assert any(math.hypot(q[0] - v[0], q[1] - v[1]) < 1e-3 for q in ends for v in vias), \
             f"{p['ref']}.{p['num']}"
+
+
+# 2.4GHz の λ/4 は FR4 の上で約 17mm（監査 D 軽微 4）。ビア 1 本だけで繋がった島はその 1 本を根元にした
+# 棒になるので、長さをこの 7 割（12mm）未満に抑える。route_pcb の double_single_via_islands が 2 本目を打つ
+SINGLE_VIA_ISLAND_MAX = 12.0
+
+
+def island_problems(facts):
+    out = []
+    for i in facts["islands"]:
+        L = max(i["box"][2] - i["box"][0], i["box"][3] - i["box"][1])
+        if i["vias"] == 0:
+            out.append(f"ビアの無い GND の島 {i}")
+        elif i["vias"] == 1 and L >= SINGLE_VIA_ISLAND_MAX:
+            out.append(f"ビア 1 本の島が長さ {L:.1f}mm（{i['layer']}・{i['area']} mm²）")
+    return out
+
+
+def test_no_long_gnd_island_hangs_on_a_single_via(facts):
+    assert island_problems(facts) == []
+    ones = [i for i in facts["islands"] if i["vias"] == 1]
+    rec = json.loads((BOARD.parent / "route.json").read_text())
+    print("ビア 1 本の島:", [(i["layer"], i["area"]) for i in ones])
+    assert len(ones) == len(rec["single_via_islands"])        # 道具の記録と板が同じ数
+
+
+def test_the_island_check_notices_a_long_single_via_island(facts):
+    """前の板（HEAD 86611d4）には B.Cu に長さ 18.9mm・ビア 1 本の島があった。それを写しに作ると落ちる。"""
+    f = copy.deepcopy(facts)
+    i = max(f["islands"], key=lambda i: i["area"])
+    f["islands"].append(dict(i, vias=1, box=[-62.7, -2.0, -43.8, 2.0]))
+    assert island_problems(f)
 
 
 # ---------------------------------------------------------------------------
@@ -592,23 +972,69 @@ def xiao_castellations():
 UNROUTED = paths.PROJECTS / "cckb" / "pcb" / "unrouted" / "cckb_main.kicad_pcb"
 
 
-def test_the_committed_unrouted_board_is_what_the_generator_makes_now(tmp_path):
-    from foundry.boardhash import fingerprint
+def board_items(path):
+    """板の最上位の項目（フットプリント・ルール領域・線・ネットクラス…）を、UUID を落として並べ替えた一覧。
+    **パッドの形・大きさ・ルール領域・ベタへの繋ぎ方まで**比べる（boardhash の指紋は配置・結線・外形
+    だけで、2026-09-24 に XIAO のパッドを縮め禁止域を足しても変わらなかった）。生成器は項目の順を
+    毎回変えるので並べ替える。"""
+    t = re.sub(r'\s*\(uuid "[^"]*"\)|\s*\(tstamp [^)]*\)', "", path.read_text())
+    out, depth, start = [], 0, None
+    for j in range(1, len(t)):
+        c = t[j]
+        if c == "(":
+            if depth == 0:
+                start = j
+            depth += 1
+        elif c == ")":
+            depth -= 1
+            if depth < 0:
+                break
+            if depth == 0:
+                out.append(t[start:j + 1])
+    return sorted(out)
 
+
+@pytest.fixture(scope="module")
+def regenerated(tmp_path_factory):
     require(paths.KICAD_PYTHON, "基板の生成")
-    d = tmp_path / "cckb"
+    d = tmp_path_factory.mktemp("gen") / "cckb"
     shutil.copytree(paths.PROJECTS / "cckb", d, ignore=shutil.ignore_patterns("pcb", "__pycache__"))
     r = subprocess.run([paths.KICAD_PYTHON, "-m", "foundry.pcb", str(d)],
                        cwd=ROOT, capture_output=True, text=True)
     assert r.returncode == 0, r.stdout + r.stderr
-    assert fingerprint(d / "pcb/unrouted/cckb_main.kicad_pcb") == fingerprint(UNROUTED), \
-        "tools/kb cckb pcb で作り直し、route_pcb.py で配線し直すこと"
+    return d / "pcb/unrouted/cckb_main.kicad_pcb"
+
+
+def test_the_committed_unrouted_board_is_what_the_generator_makes_now(regenerated):
+    from foundry.boardhash import fingerprint
+
+    msg = "tools/kb cckb pcb で作り直し、route_pcb.py で配線し直すこと"
+    assert fingerprint(regenerated) == fingerprint(UNROUTED), msg
+    assert board_items(regenerated) == board_items(UNROUTED), msg
+
+
+def test_the_item_check_notices_a_changed_pad_size_that_the_fingerprint_misses(regenerated, tmp_path):
+    """**壊すと落ちる**: XIAO の D7 のパッドを前の大きさ（3.45）に戻した写しは、指紋は同じでも
+    項目の比較では違う（前の検査だけでは気づけなかった）。"""
+    from foundry.boardhash import fingerprint
+
+    t = UNROUTED.read_text()
+    i = t.index('(property "Reference" "U_MCU"')
+    m = re.compile(r'(\(pad "D7" smd rect[\s\S]{0,120}?\(size )2\.8 ').search(t, t.rfind("(footprint", 0, i))
+    assert m, "D7 のパッドの大きさが見つからない"
+    f = tmp_path / "u.kicad_pcb"
+    f.write_text(t[:m.start()] + m.group(1) + "3.45 " + t[m.end():])
+    assert fingerprint(f) == fingerprint(UNROUTED)
+    assert board_items(f) != board_items(UNROUTED)
 
 
 def route_is_fresh(record, unrouted):
+    import hashlib
+
     from foundry.boardhash import fingerprint
 
-    return record["unrouted_fingerprint"] == fingerprint(unrouted)
+    return record["unrouted_fingerprint"] == fingerprint(unrouted) and \
+        record["unrouted_sha256"] == hashlib.sha256(unrouted.read_bytes()).hexdigest()
 
 
 def test_the_routed_board_was_made_from_the_current_placement():
