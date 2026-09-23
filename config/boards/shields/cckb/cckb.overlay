@@ -1,0 +1,19 @@
+/* cckb main。雛形から作った。以後は人が持つ。 */
+
+#include "cckb-transform.dtsi"
+
+/ {
+	chosen {
+		zmk,kscan = &kscan0;
+	};
+
+	kscan0: kscan_0 {
+		compatible = "zmk,kscan-gpio-matrix";
+		wakeup-source;
+		diode-direction = "col2row";
+	};
+};
+
+&kscan0 {
+#error "行・列のピンが未定。回路を決めたら row-gpios / col-gpios を書き、この行を消す（spec.ZMK[\"pins\"] を書いてから --scaffold し直してもよい）"
+};
