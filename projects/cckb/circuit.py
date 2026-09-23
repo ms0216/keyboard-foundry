@@ -11,7 +11,7 @@
 回路（設計書 §4・docs/knowledge/power.md）:
 
     CR1632 ＋ → 電源スイッチ（② 共通 → ③）→ VBAT_SW ┬ 1MΩ → VBAT_SENSE（D0）→ 1MΩ → GND
-                                                   └ B5819W A→K → V3V3（XIAO の 3V3 ピン）
+                                                   └ D_PWR（既定 BAT46W・spec.PARTS["schottky"]）A→K → V3V3（XIAO の 3V3 ピン）
     CR1632 − → GND。**XIAO の BAT には何も繋がない**（LiPo の充電回路に直結。USB を挿すと
     一次電池を充電する）
     行 5 本 ROW0..4 → XIAO D2..D6（入力・プルダウンはファーム）

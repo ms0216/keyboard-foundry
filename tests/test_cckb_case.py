@@ -393,3 +393,51 @@ def test_the_keycap_top_is_the_interface_height(asm, g):
 
 def test_the_keycap_counts_match_the_layout(asm):
     assert KC.print_counts(asm.i.keys) == {1.0: 51, 1.5: 5, 1.75: 2, 2.25: 4}
+
+
+# ---------------------------------------------------------------------------
+# 基板の面に当たる金属: interface.metal_on_pcb（禁止域の元）と組み立てモデルの金属の立体が同じか
+# （2 回目の監査 S1。禁止域は interface の判定で置くので、判定がモデルとずれたら禁止域もずれる）
+# ---------------------------------------------------------------------------
+
+def metal_contacts_in_model(g, z):
+    """組み立てモデルの金属（ナット・ネジ・インサート）のうち、下端が基板の上面・上端が基板の下面に
+    ある立体。{(層, x, y): 外接の半径}。"""
+    out = {}
+    for name in ("nuts", "screws", "screw_lid", "inserts"):
+        for s in A.solids_of(g[name]):
+            b = s.bounding_box()
+            c = (round((b.min.X + b.max.X) / 2, 2), round((b.min.Y + b.max.Y) / 2, 2))
+            r = max(math.hypot(v.X - c[0], v.Y - c[1]) for v in s.vertices())   # 形の外接円
+            if abs(b.min.Z - z["pcb_top"]) < 0.01:
+                out[("F.Cu",) + c] = r
+            if abs(b.max.Z - z["pcb_bottom"]) < 0.01:
+                out[("B.Cu",) + c] = r
+    return out
+
+
+def test_the_metal_on_the_board_is_what_the_assembly_model_holds(g):
+    ifc = I.Interface()
+    model = metal_contacts_in_model(g, ifc.z())
+    judged = {(m["side"], round(m["pos"][0], 2), round(m["pos"][1], 2)): m["r"]
+              for m in ifc.metal_on_pcb() if m["side"]}
+    assert set(model) == set(judged), (sorted(model), sorted(judged))
+    # モデルの立体（ナットは向きを 1 つに決めた六角柱）が、判定の円（回りうる範囲）の中に入る
+    for k, r in model.items():
+        assert r <= judged[k] + 1e-6, (k, r, judged[k])
+    assert len(judged) == 10
+
+
+def test_the_metal_model_check_notices_a_nut_under_the_board(g):
+    """ナットを 1 個、基板の下面に当てた形にずらすと、判定と合わなくなる。"""
+    ifc = I.Interface()
+    z = ifc.z()
+    g2 = dict(g)
+    nuts = A.solids_of(g["nuts"])
+    dz = z["pcb_bottom"] - z["pcb_top"] - load("cckb").spec.NUT_T
+    moved = nuts[0].moved(A.Pos(0, 0, dz))
+    g2["nuts"] = A.Compound([moved] + nuts[1:])
+    model = metal_contacts_in_model(g2, z)
+    judged = {(m["side"], round(m["pos"][0], 2), round(m["pos"][1], 2))
+              for m in ifc.metal_on_pcb() if m["side"]}
+    assert set(model) != judged

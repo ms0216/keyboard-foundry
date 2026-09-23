@@ -53,24 +53,40 @@ def xiao_bottom_rects():
             for n, (name, r) in SPEC.XIAO_BOTTOM_PADS.items()}
 
 
-def h3_insert_circle(ifc):
-    """左のふたのインサートが基板の上面を押す円 ＋ INSERT_COPPER_CLEAR（(x, y), r）。"""
-    import case_spec
-    h3 = [m for m in ifc.mounts() if ifc.in_corner(m)]
-    assert len(h3) == 1
-    return h3[0], case_spec.INSERT_OD / 2 + SPEC.INSERT_COPPER_CLEAR
+def xiao_slot_rects():
+    """XIAO の裏の USB のシールドのめっきの長穴 4 個（spec.XIAO_BOTTOM_SLOTS）＋ XIAO_BOTTOM_CLEAR。{名前: 矩形}。"""
+    x, y = SPEC.XIAO_AT
+    c = SPEC.XIAO_BOTTOM_CLEAR
+    return {n: (x + r[0] - c, y + r[1] - c, x + r[2] + c, y + r[3] + c)
+            for n, r in SPEC.XIAO_BOTTOM_SLOTS.items()}
+
+
+def _d7_control(r):
+    """対照の円: D7 のパッドの上（銅がある所）。数え方が 0 しか返さないのではないことを見る。"""
+    d7 = (SPEC.XIAO_AT[0] + SPEC.XIAO_PIN_SHIFT + 7.62, SPEC.XIAO_AT[1] + SPEC.XIAO_W / 2)
+    return d7, r
+
+
+def regions(ifc):
+    """board_facts に渡す領域と、事実の copper_in の添字。{名前: (添字, 引数)}。
+    [禁止域, 対照, 露出パッド 8, 金属の円（interface.metal_keepouts の順）, 金属の対照, 長穴 4]"""
+    out = [("antenna", ",".join(str(v) for v in ifc.antenna_keepout())),
+           ("antenna_control", ",".join(str(v) for v in _control_rect(ifc)))]
+    out += [(f"pad{n}", ",".join(str(v) for v in r)) for n, (_, r) in xiao_bottom_rects().items()]
+    ks = ifc.metal_keepouts()
+    out += [(f"metal{i}", f"c:{c[0]},{c[1]},{r}") for i, (_, _, c, r) in enumerate(ks)]
+    (cx, cy), cr = _d7_control(max(r for _, _, _, r in ks))
+    out += [("metal_control", f"c:{cx},{cy},{cr}")]
+    out += [(n, ",".join(str(v) for v in r)) for n, r in xiao_slot_rects().items()]
+    return {n: (i, a) for i, (n, a) in enumerate(out)}
 
 
 def _rect_args(ifc):
-    """board_facts に渡す領域: [禁止域, 対照, 露出パッド 8, H3 の円, H3 の対照（D7 のパッドへ寄せた円）]。"""
-    (hx, hy), hr = h3_insert_circle(ifc)
-    d7 = (SPEC.XIAO_AT[0] + SPEC.XIAO_PIN_SHIFT + 7.62,
-          SPEC.XIAO_AT[1] + SPEC.XIAO_W / 2)            # D7 のパッドの上（銅がある所）
-    out = [",".join(str(v) for v in ifc.antenna_keepout()),
-           ",".join(str(v) for v in _control_rect(ifc))]
-    out += [",".join(str(v) for v in r) for _, r in xiao_bottom_rects().values()]
-    out += [f"c:{hx},{hy},{hr}", f"c:{d7[0]},{d7[1]},{hr}"]
-    return out
+    return [a for _, a in sorted(regions(ifc).values())]
+
+
+def copper_in(facts, ifc, name):
+    return facts["copper_in"][regions(ifc)[name][0]]
 
 
 def run_facts(board, out, ifc):
@@ -189,7 +205,29 @@ def test_the_routed_board_has_no_drc_violation_and_nothing_unrouted(drc_record, 
     assert r["unconnected"] == 0
     assert facts["unconnected"] == 0            # KiCad の連結（pcbnew）でも 0
     assert set(r["warning_kinds"]) <= KNOWN_WARNINGS, r["warning_kinds"]
+    # 数を固定する（監査 C 2 回目 軽微 3: 種類の集合だけでは名札がずれて増えても緑のままだった）。
+    # silk_edge_clearance 3 は D15・D55 の名札が外形に、H9 の名札が逃げ穴に近い（刷ると欠けるだけ）
     assert r["warning_kinds"].get("npth_inside_courtyard", 0) == 2
+    assert r["warning_kinds"].get("silk_edge_clearance", 0) == 3, r["warning_kinds"]
+    assert r["warning_kinds"].get("silk_overlap", 0) == 0 and r["warning_kinds"].get("silk_over_copper", 0) == 0
+
+
+def test_the_warning_count_notices_a_label_on_the_edge(tmp_path):
+    """板の写しで表のシルクに文字を 1 つ外形の縁に置くと silk_edge_clearance が 3 から増える
+    （数を固定した検査が名札のずれに気づく）。"""
+    from foundry import drc
+
+    require(paths.KICAD_CLI, "DRC")
+    for suf in (".kicad_pcb", ".kicad_pro"):
+        shutil.copy(BOARD.with_suffix(suf), tmp_path / ("x" + suf))
+    t = (tmp_path / "x.kicad_pcb").read_text()
+    x = 150 - 143.175 + 0.2                      # 左の縁の 0.2 内（CAD の x −142.975・KiCad の x）
+    label = (f'(gr_text "EDGE" (at {x} 100 90) (layer "F.SilkS") '
+             '(effects (font (size 1 1) (thickness 0.15))))\n')
+    i = t.rindex(")")
+    (tmp_path / "x.kicad_pcb").write_text(t[:i] + label + t[i:])
+    r = drc.run(tmp_path / "x.kicad_pcb")
+    assert r["warning_kinds"].get("silk_edge_clearance", 0) > 3, r["warning_kinds"]
 
 
 def test_the_npth_warning_is_only_the_switch_pegs_under_the_holder():
@@ -266,6 +304,34 @@ def side_problems(facts):
 
 def test_jlc_parts_are_all_on_the_bottom(facts):
     assert side_problems(facts) == []
+
+
+def paste_problems(facts):
+    """ペーストの層（JLC はここからステンシルを作り、載せない部品のパッドにもはんだを盛る）は、
+    JLC が実装する部品の SMD パッドにだけある。手はんだの部品（spec.NOT_ASSEMBLED・キーのスイッチ）には無い。"""
+    out = []
+    kinds = dict((f["ref"], next((k for pat, k in SPEC.FAB_KINDS.items() if re.fullmatch(pat, f["ref"])),
+                                 "keyswitch" if re.fullmatch(r"SW\d+", f["ref"]) else None))
+                 for f in facts["footprints"])
+    for p in facts["pads"]:
+        hand = kinds.get(p["ref"]) in SPEC.NOT_ASSEMBLED
+        if hand and p["paste"]:
+            out.append(f"{p['ref']}.{p['num']}: 手はんだの部品のパッドにペースト")
+        if JLC_REFS.fullmatch(p["ref"]) and p["smd"] and not p["paste"]:
+            out.append(f"{p['ref']}.{p['num']}: JLC が実装するパッドにペーストが無い")
+    return out
+
+
+def test_only_the_jlc_parts_get_solder_paste(facts):
+    """監査 B 2 回目 B2-1・C 軽微 1: 手はんだの電源スイッチの 7 パッドに B.Paste があり、盛られて届いた。"""
+    assert paste_problems(facts) == []
+    assert sum(1 for p in facts["pads"] if p["paste"]) == 62 * 2 + 2 + 2 * 2 + 2 * 2 + 2 * 16
+
+
+def test_the_paste_check_notices_paste_on_the_power_switch(facts):
+    f = copy.deepcopy(facts)
+    next(p for p in f["pads"] if p["ref"] == "SW_PWR" and p["num"] == "2")["paste"] = True
+    assert any("SW_PWR.2" in b for b in paste_problems(f))
 
 
 def test_the_side_check_notices_a_part_on_top(facts):
@@ -484,8 +550,11 @@ def xiao_underside_problems(facts):
     if not zs or any(z["layers"] != ["F.Cu"] or not (z["no_vias"] and z["no_tracks"] and z["no_fill"])
                      for z in zs):
         out.append(f"XIAO_UNDERSIDE のルール領域 {zs}")
-    rects = xiao_bottom_rects()
-    for (n, (name, r)), cu in zip(rects.items(), facts["copper_in"][2:10]):
+    rects = dict(xiao_bottom_rects())
+    rects.update({n: (n, r) for n, r in xiao_slot_rects().items()})
+    idx = regions(I.Interface())
+    for n, (name, r) in rects.items():
+        cu = facts["copper_in"][idx[f"pad{n}" if f"pad{n}" in idx else n][0]]
         if cu["rect"] != list(r):
             out.append(f"{n} {name}: 事実の矩形の順がずれた")
         if not any(z["outline"][0] <= r[0] + 1e-3 and z["outline"][1] <= r[1] + 1e-3 and
@@ -507,9 +576,10 @@ def xiao_underside_problems(facts):
 
 
 def test_nothing_on_top_under_the_xiao(facts, ifc):
-    """XIAO の裏の露出パッド 8 個（SWDIO・SWCLK・EN・GND・VBAT・GND・NFC1・NFC2）の下に表の銅を置かない。
-    **名指しで 8 個全部**（前は 6 個しか数えず、NFC2 の真下に D7 のパッドと GND のビアがあった）。"""
-    assert len(SPEC.XIAO_BOTTOM_PADS) == 8
+    """XIAO の裏の露出パッド 8 個（SWDIO・SWCLK・EN・GND・VBAT・GND・NFC1・NFC2）と USB のシールドの
+    めっきの長穴 4 個の下に表の銅を置かない。**名指しで 12 個全部**（前は 6 個しか数えず、NFC2 の真下に
+    D7 のパッドと GND のビアがあった。長穴は 2 回目の監査 D 軽微 4 で足した）。"""
+    assert len(SPEC.XIAO_BOTTOM_PADS) == 8 and len(SPEC.XIAO_BOTTOM_SLOTS) == 4
     assert xiao_underside_problems(facts) == []
 
 
@@ -650,45 +720,86 @@ def test_the_via_in_pad_check_notices_a_via_on_the_c_u1_pad(facts):
 
 
 # ---------------------------------------------------------------------------
-# 左のふたのインサート（H3）の下に表の銅を置かない（監査 E 重要 3）
+# 基板の面に当たる金属（キーの下のナット 9・H3 のインサート）の下に、当たる側の銅を置かない
+# （監査 E 1 回目 重要 3・2 回目 重要 1: 配線し直しで H5・H6 のナットの下を CS が通った）
 # ---------------------------------------------------------------------------
 
-def insert_problems(facts, ifc):
-    (hx, hy), r = h3_insert_circle(ifc)
+HOLE_REFS = re.compile(r"H\d+|H_LID")
+
+
+def metal_problems(facts, ifc):
+    """**取付の穴を板から数えて**（母数）、どの穴にも金属の判定があり、面に当たる金属の円
+    （＋ METAL_COPPER_CLEAR）の中に、当たる側の線・ビア・塗った後の銅が 0 か。"""
     out = []
-    zs = [z for z in facts["zones"] if z["name"] == "INSERT_KEEPOUT"]
-    if len(zs) != 1 or zs[0]["layers"] != ["F.Cu"] or not (zs[0]["no_tracks"] and zs[0]["no_vias"]
-                                                           and zs[0]["no_fill"]):
-        out.append(f"INSERT_KEEPOUT {zs}")
-    for tr in facts["tracks"]:
-        if tr["layer"] != "F.Cu":
-            continue
-        d = I.seg_dist((hx, hy), tr["a"], tr["b"]) - tr["w"] / 2
-        if d < r:
-            out.append(f"表の線 {tr['net']} が中心から {d + r - r:.3f}")
-    for v in facts["vias"]:
-        d = math.dist((hx, hy), v["pos"]) - v["d"] / 2
-        if d < r:
-            out.append(f"ビア {v['net']} が中心から {d:.3f}")
-    cu = facts["copper_in"][10]
-    if cu["rect"][0] != "c" or abs(cu["rect"][1] - hx) > 1e-9 or abs(cu["rect"][3] - r) > 1e-9:
-        out.append(f"事実の円がずれた {cu['rect']}")
-    elif cu["area"]["F.Cu"] > 0:
-        out.append(f"円の中の表の銅 {cu['area']['F.Cu']} mm²")
+    holes = sorted(f["ref"] for f in facts["footprints"] if HOLE_REFS.fullmatch(f["ref"]))
+    metal = ifc.metal_on_pcb()
+    judged = sorted({m["ref"] for m in metal})
+    if holes != judged or len(holes) != len(ifc.mounts()) + 1:
+        out.append(f"板の取付の穴 {holes} と金属の判定 {judged} が違う")
+    pos = {f["ref"]: f["pos"] for f in facts["footprints"]}
+    for m in metal:
+        if m["ref"] in pos and math.dist(pos[m["ref"]], m["pos"]) > 1e-3:
+            out.append(f"{m['ref']}: 板の穴 {pos[m['ref']]} と金属の位置 {m['pos']} が違う")
+    ks = ifc.metal_keepouts()
+    zs = [z for z in facts["zones"] if z["name"] == "METAL_KEEPOUT"]
+    idx = regions(ifc)
+    for i, (ref, layer, (hx, hy), r) in enumerate(ks):
+        if not any(z["layers"] == [layer] and z["no_tracks"] and z["no_vias"] and z["no_fill"]
+                   and z["outline"][0] <= hx - r + 1e-3 and z["outline"][2] >= hx + r - 1e-3
+                   and z["outline"][1] <= hy - r + 1e-3 and z["outline"][3] >= hy + r - 1e-3
+                   for z in zs):
+            out.append(f"{ref}: 円を覆う METAL_KEEPOUT（{layer}・線/ビア/ベタ禁止）が無い")
+        for tr in facts["tracks"]:
+            if tr["layer"] != layer:
+                continue
+            d = I.seg_dist((hx, hy), tr["a"], tr["b"]) - tr["w"] / 2
+            if d < r:
+                out.append(f"{ref}: {layer} の線 {tr['net']} が中心から {d:.3f}")
+        for v in facts["vias"]:
+            d = math.dist((hx, hy), v["pos"]) - v["d"] / 2
+            if d < r:
+                out.append(f"{ref}: ビア {v['net']} が中心から {d:.3f}")
+        cu = facts["copper_in"][idx[f"metal{i}"][0]]
+        if cu["rect"][0] != "c" or abs(cu["rect"][1] - hx) > 1e-9 or abs(cu["rect"][3] - r) > 1e-9:
+            out.append(f"{ref}: 事実の円がずれた {cu['rect']}")
+        elif cu["area"][layer] > 0:
+            out.append(f"{ref}: 円の中の {layer} の銅 {cu['area'][layer]} mm²")
+    if len(zs) != len(ks):
+        out.append(f"METAL_KEEPOUT が {len(zs)} 個（面に当たる金属は {len(ks)} 個）")
     return out
 
 
-def test_nothing_on_top_under_the_h3_insert(facts, ifc):
-    assert insert_problems(facts, ifc) == []
+def test_every_mount_hole_is_judged_and_the_metal_touches_only_the_top():
+    """母数: 取付の穴 11（H0〜H9・H_LID）。面に当たる金属は上面のナット 9・インサート 1（H3）で、
+    下面に当たる金属は 0（ネジの頭はトレイの中。基板の下はトレイの樹脂のボス）。H_LID は樹脂の柱が
+    穴を通るだけで、インサートとネジは基板より上。"""
+    ifc = I.Interface()
+    touch = [(m["ref"], m["what"], m["side"]) for m in ifc.metal_on_pcb() if m["side"]]
+    assert sorted(touch) == sorted([(f"H{i}", "nut", "F.Cu") for i in range(10) if i != 3]
+                                   + [("H3", "insert", "F.Cu")]), touch
+    assert len(ifc.metal_keepouts()) == 10
+
+
+def test_nothing_under_the_metal_on_the_board(facts, ifc):
+    assert metal_problems(facts, ifc) == []
     # 対照: 同じ半径の円を D7 のパッドの上へ置くと表の銅が数えられる（数え方が 0 しか返さないのではない）
-    assert facts["copper_in"][11]["area"]["F.Cu"] > 1.0, facts["copper_in"][11]
+    assert copper_in(facts, ifc, "metal_control")["area"]["F.Cu"] > 1.0
 
 
-def test_the_insert_check_notices_a_track_under_the_insert(facts, ifc):
+@pytest.mark.parametrize("ref", ["H5", "H6", "H0"])
+def test_the_metal_check_notices_a_track_under_a_nut(facts, ifc, ref):
+    """2 回目の監査で見つかった形: CS の表の線がナットの中心から 1.603 を横に通る（H5・H6）。"""
     f = copy.deepcopy(facts)
-    (hx, hy), r = h3_insert_circle(ifc)
-    f["tracks"].append(dict(net="CS", layer="F.Cu", a=[hx - 3, hy + 1.6], b=[hx + 3, hy + 1.6], w=0.2))
-    assert any("CS" in b for b in insert_problems(f, ifc))
+    (hx, hy) = next(m["pos"] for m in ifc.metal_on_pcb() if m["ref"] == ref)
+    f["tracks"].append(dict(net="CS", layer="F.Cu", a=[hx - 3, hy - 1.703], b=[hx + 3, hy - 1.703],
+                            w=0.2))
+    assert any(ref in b and "CS" in b for b in metal_problems(f, ifc))
+
+
+def test_the_metal_check_notices_a_missing_hole_judgement(facts, ifc):
+    f = copy.deepcopy(facts)
+    f["footprints"].append(dict(f["footprints"][0], ref="H10"))
+    assert any("H10" in b for b in metal_problems(f, ifc))
 
 
 # ---------------------------------------------------------------------------
@@ -806,9 +917,9 @@ def power_problems(facts):
     out = []
     k, a = pinmap.resolve("schottky", "K"), pinmap.resolve("schottky", "A")
     if net.get(("D_PWR", k)) != net.get(("U_MCU", "3V3")) or net.get(("D_PWR", k)) != "V3V3":
-        out.append("B5819W のカソードが XIAO の 3V3 でない")
+        out.append("D_PWR（ショットキー）のカソードが XIAO の 3V3 でない")
     if net.get(("D_PWR", a)) != "VBAT_SW":
-        out.append("B5819W のアノードがスイッチの後ろ（VBAT_SW）でない")
+        out.append("D_PWR（ショットキー）のアノードがスイッチの後ろ（VBAT_SW）でない")
     plus = pinmap.resolve("coin_holder_bs16", "+")
     if net.get(("BT1", plus)) != net.get(("SW_PWR", "2")) or not net.get(("BT1", plus)):
         out.append("ホルダの＋がスイッチの共通（②）に来ていない")

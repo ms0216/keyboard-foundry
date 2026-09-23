@@ -348,6 +348,57 @@ class Interface:
         return any(c[0] <= p[0] <= c[2] and c[1] <= p[1] <= c[3]
                    for c in self.corners().values())
 
+    def metal_on_pcb(self):
+        """取付の穴（H0..H9・H_LID）ごとの金属（ナット・インサート・ネジの頭）と、基板のどの面に当たるか。
+
+        [dict(ref, what, pos, z=(下端, 上端), side, r)]。side は "F.Cu"（基板の上面に載る）・"B.Cu"
+        （下面に当たる）・None（どちらの面にも当たらない）。r は当たる面の外径の半分。**高さから判定する**
+        （組み立てモデル assembly.py と同じ積み上げ。tests/test_cckb_case.py がモデルの立体と突き合わせる）。
+        ネジの軸は穴（非めっき φ HOLE_D）の中を通るだけで、面には当たらない（穴と銅の間は DRC の規則）。
+        """
+        import case_spec as c
+        s, z = self.s, self.z()
+        top, bot = z["pcb_top"], z["pcb_bottom"]
+
+        def side(z0, z1):
+            if abs(z0 - top) < 1e-6:
+                return "F.Cu"
+            if abs(z1 - bot) < 1e-6:
+                return "B.Cu"
+            return None
+        # ナットはネジに噛んで回る（外接円）。ネジは穴の中で (HOLE_D − SCREW_D)/2 ずれうる。
+        # プレートの六角の穴の外接円も越えられない。大きい方
+        r_nut = max(hex_r(s.NUT_AF) + (HOLE_D - c.SCREW_D) / 2, hex_r(s.MOUNT_POCKET_AF))
+        head = (s.SCREW_SINK, s.SCREW_SINK + s.SCREW_HEAD_H)      # 下からの皿ネジの頭（トレイの中）
+        out = []
+        for i, m in enumerate(self.mounts()):
+            ref = f"H{i}"
+            if self.in_corner(m):         # 左のふたのボスのインサート（下面が基板の上面）
+                zz = (top, top + c.INSERT_L)
+                out.append(dict(ref=ref, what="insert", pos=m, z=zz, side=side(*zz), r=c.INSERT_OD / 2))
+            else:                         # 基板の上面に置いたナット
+                zz = (top, top + s.NUT_T)
+                out.append(dict(ref=ref, what="nut", pos=m, z=zz, side=side(*zz), r=r_nut))
+            out.append(dict(ref=ref, what="screw_head", pos=m, z=head, side=side(*head),
+                            r=c.SCREW_HEAD_D / 2))
+        # 右のふたの柱（樹脂・穴 LID_PILLAR_HOLE を通る）の上のインサートと、上からのネジ
+        p = self.s.LID_PILLAR_AT
+        pillar_top = z["lid_bottom"] - c.LID_BOSS_H
+        zz = (pillar_top - c.INSERT_L, pillar_top)
+        out.append(dict(ref="H_LID", what="insert", pos=p, z=zz, side=side(*zz), r=c.INSERT_OD / 2))
+        zz = (z["rim"] - s.SCREW_L, z["rim"])
+        out.append(dict(ref="H_LID", what="screw", pos=p, z=zz, side=side(*zz), r=c.SCREW_HEAD_D / 2))
+        # 基板の厚みの中に入り込む金属は無いはず（あれば面の判定が意味を失う）
+        for m in out:
+            if m["side"] is None and m["z"][0] < top and m["z"][1] > bot:
+                raise RuntimeError(f"{m['ref']} の {m['what']} が基板の厚みを横切る {m['z']}")
+        return out
+
+    def metal_keepouts(self):
+        """基板の面に当たる金属の円 ＋ METAL_COPPER_CLEAR。[(ref, 層, (x, y), r)]（pcb_extra が禁止域に）。"""
+        return [(m["ref"], m["side"], m["pos"], m["r"] + self.s.METAL_COPPER_CLEAR)
+                for m in self.metal_on_pcb() if m["side"]]
+
     # --- 印刷する部品の平面 ---------------------------------------------------
     def plate_pieces(self):
         """プレートの分割後の外接矩形（左・右）。"""

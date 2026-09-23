@@ -96,6 +96,7 @@ def facts(path, rects):
                 round=p.GetShape(pcbnew.F_Cu if p.IsOnLayer(pcbnew.F_Cu) else pcbnew.B_Cu)
                 == pcbnew.PAD_SHAPE_CIRCLE,
                 npth=p.GetAttribute() == pcbnew.PAD_ATTRIB_NPTH,
+                paste=p.IsOnLayer(pcbnew.F_Paste) or p.IsOnLayer(pcbnew.B_Paste),
                 pos=xy(p.GetPosition()), box=box(p.GetBoundingBox()),
                 drill=round(MM(p.GetDrillSize().x), 4)))
     for t in board.GetTracks():

@@ -3,8 +3,9 @@
 置くもの（決定記録 decisions/2026-09-24-interface.md §5-5 の凍結した境界）:
   - スタビの逃げ穴 8 つ（Edge.Cuts・interface.stab_reliefs）
   - XIAO（表・平ら・キャステレーション）・電池ホルダ（表）・電源スイッチ（裏）・右のふたの柱の穴
-  - 裏の電子部品（74LVC595 ×2・パスコン・B5819W・分圧）
-  - ルール領域: アンテナの銅の禁止域（全層）・XIAO の下の表の銅の禁止（XIAO の裏のパッドと短絡させない）
+  - 裏の電子部品（74LVC595 ×2・パスコン・電源のショットキー D_PWR・分圧）
+  - ルール領域: アンテナの銅の禁止域（全層）・XIAO の下の表の銅の禁止（XIAO の裏のパッドと短絡させない）・
+    基板の面に当たる金属（ナット・インサート）の下の銅の禁止
   - ネットクラス POWER
 
 **寸法は持たない**（spec.py・interface.py）。**回路は持たない**（circuit.py。ここは pinmap を通して
@@ -12,6 +13,7 @@
 """
 
 import math
+import re
 import sys
 from pathlib import Path
 
@@ -46,7 +48,7 @@ FP = {  # 参照名 → (ライブラリ, 名前, 表か)
 }
 VALUE = {"U_MCU": "XIAO_nRF52840", "BT1": "BS-16-B4AK003", "SW_PWR": "MK-12C02-G025",
          "H_LID": "Hole_6.0", "U1": "SN74LVC595APWR", "U2": "SN74LVC595APWR",
-         "C_U1": "0.1uF", "C_U2": "0.1uF", "R_HI": "1M", "R_LO": "1M", "D_PWR": "B5819W"}
+         "C_U1": "0.1uF", "C_U2": "0.1uF", "R_HI": "1M", "R_LO": "1M", "D_PWR": "BAT46W"}
 
 
 def _mm(v):
@@ -121,7 +123,8 @@ def xiao_underside(ifc):
     """XIAO の下で表の銅を禁止する範囲。[(x0, y0, x1, y1), ...]（CAD）。
 
     XIAO の裏には露出したパッドが 8 個ある（spec.XIAO_BOTTOM_PADS: SWD 系 4・VBAT/GND 2・
-    NFC 2。公式 STEP と Seeed 公式のランド）。表の銅（ベタ・配線・ビア）をマスク越しに押し当てない。
+    NFC 2。公式 STEP と Seeed 公式のランド）。ほかに USB のシールドのめっきの長穴 4 個
+    （spec.XIAO_BOTTOM_SLOTS）も同じに扱う。表の銅（ベタ・配線・ビア）をマスク越しに押し当てない。
     本体: XIAO の外形の中で、手前は基板の縁から、奥は露出パッドの奥の端 ＋ XIAO_BOTTOM_CLEAR まで。
     露出パッドが XIAO の外形の外へ出る所（NFC の 2 個はアンテナ側の端から Seeed のランドが
     0.08 出る）は、そのパッド ＋ XIAO_BOTTOM_CLEAR の矩形を足す。
@@ -131,8 +134,8 @@ def xiao_underside(ifc):
     b = ifc.xiao()
     x, y = s.XIAO_AT
     c = s.XIAO_BOTTOM_CLEAR
-    pads = [(x + r[0] - c, y + r[1] - c, x + r[2] + c, y + r[3] + c)
-            for _, r in s.XIAO_BOTTOM_PADS.values()]
+    exposed = [r for _, r in s.XIAO_BOTTOM_PADS.values()] + list(s.XIAO_BOTTOM_SLOTS.values())
+    pads = [(x + r[0] - c, y + r[1] - c, x + r[2] + c, y + r[3] + c) for r in exposed]
     top = max(p[3] for p in pads)
     pad_inner = y + s.XIAO_W / 2 - s.XIAO_PAD_IN          # 奥の列のパッドの内端
     if top >= pad_inner:
@@ -147,18 +150,7 @@ def xiao_underside(ifc):
     return out
 
 
-def insert_keepout(ifc):
-    """左のふたの熱圧入インサート（H3）が基板の上面に当たる円 ＋ INSERT_COPPER_CLEAR。((x, y), r)。
-
-    インサートは下面から入れて面一で止まり、真鍮の縁（外径 case_spec.INSERT_OD）がネジの締め付けで
-    基板の上面を押す。その下に表の銅（配線・ビア・ベタ）を置かない（監査 E 重要 3: CS の線と GND の
-    ビアの縁が 0.02 掛かっていた。マスクが欠けると CS が GND に落ちて 595 が 2 個とも止まる）。
-    """
-    import case_spec
-    h3 = [m for m in ifc.mounts() if ifc.in_corner(m)]
-    if len(h3) != 1:
-        raise RuntimeError(f"角の取付（H3）が {len(h3)} 個")
-    return h3[0], case_spec.INSERT_OD / 2 + ifc.s.INSERT_COPPER_CLEAR
+LAYER = {"F.Cu": pcbnew.F_Cu, "B.Cu": pcbnew.B_Cu}
 
 
 def circle_poly(c, r, n=24):
@@ -209,6 +201,18 @@ def place(board, ctx):
             dx, dy = s.REF_TEXT_AT[ref]
             fp.Reference().SetPosition(ctx["to_kicad"](px + dx, py + dy))
 
+    # --- 手はんだの部品（spec.NOT_ASSEMBLED）のパッドからペーストの層を外す ------------------
+    # JLC はペーストの層からステンシルを作り、載せない部品のパッドにもはんだを盛ってリフローする
+    # （監査 B 2 回目 B2-1・C 軽微 1: 裏の SW_PWR の 7 パッドに盛られて届き、突起が穴に沈まない）
+    for fp in board.GetFootprints():
+        kind = next((k for pat, k in s.FAB_KINDS.items() if re.fullmatch(pat, fp.GetReference())), None)
+        if kind in s.NOT_ASSEMBLED:
+            for p in fp.Pads():
+                ls = p.GetLayerSet()
+                ls.removeLayer(pcbnew.F_Paste)
+                ls.removeLayer(pcbnew.B_Paste)
+                p.SetLayerSet(ls)
+
     # --- ネット（circuit.py の宣言どおり）--------------------------------------
     fps = {f.GetReference(): f for f in board.GetFootprints()}
     for ref, _, _ in circuit.electronics():
@@ -225,8 +229,10 @@ def place(board, ctx):
     rule_area(board, ctx, ifc.antenna_keepout(), (pcbnew.F_Cu, pcbnew.B_Cu), "ANTENNA_KEEPOUT")
     for box in xiao_underside(ifc):
         rule_area(board, ctx, box, (pcbnew.F_Cu,), "XIAO_UNDERSIDE")
-    c, r = insert_keepout(ifc)
-    rule_area(board, ctx, circle_poly(c, r), (pcbnew.F_Cu,), "INSERT_KEEPOUT")
+    # 基板の面に当たる金属（キーの下のナット 9・H3 のインサート）の下に、当たる側の銅を置かない
+    # （interface.metal_keepouts。監査 E 1 回目 重要 3・2 回目 重要 1）
+    for ref, layer, c, r in ifc.metal_keepouts():
+        rule_area(board, ctx, circle_poly(c, r), (LAYER[layer],), "METAL_KEEPOUT")
     # 外形とスタビの逃げ穴の縁に、配線・ビアを入れない帯（ベタは入れてよい。ベタは自分の
     # 外形の逃げで離れる）。**Freerouting は外形・逃げ穴をネットクラスの間隔 0.2 でしか避けない**
     # ので、JLC の銅と外形 0.3 を割った（1 回目: 0.237・0.280）。帯は EDGE_BAND 幅

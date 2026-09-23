@@ -2,6 +2,10 @@
 
     tools/kb cckb pcb                                        # 未配線の板（置く・ネットを張る）
     "$KICAD_PYTHON" projects/cckb/tools/route_pcb.py         # ここ。配線 → ベタ → GND ビア
+    "$KICAD_PYTHON" projects/cckb/tools/route_pcb.py --reroute CS[,NET...]
+        # いまの配線済みの板（pcb/cckb_main.kicad_pcb）から、名指しした網と GND 以外の線・ビアを
+        # **そのまま持ってきて**、名指しした網だけを Freerouting に引かせる（発注前の小さな直しで、
+        # 監査の済んだ配線を動かさない。2 回目の監査 S1）。持ってきた線が禁止域に掛かれば落とす
     .venv/bin/python3 -m foundry.drc projects/cckb/pcb/cckb_main.kicad_pcb
 
 順序（docs/knowledge/pcb.md）:
@@ -346,17 +350,19 @@ def matrix_ends(board):
     return out
 
 
-def edit_dsn(dsn, ends, margin_um):
+def edit_dsn(dsn, ends, margin_um, only=None):
+    """only: 引かせる網の集合（None なら全部）。それ以外は PREWIRED と同じく外して線を protect に。"""
     t = dsn.read_text()
     # (a) 引き切ったネット（GND・SW*_D）を丸ごと外し、線は障害物（protect）にする
-    names = sorted({n for n in re.findall(r"\(net (\S+)", t) if PREWIRED.fullmatch(n)})
+    names = sorted({n for n in re.findall(r"\(net ([^\s()]+)", t)
+                    if PREWIRED.fullmatch(n) or (only is not None and n not in only)})
     for n in names:
         e = re.escape(n)
         t = re.sub(rf"\s*\(plane {e} \(polygon [\s\S]*?\)\)", "", t)
         t = re.sub(rf"\s*\(net {e}\s*\n\s*\(pins [^)]*\)\s*\n\s*\)", "", t)
         t = re.sub(rf"(\(class \S+ [^)]*?)\b{e}\b", r"\1", t)
         t = re.sub(rf"\(net {e}\)\s*\(type route\)", "(type protect)", t)
-    left = [n for n in re.findall(r"\(net (\S+)", t) if PREWIRED.fullmatch(n)]
+    left = [n for n in re.findall(r"\(net ([^\s()]+)", t) if n in names]
     if left:
         raise SystemExit(f"DSN から外しきれないネット: {sorted(set(left))}")
     # (b) 行列のネット: ピンを 2 つ（駆動側・最寄りの行列のパッド）に絞り、線は protect
@@ -371,6 +377,8 @@ def edit_dsn(dsn, ends, margin_um):
         n_pins[net] = len(keep)
         return f"(net {net}\n      (pins {' '.join(keep)})"
     t = re.sub(r"\(net (COL\d+)\s*\n\s*\(pins ([^)]*)\)", narrow, t)
+    if only is not None:
+        ends = {n: e for n, e in ends.items() if n in only}
     if set(n_pins) != set(ends):
         raise SystemExit(f"DSN で絞れなかった行列のネット: {set(ends) - set(n_pins)}")
     n_fix = [0]
@@ -418,7 +426,7 @@ def edit_dsn(dsn, ends, margin_um):
                 twins_dropped=n_twin[0])
 
 
-def freeroute(board, work):
+def freeroute(board, work, only=None):
     if not JAR.exists():
         raise SystemExit(f"Freerouting が無い: {JAR}")
     dsn, ses = work / "cckb.dsn", work / "cckb.ses"
@@ -430,7 +438,7 @@ def freeroute(board, work):
                 f.unlink()
         if not pcbnew.ExportSpecctraDSN(board, str(dsn)):
             raise SystemExit("DSN の書き出しに失敗")
-        info = edit_dsn(dsn, ends, margin)
+        info = edit_dsn(dsn, ends, margin, only)
         log = work / f"freerouting_{margin}.log"
         with log.open("w") as fh:
             r = subprocess.run([_java(), "-jar", str(JAR), "-de", str(dsn), "-do", str(ses),
@@ -456,8 +464,12 @@ def freeroute(board, work):
 
 def restore_rule_areas(board):
     """SES の往復でルール領域の層が消える（HHKB 実測）。名前で層を戻す。"""
+    # 金属の禁止域は名前が 1 つなので、層も 1 つでなければ戻せない（いまは全部が上面のナット・インサート）
+    metal = {lay for _, lay, _, _ in interface.Interface(load(PROJ)).metal_keepouts()}
+    if metal != {"F.Cu"}:
+        raise SystemExit(f"METAL_KEEPOUT の層が {metal}（名前で層を戻せない。名前を層ごとに分ける）")
     want = {"ANTENNA_KEEPOUT": (pcbnew.F_Cu, pcbnew.B_Cu), "XIAO_UNDERSIDE": (pcbnew.F_Cu,),
-            "EDGE_KEEPOUT": (pcbnew.F_Cu, pcbnew.B_Cu), "INSERT_KEEPOUT": (pcbnew.F_Cu,)}
+            "EDGE_KEEPOUT": (pcbnew.F_Cu, pcbnew.B_Cu), "METAL_KEEPOUT": (pcbnew.F_Cu,)}
     seen = set()
     for z in board.Zones():
         if not z.GetIsRuleArea():
@@ -715,10 +727,256 @@ def double_single_via_islands(board, space):
     return placed, left
 
 
+# ---------------------------------------------------------------------------
+# 名指しした網だけを引き直す（--reroute）
+# ---------------------------------------------------------------------------
+
+def _track_key(t):
+    s, e = t.GetStart(), t.GetEnd()
+    return _key_nm(t.GetNetname(), t.GetLayerName(), (s.x, s.y), (e.x, e.y)) + (t.GetWidth(),)
+
+
+def _via_key(v):
+    return (v.GetNetname(), v.GetPosition().x, v.GetPosition().y, v.GetWidth(pcbnew.F_Cu),
+            v.GetDrillValue())
+
+
+def kept_wiring(prev, reroute, board):
+    """前の板の線とビアのうち、GND（ベタ・縫いのビアは毎回作る）以外。引き直す網（reroute）は
+    board のルール領域に掛からない部分だけ（掛かる部分を Freerouting が繋ぎ直す）。
+    ([(ネット, 層名, 始点, 終点, 幅)], [(ネット, 位置, 径, 穴)], [外した物])（KiCad の整数座標）。"""
+    tracks, vias = [], []
+    for t in prev.GetTracks():
+        n = t.GetNetname()
+        if n == "GND":
+            continue
+        if t.GetClass() == "PCB_VIA":
+            vias.append((n, (t.GetPosition().x, t.GetPosition().y), t.GetWidth(pcbnew.F_Cu),
+                         t.GetDrillValue()))
+        else:
+            tracks.append((n, t.GetLayerName(), (t.GetStart().x, t.GetStart().y),
+                           (t.GetEnd().x, t.GetEnd().y), t.GetWidth()))
+    part = [x for x in tracks if x[0] in reroute]
+    pv = [x for x in vias if x[0] in reroute]
+    bad_t = {i for i, x in enumerate(part) if kept_in_rule_areas(board, [x], [])}
+    bad_v = {i for i, x in enumerate(pv) if kept_in_rule_areas(board, [], [x])}
+    tracks = [x for x in tracks if x[0] not in reroute] + [x for i, x in enumerate(part) if i not in bad_t]
+    vias = [x for x in vias if x[0] not in reroute] + [x for i, x in enumerate(pv) if i not in bad_v]
+    return tracks, vias, [part[i] for i in sorted(bad_t)] + [pv[i] for i in sorted(bad_v)]
+
+
+def lay_kept(board, tracks, vias):
+    """持ってきた線・ビアのうち、板に無いものを置く。置いた数。"""
+    have_t = {_track_key(t) for t in board.GetTracks() if t.GetClass() == "PCB_TRACK"}
+    have_v = {_via_key(v) for v in board.GetTracks() if v.GetClass() == "PCB_VIA"}
+    n = 0
+    for net, layer, a, b, w in tracks:
+        if _key_nm(net, layer, a, b) + (w,) in have_t:
+            continue
+        t = pcbnew.PCB_TRACK(board)
+        t.SetStart(pcbnew.VECTOR2I(*a))
+        t.SetEnd(pcbnew.VECTOR2I(*b))
+        t.SetWidth(w)
+        t.SetLayer(LAYER[layer])
+        t.SetNet(board.FindNet(net))
+        board.Add(t)
+        n += 1
+    for net, p, d, drill in vias:
+        if (net, p[0], p[1], d, drill) in have_v:
+            continue
+        v = pcbnew.PCB_VIA(board)
+        v.SetPosition(pcbnew.VECTOR2I(*p))
+        v.SetWidth(d)
+        v.SetDrill(drill)
+        v.SetNet(board.FindNet(net))
+        board.Add(v)
+        n += 1
+    return n
+
+
+def kept_in_rule_areas(board, tracks, vias):
+    """持ってきた線・ビアが、線/ビアを禁止するルール領域に掛かる網。{網: [領域名]}。"""
+    out = {}
+    zones = [z for z in board.Zones() if z.GetIsRuleArea()]
+    for net, layer, a, b, w in tracks:
+        t = pcbnew.PCB_TRACK(board)
+        t.SetStart(pcbnew.VECTOR2I(*a))
+        t.SetEnd(pcbnew.VECTOR2I(*b))
+        t.SetWidth(w)
+        t.SetLayer(LAYER[layer])
+        sh = t.GetEffectiveShape(LAYER[layer])
+        for z in zones:
+            if z.GetDoNotAllowTracks() and z.IsOnLayer(LAYER[layer]) and z.Outline().Collide(sh, 0):
+                out.setdefault(net, []).append(z.GetZoneName())
+    for net, p, d, drill in vias:
+        v = pcbnew.PCB_VIA(board)
+        v.SetPosition(pcbnew.VECTOR2I(*p))
+        v.SetWidth(d)
+        v.SetDrill(drill)
+        for lay in LAYER.values():
+            if any(z.GetDoNotAllowVias() and z.IsOnLayer(lay) and
+                   z.Outline().Collide(v.GetEffectiveShape(lay), 0) for z in zones):
+                out.setdefault(net, []).append("via")
+    return out
+
+
+DETOUR_CLEAR = 0.25      # ずらした線とほかの銅・禁止域の間（ネットクラスの 0.2 ＋ Freerouting と同じ余裕 0.05）
+
+
+def detours(board, dropped):
+    """引き直す網から外した線（禁止域に掛かった物）を、**決まった形で**置き直す。
+
+    外した線が水平か垂直で、掛かったのが金属の禁止域（METAL_KEEPOUT の円）だけのとき、線を円から
+    離れる側へ平行にずらし（円の外接多角形の頂点 ＋ 線の半幅 ＋ DETOUR_CLEAR）、両端を 45° で元の端へ戻す。
+    それ以外の形は扱わない（落とす）。置いた線がほかの網の銅・ルール領域に当たれば落とす。
+    （Freerouting に繋がせると、禁止域を 10 個にしたとき同じ隙を繋げない入力があった——2026-09-24、
+    禁止域を 1〜2 個にした入力では Freerouting 自身がこれと同じ 3 本〔y −43.99〕で繋いだ）
+    [(ネット, 層名, 始点, 終点, 幅)] を返す。"""
+    circles = []
+    for z in board.Zones():
+        if z.GetIsRuleArea() and z.GetZoneName() == "METAL_KEEPOUT":
+            ol = z.Outline().Outline(0)
+            pts = [ol.CPoint(i) for i in range(ol.PointCount())]
+            bb = z.Outline().BBox()
+            c = bb.Centre()
+            circles.append((z, c, max(math.hypot(p.x - c.x, p.y - c.y) for p in pts)))
+    out = []
+    for seg in dropped:
+        if len(seg) != 5:
+            raise SystemExit(f"外したビアは置き直せない（形を決めていない）: {seg}")
+        net, layer, a, b, w = seg
+        horiz, vert = a[1] == b[1], a[0] == b[0]
+        if not (horiz or vert):
+            raise SystemExit(f"斜めの線の置き直しは決めていない: {seg}")
+        u = 0 if horiz else 1                  # 線に沿う軸
+        v = 1 - u                              # ずらす軸
+        lo, hi = sorted((a, b), key=lambda q: q[u])
+        t = pcbnew.PCB_TRACK(board)
+        t.SetStart(pcbnew.VECTOR2I(*a))
+        t.SetEnd(pcbnew.VECTOR2I(*b))
+        t.SetWidth(w)
+        t.SetLayer(LAYER[layer])
+        sh = t.GetEffectiveShape(LAYER[layer])
+        hit = [(c, R) for z, c, R in circles if z.IsOnLayer(LAYER[layer]) and z.Outline().Collide(sh, 0)]
+        others = [n for n in kept_in_rule_areas(board, [seg], []).get(net, []) if n != "METAL_KEEPOUT"]
+        if not hit or others:
+            raise SystemExit(f"金属の禁止域でないルール領域に掛かった線: {seg} {others}")
+        side = {1 if a[v] > (c.y if v else c.x) else -1 for c, R in hit}
+        if len(side) != 1:
+            raise SystemExit(f"禁止域が線の両側にある（どちらへずらすか決まらない）: {seg}")
+        sgn = side.pop()
+        off = max(abs((c.y if v else c.x) + sgn * (R + w // 2 + MM(DETOUR_CLEAR)) - a[v]) for c, R in hit)
+        off = int(math.ceil(off / MM(0.01))) * MM(0.01)
+        y1 = a[v] + sgn * off
+
+        def pt(p_u, p_v):
+            return (p_u, p_v) if u == 0 else (p_v, p_u)
+        path = [pt(lo[u], a[v]), pt(lo[u] + off, y1), pt(hi[u] - off, y1), pt(hi[u], a[v])]
+        if hi[u] - lo[u] < 2 * off:
+            raise SystemExit(f"線が短くて 45° で戻せない: {seg}")
+        new = [(net, layer, p, q, w) for p, q in zip(path, path[1:])]
+        # 置いた線がほかの網の銅・ルール領域に当たらないか
+        if kept_in_rule_areas(board, new, []):
+            raise SystemExit(f"ずらした線もルール領域に掛かる: {new}")
+        for n2, l2, p, q, w2 in new:
+            t = pcbnew.PCB_TRACK(board)
+            t.SetStart(pcbnew.VECTOR2I(*p))
+            t.SetEnd(pcbnew.VECTOR2I(*q))
+            t.SetWidth(w2)
+            t.SetLayer(LAYER[l2])
+            sh = t.GetEffectiveShape(LAYER[l2])
+            for it in list(board.GetTracks()) + [pd for fp in board.GetFootprints() for pd in fp.Pads()]:
+                if it.GetNetname() == net or not it.IsOnLayer(LAYER[l2]):
+                    continue
+                if it.GetEffectiveShape(LAYER[l2]).Collide(sh, MM(DETOUR_CLEAR)):
+                    raise SystemExit(f"ずらした線 {(p, q)} が {it.GetNetname()} の銅に当たる")
+        out += new
+    return out
+
+
+def wiring_of(board, nets):
+    """網ごとの (線の鍵の集合, ビアの鍵の集合)。"""
+    out = {n: (set(), set()) for n in nets}
+    for t in board.GetTracks():
+        n = t.GetNetname()
+        if n in out:
+            out[n][1 if t.GetClass() == "PCB_VIA" else 0].add(
+                _via_key(t) if t.GetClass() == "PCB_VIA" else _track_key(t))
+    return out
+
+
+def net_pieces(board, net):
+    """網 net のパッドが、線とビアでいくつの塊に分かれているか（1 なら繋がっている）。
+    線の端どうし・線の端とビア・線の端とパッド（同じ層で、端がパッドの形の中）を繋ぐ。"""
+    items = []                                           # (種類, 物)
+    for fp in board.GetFootprints():
+        for pd in fp.Pads():
+            if pd.GetNetname() == net:
+                items.append(pd)
+    tracks = [t for t in board.GetTracks() if t.GetNetname() == net]
+    items += tracks
+    parent = list(range(len(items)))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def join(i, j):
+        parent[find(i)] = find(j)
+
+    def ends(it):
+        if isinstance(it, pcbnew.PAD):
+            return []
+        if it.GetClass() == "PCB_VIA":
+            return [(it.GetPosition(), None)]
+        return [(it.GetStart(), it.GetLayer()), (it.GetEnd(), it.GetLayer())]
+
+    for i, a in enumerate(items):
+        for j in range(i + 1, len(items)):
+            b = items[j]
+            hit = False
+            for pa, la in ends(a):
+                if isinstance(b, pcbnew.PAD):
+                    hit |= (la is None or b.IsOnLayer(la)) and b.HitTest(pa)
+                for pb, lb in ends(b):
+                    hit |= pa == pb and (la is None or lb is None or la == lb)
+            if not hit and isinstance(a, pcbnew.PAD):
+                for pb, lb in ends(b):
+                    hit |= (lb is None or a.IsOnLayer(lb)) and a.HitTest(pb)
+            if hit:
+                join(i, j)
+    pads = [i for i, it in enumerate(items) if isinstance(it, pcbnew.PAD)]
+    return len({find(i) for i in pads})
+
+
+def parse_args(argv):
+    if not argv:
+        return None
+    if len(argv) != 2 or argv[0] != "--reroute" or not argv[1]:
+        raise SystemExit("使い方: route_pcb.py [--reroute NET[,NET...]]")
+    return set(argv[1].split(","))
+
+
 def main():
+    reroute = parse_args(sys.argv[1:])
+    prev_sha = None
+    if reroute is not None:
+        if not OUT.exists():
+            raise SystemExit(f"--reroute は前の配線済みの板 {OUT} が要る")
+        prev_sha = hashlib.sha256(OUT.read_bytes()).hexdigest()
+        prev = pcbnew.LoadBoard(str(OUT))
     work = PROJ / "pcb" / "route_work"
     work.mkdir(exist_ok=True)
     board = pcbnew.LoadBoard(str(SRC))
+    if reroute is not None:
+        # 引き直す網は、新しい板の禁止域に掛かる線・ビアだけを外し、決まった形で置き直す（detours）。
+        # それでも繋がらない網だけを Freerouting に引かせる。**CS を丸ごと外して Freerouting に引かせると
+        # 1 本繋がらなかった**（2026-09-24・余裕 30/35µm。禁止域を減らした入力では繋がる、という不安定さ）
+        k_tracks, k_vias, dropped = kept_wiring(prev, reroute, board)
+        del prev
+        print(f"   引き直す網 {sorted(reroute)} から外した線・ビア（禁止域に掛かる）: {dropped}")
     segs, mvias = matrix_segments(board)
     n_mx = lay_segments(board, segs)
     lay_vias(board, mvias)
@@ -730,32 +988,77 @@ def main():
     fan_vias = [cad(t.GetPosition()) for t in board.GetTracks()
                 if t.GetClass() == "PCB_VIA" and t.GetNetname() == "GND"]
     print(f"   行列 {n_mx} 区間 / GND ファンアウト {len(fan)} 個")
-    info = freeroute(board, work)
-    print(f"   Freerouting: 外したネット {len(info['stripped'])} 本（GND・SW*_D・ROW*）/ protect の線"
-          f" {info['protected_wires']} / 採った余裕 {info['margin_um']}µm（試した {info['tried']}）")
+    if reroute is not None:
+        bad = kept_in_rule_areas(board, k_tracks, k_vias)
+        if bad:
+            raise SystemExit(f"持ってきた配線がルール領域に掛かる網 {bad}。--reroute に足すこと")
+        n_kept = lay_kept(board, k_tracks, k_vias)
+        det = detours(board, dropped)            # 持ってきた配線を置いた後で（当たりを見るため）
+        print(f"   外した線の置き直し: {[(n, l, cad(pcbnew.VECTOR2I(*a)), cad(pcbnew.VECTOR2I(*b))) for n, l, a, b, _ in det]}")
+        k_tracks = k_tracks + det
+        n_kept += lay_kept(board, det, [])
+        kept_nets = sorted(({t[0] for t in k_tracks} | {v[0] for v in k_vias}) - reroute)
+        want_kept = wiring_of(board, kept_nets)
+        print(f"   前の板から持ってきた線・ビア {n_kept}（網 {len(kept_nets)}）/ 引き直す網 {sorted(reroute)}")
+    if reroute is not None:
+        left = [n for n in sorted(reroute) if net_pieces(board, n) != 1]
+        if not left:
+            info = dict(stripped=[], protected_wires=0, clearances=0, narrowed={}, twins_dropped=0,
+                        tried=[], margin_um=None)
+            print(f"   引き直す網 {sorted(reroute)} は置き直しで繋がった（Freerouting を回さない）")
+        else:
+            info = freeroute(board, work, set(left))
+    else:
+        info = freeroute(board, work, reroute)
+    if info["tried"]:
+        print(f"   Freerouting: 外したネット {len(info['stripped'])} 本（GND・SW*_D・ROW*）/ protect の線"
+              f" {info['protected_wires']} / 採った余裕 {info['margin_um']}µm（試した {info['tried']}）")
     restore_rule_areas(board)
-    # SES の取り込みで消えたものを置き直す（位置は決定的）
-    miss = tracks_present(board, segs)
-    if miss:
-        lay_segments(board, miss)
-    n_mv = lay_vias(board, mvias)
-    miss2 = tracks_present(board, segs)
-    if miss2:
-        raise SystemExit(f"行列の線が置き直せない: {miss2[:5]}")
-    have_gnd = tracks_present(board, fan_tracks)
-    if have_gnd:
-        lay_segments(board, have_gnd, width=0.3)
-    have_v = {cad(t.GetPosition()) for t in board.GetTracks() if t.GetClass() == "PCB_VIA"}
-    for v in fan_vias:
-        if v not in have_v:
-            nv = pcbnew.PCB_VIA(board)
-            nv.SetPosition(kpt(*v))
-            nv.SetWidth(MM(VIA_D))
-            nv.SetDrill(MM(VIA_DRILL))
-            nv.SetNet(board.FindNet("GND"))
-            board.Add(nv)
-    n_thin = widen_thin(board)
-    print(f"   SES 後に置き直した: 行列 {len(miss)} / ビア {n_mv} / GND スタブ {len(have_gnd)} / 細い線 {n_thin}")
+    if info["tried"]:           # SES を取り込んだときだけ（取り込みが既存の配線を作り直す）
+        # SES の取り込みで消えたものを置き直す（位置は決定的）
+        miss = tracks_present(board, segs)
+        if miss:
+            lay_segments(board, miss)
+        n_mv = lay_vias(board, mvias)
+        miss2 = tracks_present(board, segs)
+        if miss2:
+            raise SystemExit(f"行列の線が置き直せない: {miss2[:5]}")
+        have_gnd = tracks_present(board, fan_tracks)
+        if have_gnd:
+            lay_segments(board, have_gnd, width=0.3)
+        have_v = {cad(t.GetPosition()) for t in board.GetTracks() if t.GetClass() == "PCB_VIA"}
+        for v in fan_vias:
+            if v not in have_v:
+                nv = pcbnew.PCB_VIA(board)
+                nv.SetPosition(kpt(*v))
+                nv.SetWidth(MM(VIA_D))
+                nv.SetDrill(MM(VIA_DRILL))
+                nv.SetNet(board.FindNet("GND"))
+                board.Add(nv)
+        n_thin = widen_thin(board)
+        print(f"   SES 後に置き直した: 行列 {len(miss)} / ビア {n_mv} / GND スタブ {len(have_gnd)} / 細い線 {n_thin}")
+    if reroute is not None:
+        # SES の取り込みで持ってきた配線が消えた・増えたなら、前の板と同じ集合に戻す
+        n_back = lay_kept(board, k_tracks, k_vias) if info["tried"] else 0
+        extra = []
+        for t in list(board.GetTracks()):
+            n = t.GetNetname()
+            if n not in want_kept:
+                continue
+            key = _via_key(t) if t.GetClass() == "PCB_VIA" else _track_key(t)
+            if key not in want_kept[n][1 if t.GetClass() == "PCB_VIA" else 0]:
+                extra.append(t)
+        for t in extra:
+            board.Remove(t)
+        got = wiring_of(board, kept_nets)
+        # **前の板そのものと**比べる（行列を引き直した線が前の板と違えば、ここで分かる）
+        prev_w = {n: ({_key_nm(n, l, a, b) + (w,) for n2, l, a, b, w in k_tracks if n2 == n},
+                      {(n, p[0], p[1], d, dr) for n2, p, d, dr in k_vias if n2 == n}) for n in kept_nets}
+        if got != want_kept or got != prev_w:
+            diff = [n for n in kept_nets if got[n] != want_kept[n] or got[n] != prev_w[n]]
+            raise SystemExit(f"持ってきた配線が前の板と同じにならない網: {diff}")
+        print(f"   持ってきた配線: SES 後に置き直した {n_back} / 余分を消した {len(extra)}"
+              f" / 前の板と同じ網 {len(kept_nets)}")
 
     pour(board)
     fill(board)
@@ -795,6 +1098,8 @@ def main():
                single_via_islands=[dict(layer="F.Cu" if lay == pcbnew.F_Cu else "B.Cu",
                                         area_mm2=round(a, 2), length_mm=round(L, 2))
                                    for lay, a, L in single],
+               rerouted_nets=sorted(reroute) if reroute is not None else None,
+               kept_from_sha256=prev_sha,
                islands_removed=len(left),
                islands_removed_mm2=round(removed, 2), gnd_area_mm2=areas,
                unconnected=unconnected)

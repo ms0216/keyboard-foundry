@@ -21,12 +21,21 @@
 0805 と手はんだの GND パッドをサーマルに・ビア 1 本の長い GND の島に 2 本目。Freerouting は余裕 40µm で未配線 0
 （30・35・25 では 1。`pcb/route.json` に記録）。
 
+**2026-09-24 の 2 回目の監査の直し**（決定記録 §S1〜S3）: 金属が当たる 10 か所（キーの下のナット 9・H3 のインサート）
+全部に禁止域 `METAL_KEEPOUT`（`interface.metal_on_pcb` が高さから判定）。配線は **`route_pcb.py --reroute CS`** で、
+前の板の線・ビアを GND 以外そのまま持ってきて、禁止域に掛かった CS の 1 本（y −42.633）だけを決まった形
+（円から離す側へ平行にずらして y −44.033・両端 45°）で置き直した。**変わった網は CS と GND（縫いのビア）だけ**
+（ほかの 89 網は前の板と線・ビアが同じことを route_pcb が確かめる）。Freerouting は回していない（丸ごと引かせると
+禁止域 10 個の入力で CS が 1 本繋がらなかった）。ペーストを手はんだの部品から外した・パッド内ビアを φ0.8 に・
+D_PWR の値を BAT46W に（板の銅は変わらない）。
+
 絵: `tools/kb cckb render` → `build/pcb_view/cckb.pcb.cckb_main.png`（表裏重ね）。
 
 ## 作り方（いつでも同じ板に戻る）
 
     tools/kb cckb pcb                                               # 未配線の板（置く・ネットを張る）
     "$KICAD_PYTHON" projects/cckb/tools/route_pcb.py                # 配線 → ベタ → GND のビア（約 3〜10 分）
+    "$KICAD_PYTHON" projects/cckb/tools/route_pcb.py --reroute CS   # いまの配線を持ってきて CS だけ直す（2 回目の監査の直しはこれ）
     tools/kb cckb fab-fields                                        # LCSC・BOM から外す印を焼く
     tools/kb cckb drc                                               # 記録 pcb/cckb_main.drc.json
     REQUIRE_KICAD=1 .venv/bin/pytest tests -q
@@ -80,7 +89,7 @@
   左は XIAO 自身の下、奥と手前は XIAO のパッドの列（open-gaps P7）。試作で RSSI を測る
 - **XIAO の手前の列はパッド内ビア**（段階 1 の「穴なし」から変更。open-gaps P6）
 - **電源スイッチの入の向きは図の読み**（つまみを手前へ寄せると入。open-gaps P5）。**利用者が手はんだ**（付ける前にテスターで確かめられる）
-- **USB を挿す前に電源スイッチを OFF**（B5819W の逆漏れ。open-gaps 受け入れた差 A1）
+- **USB を挿す前に電源スイッチを OFF**（ショットキー D_PWR の逆漏れ。既定の BAT46W では 25℃ で電池へ入らないが高温は保証が無い。open-gaps 受け入れた差 A1・O12）
 - 電源スイッチの位置決めの穴がホルダの下に来る DRC（npth_inside_courtyard 2 件）は警告に下げた
   （spec.DRC_SEVERITY。穴はホルダの＋の端子の下で銅は無く、突起は基板を抜けない）。検査が「この 2 件だけ」を見る
 - XIAO の 3D モデルの高さ（表面実装での Z）は確かめていない（組み立てモデルの段で）
@@ -94,13 +103,14 @@
 | `test_jlc_parts_are_all_on_the_bottom` | JLC が実装する 70 個はパッドが全部裏。手で付ける物は BOM/CPL に無い |
 | `test_the_board_matches_the_firmware_pin_map` | overlay の行のピン・&shifter の番号・CS・SPI・ADC が板のネットと一致 |
 | `test_the_antenna_keepout_has_no_copper_after_the_fill` | 塗った後の禁止域の銅 0（ずらした対照では銅が数えられる） |
-| `test_the_power_path_has_the_right_polarity` | ホルダ＋→スイッチ②、③→VBAT_SW→分圧・B5819W→3V3、XIAO の BAT に何も無い |
+| `test_the_power_path_has_the_right_polarity` | ホルダ＋→スイッチ②、③→VBAT_SW→分圧・D_PWR→3V3、XIAO の BAT に何も無い |
 | `test_the_xiao_pads_cover_the_castellations_of_the_official_step` | 公式 STEP のパッドが板のパッドの中・張り出し 0.6 |
 | `test_the_power_switch_pads_hold_the_terminals_of_the_drawing` | 図面の端子・耳の金具・穴がパッドの中、ランドの外形が spec と一致 |
 | `test_the_routed_board_was_made_from_the_current_placement` | 配置を変えて配線し直していない状態を捕まえる |
+| `test_nothing_under_the_metal_on_the_board` | 取付の穴 11 を板から数え、金属が当たる 10 か所の円の中の線・ビア・塗った後の銅が 0（2 回目の監査） |
+| `test_only_the_jlc_parts_get_solder_paste` | ペーストは JLC が実装するパッドだけ（166）。手はんだの部品に無い |
 | `test_no_via_inside_any_pad` | 全部の銅のパッドにビアが掛からない（XIAO の D0〜D6 の 7 個だけ名指しで例外） |
 | `test_nothing_on_top_under_the_xiao`・`test_the_xiao_bottom_pads_are_the_official_ones` | XIAO の裏の露出パッド 8 個（STEP を毎回数える・Seeed 公式のランドと名前）の下の表の銅 0 |
-| `test_nothing_on_top_under_the_h3_insert` | H3 のインサート（外径 3.2 ＋ 0.3）の下の表の銅・線・ビア 0 |
 | `test_jlc_places_every_part_of_the_cpl_on_its_pads` | Fabrication Toolkit の CPL を JLC の部品データで置き直すと板のパッドに乗る（69 個） |
 | `test_the_thermal_pads_are_exactly_the_declared_ones`・`test_no_long_gnd_island_hangs_on_a_single_via` | サーマルは spec.THERMAL_PADS だけ・ビア 1 本の島は 12mm 未満 |
 
