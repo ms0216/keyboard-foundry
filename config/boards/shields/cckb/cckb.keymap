@@ -1,147 +1,61 @@
-/* cckb。雛形から作った。以後は人が持つ。
- * 並びは cckb-transform.dtsi の map と同じ。&none は刻印から推せなかったキー。
- * **&bootloader と &bt BT_CLR を必ずどこかに置く**（ケースを開けずに復旧できるように）。
+/*
+ * CCKB。並びは cckb-transform.dtsi の map と同じ（上の段から、段の中は左→右。62 キー）。
+ * 層は HHKB 分割機（../2608042258_HHKB_devided/config/boards/shields/hhkb_split/hhkb_split.keymap）
+ * と同じ: base_mac / base_win / fn / sys。**スペースは 3 つとも SPACE**（設計書 §1。
+ * 真ん中は使ってみてから別のキーに替えてよい）。
  */
 
 #include <behaviors.dtsi>
-#include <dt-bindings/zmk/keys.h>
 #include <dt-bindings/zmk/bt.h>
+#include <dt-bindings/zmk/keys.h>
+#include <dt-bindings/zmk/outputs.h>
+
+#define BASE_MAC 0
+#define BASE_WIN 1
+#define FN       2
+#define SYS      3
 
 / {
 	keymap {
 		compatible = "zmk,keymap";
 
-		base {
+		base_mac {
 			bindings = <
-				&kp ESC       // Esc
-				&kp N1        // 1
-				&kp N2        // 2
-				&kp N3        // 3
-				&kp N4        // 4
-				&kp N5        // 5
-				&kp N6        // 6
-				&kp N7        // 7
-				&kp N8        // 8
-				&kp N9        // 9
-				&kp N0        // 0
-				&kp MINUS     // -
-				&kp EQUAL     // =
-				&kp BSLH      // \
-				&kp GRAVE     // `
-				&kp TAB       // Tab
-				&kp Q         // Q
-				&kp W         // W
-				&kp E         // E
-				&kp R         // R
-				&kp T         // T
-				&kp Y         // Y
-				&kp U         // U
-				&kp I         // I
-				&kp O         // O
-				&kp P         // P
-				&kp LBKT      // [
-				&kp RBKT      // ]
-				&kp DEL       // Del
-				&kp LCTRL     // Ctrl
-				&kp A         // A
-				&kp S         // S
-				&kp D         // D
-				&kp F         // F
-				&kp G         // G
-				&kp H         // H
-				&kp J         // J
-				&kp K         // K
-				&kp L         // L
-				&kp SEMI      // ;
-				&kp SQT       // '
-				&kp RET       // Enter
-				&kp LSHFT     // Shift
-				&kp Z         // Z
-				&kp X         // X
-				&kp C         // C
-				&kp V         // V
-				&kp B         // B
-				&kp N         // N
-				&kp M         // M
-				&kp COMMA     // ,
-				&kp DOT       // .
-				&kp FSLH      // /
-				&kp LSHFT     // Shift
-				&mo 1         // Fn
-				&kp LALT      // Alt
-				&kp LGUI      // Meta
-				&kp SPACE     // Space
-				&kp SPACE     // Space
-				&kp SPACE     // Space
-				&kp LGUI      // Meta
-				&kp LALT      // Alt
+			&kp ESC   &kp N1 &kp N2 &kp N3 &kp N4 &kp N5 &kp N6 &kp N7 &kp N8 &kp N9 &kp N0 &kp MINUS &kp EQUAL &kp BSLH &kp GRAVE
+			&kp TAB   &kp Q  &kp W  &kp E  &kp R  &kp T  &kp Y  &kp U  &kp I  &kp O  &kp P  &kp LBKT  &kp RBKT  &kp BSPC
+			&kp LCTRL &kp A  &kp S  &kp D  &kp F  &kp G  &kp H  &kp J  &kp K  &kp L  &kp SEMI &kp SQT &kp RET
+			&kp LSHFT &kp Z  &kp X  &kp C  &kp V  &kp B  &kp N  &kp M  &kp COMMA &kp DOT &kp SLASH &kp RSHFT &mo FN
+			&kp LALT  &kp LGUI &kp SPACE &kp SPACE &kp SPACE &kp RGUI &kp RALT
+			>;
+		};
+
+		base_win {
+			bindings = <
+			&kp ESC   &kp N1 &kp N2 &kp N3 &kp N4 &kp N5 &kp N6 &kp N7 &kp N8 &kp N9 &kp N0 &kp MINUS &kp EQUAL &kp BSLH &kp GRAVE
+			&kp TAB   &kp Q  &kp W  &kp E  &kp R  &kp T  &kp Y  &kp U  &kp I  &kp O  &kp P  &kp LBKT  &kp RBKT  &kp BSPC
+			&kp LCTRL &kp A  &kp S  &kp D  &kp F  &kp G  &kp H  &kp J  &kp K  &kp L  &kp SEMI &kp SQT &kp RET
+			&kp LSHFT &kp Z  &kp X  &kp C  &kp V  &kp B  &kp N  &kp M  &kp COMMA &kp DOT &kp SLASH &kp RSHFT &mo FN
+			&kp LGUI  &kp LALT &kp SPACE &kp SPACE &kp SPACE &kp RALT &kp RGUI
 			>;
 		};
 
 		fn {
 			bindings = <
-				&trans        // Esc
-				&trans        // 1
-				&trans        // 2
-				&trans        // 3
-				&trans        // 4
-				&trans        // 5
-				&trans        // 6
-				&trans        // 7
-				&trans        // 8
-				&trans        // 9
-				&trans        // 0
-				&trans        // -
-				&trans        // =
-				&trans        // \
-				&trans        // `
-				&trans        // Tab
-				&trans        // Q
-				&trans        // W
-				&trans        // E
-				&trans        // R
-				&trans        // T
-				&trans        // Y
-				&trans        // U
-				&trans        // I
-				&trans        // O
-				&trans        // P
-				&trans        // [
-				&trans        // ]
-				&trans        // Del
-				&trans        // Ctrl
-				&trans        // A
-				&trans        // S
-				&trans        // D
-				&trans        // F
-				&trans        // G
-				&trans        // H
-				&trans        // J
-				&trans        // K
-				&trans        // L
-				&trans        // ;
-				&trans        // '
-				&trans        // Enter
-				&trans        // Shift
-				&trans        // Z
-				&trans        // X
-				&trans        // C
-				&trans        // V
-				&trans        // B
-				&trans        // N
-				&trans        // M
-				&trans        // ,
-				&trans        // .
-				&trans        // /
-				&trans        // Shift
-				&trans        // Fn
-				&trans        // Alt
-				&trans        // Meta
-				&trans        // Space
-				&trans        // Space
-				&trans        // Space
-				&trans        // Meta
-				&trans        // Alt
+			&kp K_POWER &kp F1 &kp F2 &kp F3 &kp F4 &kp F5 &kp F6 &kp F7 &kp F8 &kp F9 &kp F10 &kp F11 &kp F12 &kp INS &kp DEL
+			&kp CAPS    &trans &trans &trans &trans &trans &trans &trans &kp PSCRN &kp SLCK &kp PAUSE_BREAK &kp UP &trans &trans
+			&mo SYS     &kp C_VOL_DN &kp C_VOL_UP &kp C_MUTE &kp C_EJECT &trans &kp KP_MULTIPLY &kp KP_DIVIDE &kp HOME &kp PG_UP &kp LEFT &kp RIGHT &trans
+			&trans      &trans &trans &trans &trans &trans &kp KP_PLUS &kp KP_MINUS &kp END &kp PG_DN &kp DOWN &trans &trans
+			&trans      &trans &trans &trans &trans &kp C_STOP &trans
+			>;
+		};
+
+		sys {
+			bindings = <
+			&bootloader &bt BT_SEL 0 &bt BT_SEL 1 &bt BT_SEL 2 &bt BT_SEL 3 &sys_reset &bootloader &sys_reset &none &none &out OUT_USB &none &none &none &bt BT_CLR
+			&none &none &to BASE_WIN &none &none &none &none &none &none &none &none &none &none &none
+			&trans &none &none &none &none &none &none &none &none &none &none &none &none
+			&none &none &none &none &none &none &none &to BASE_MAC &none &none &none &none &trans
+			&none &none &none &none &none &none &none
 			>;
 		};
 	};

@@ -16,6 +16,7 @@ from foundry.layout import UNIT, load_layout
 from foundry.project import load
 
 HHKB = FIXTURES / "hhkb_original.json"
+SHIELD = paths.ROOT / "config" / "boards" / "shields" / "cckb"
 
 
 def _row(k):
@@ -262,3 +263,43 @@ def test_the_unrouted_board_has_no_drc_violations(board):
     r = drc.run(board)
     assert r["violations"] == 0, r["details"]
     print("DRC 警告の内訳:", r["warning_kinds"])
+
+
+def test_every_layer_has_62_bindings():
+    from foundry.check_zmk_config import count_bindings
+
+    layers = count_bindings(SHIELD / "cckb.keymap")
+    assert [n for _, n in layers] == [62, 62, 62, 62], layers
+
+
+def test_the_three_space_keys_all_send_space_on_both_bases():
+    """Review Focus 2。3 つのスペースは別のスイッチで、既定では 3 つとも SPACE（設計書 §1）。"""
+    import re
+
+    from foundry import zmk
+
+    p = load("cckb")
+    rows, _ = zmk.layout(p)
+    idx = [i for i, (_, k, _) in enumerate(rows) if k.label == "Space"]
+    assert len(idx) == 3 and len({rows[i][2] for i in idx}) == 3     # (row, col) が別々
+    text = re.sub(r"/\*.*?\*/|//[^\n]*", " ", (SHIELD / "cckb.keymap").read_text(), flags=re.S)
+    for layer in ("base_mac", "base_win"):
+        body = re.search(layer + r"\s*\{\s*bindings\s*=\s*<(.*?)>;", text, re.S).group(1)
+        binds = re.findall(r"&\w+(?:\s+[A-Z_0-9]+(?:\s+\d+)?)?", body)
+        assert [binds[i].split()[-1] for i in idx] == ["SPACE"] * 3, layer
+
+
+def test_the_recovery_bindings_exist():
+    km = (SHIELD / "cckb.keymap").read_text()
+    assert "&bootloader" in km and "&bt BT_CLR" in km        # ケースを開けずに復旧
+
+
+def test_the_shield_config_passes_the_checker():
+    import subprocess
+    import sys
+
+    from conftest import ROOT
+
+    r = subprocess.run([sys.executable, "-m", "foundry.check_zmk_config"],
+                       cwd=ROOT, capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout + r.stderr
