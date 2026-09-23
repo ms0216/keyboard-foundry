@@ -1,0 +1,30 @@
+# Python
+.venv/
+__pycache__/
+.pytest_cache/
+
+# 生成物（生成器から再現できる）。未配線の基板は projects/*/pcb/unrouted/ に出るが、
+# 配線を始めたら板は pcb/ 直下に移して管理する（docs/knowledge/pcb.md）
+build/
+
+# KiCad
+*-backups/
+*.kicad_prl
+fp-info-cache
+*.bak
+*.kicad_pcb-bak
+*.kicad_sch-bak
+_autosave-*
+# KiCad が開いている間だけできるロック。**コミットしない**（HHKB で git add -A が 2 回巻き込んだ）
+~*.lck
+*.drc-raw.json
+
+# 発注ごとの製造ファイル（再現できる）
+projects/*/pcb/production/
+gerbers/
+*.gbr
+*.drl
+
+# OS / エディタ
+.DS_Store
+.history/

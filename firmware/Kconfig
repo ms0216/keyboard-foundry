@@ -1,0 +1,70 @@
+# foundry の ZMK モジュール（乾電池の残量計・打ち止めでの停止・状態 LED）。
+# 値そのものは各機種の devicetree に置き、ここは「その機能を積むかどうか」だけ。
+#
+# **同じ数字を 2 か所に書かない。**打ち止め電圧は機種のシールドの
+# empty-millivolts が唯一の出所。機種の検査で回路の打ち止め計算と突き合わせる。
+# 文中の open-gaps #N・docs/hardware/… は HHKB 分割機のリポジトリの記録（firmware/README.md）。
+
+config FOUNDRY_BATTERY_ALKALINE
+	bool "アルカリ乾電池の残量計"
+	default y
+	depends on DT_HAS_FOUNDRY_BATTERY_ALKALINE_ENABLED
+	select SENSOR
+	select ADC
+	help
+	  ZMK 標準の残量計はリチウムイオンの放電曲線で % を出すため、
+	  乾電池 2 本（2.4〜3.2V）ではほぼ常に 0% になる（open-gaps #13）。
+	  こちらは分圧を読んで、使える電圧の窓の中での残りを % にする。
+
+config FOUNDRY_LOW_BATTERY_SOFT_OFF
+	bool "打ち止め電圧を割ったら自分から止まる"
+	default y
+	depends on FOUNDRY_BATTERY_ALKALINE && ZMK_PM_SOFT_OFF
+	help
+	  電池が尽きるとき、レールが落ちてブラウンアウト → 起動 → 広告 →
+	  また落ちる、を繰り返す。残り少ない電池を早く使い切るうえ、
+	  **低電圧での flash 書き込みでペアリング情報が壊れうる**
+	  （nRF52840 の NVMC は VDD ≧ 1.7V が条件）。open-gaps #25b。
+
+	  打ち止め（devicetree の empty-millivolts）を下回った状態が
+	  FOUNDRY_LOW_BATTERY_SOFT_OFF_SAMPLES 回続いたら soft off に入る。
+
+config FOUNDRY_STATUS_LED
+	bool "XIAO 基板上の LED で状態を知らせる（実機の LED インジケーター相当）"
+	default n
+	depends on GPIO
+	help
+	  **新機能ではなく、欠落していた実機再現。**実機 HHKB Professional
+	  HYBRID には前面に LED インジケーターがある（PFU 取扱説明書
+	  P3PC-6641-05）。この案件はその事実を記録しておらず、
+	  specs には「HHKB に存在しない機能」として RGB と並べて書いていた。
+	  経緯は docs/hardware/decisions/2026-08-16-status-led.md。
+
+	  実機の表をそのまま踏襲する:
+	    消灯          接続中（**実機も接続中は消灯**）
+	    青 1 秒に 2 回  ホストと繋がっていない（ペアリング待機相当）
+	    橙 1 回/30 秒   電池残量が少ない
+	    橙 2 回/15 秒   電池を交換
+	    起動時         青点灯 → 消灯
+
+	  **実機に無い状態を 1 つ足している。**完全分割型なので左手は
+	  「右手と繋がっているか」も持つが、一体型の実機には対応が無い。
+	  右手が落ちるとキーの半分が死ぬので、**緑**を当て、
+	  **ホスト未接続より優先**する。
+
+	  ⚠️ ZMK に「広告中」「スキャン中」の事象は無い（central.c の内部に
+	  閉じている）。**「繋がっていない」を代理に使っている。**
+
+	  ⚠️ led0/led1/led2 のエイリアスがある基板でしか積めない。
+	  無ければ BUILD_ASSERT で落ちる（黙って無効にはしない）。
+
+config FOUNDRY_LOW_BATTERY_SOFT_OFF_SAMPLES
+	int "何回続けて下回ったら止まるか"
+	default 2
+	range 1 255
+	depends on FOUNDRY_LOW_BATTERY_SOFT_OFF
+	help
+	  1 回で止めない。BLE 送信中の電圧降下（電池の内部抵抗 × 送信電流）で
+	  一時的に下がることがあり、そこで落ちると誤動作に見える。
+	  ZMK の測定間隔（ZMK_BATTERY_REPORT_INTERVAL・既定 60 秒）× この回数
+	  だけ続いたら本物とみなす。

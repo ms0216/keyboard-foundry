@@ -1,0 +1,25 @@
+name: 設計の自己検証
+
+# **押すたびに機械が確かめる。**HHKB では検査が 124 件あったのに CI で一度も
+# 動いておらず、手で叩いたときしか走っていなかった。
+#
+# KiCad の要る検査（基板の生成・DRC・HHKB との突き合わせ）は、ここでは入れていない
+# ので skip になる。**skip の数は必ず出力に出る**（-rs）。KiCad 入りで回すなら
+# REQUIRE_KICAD=1 を付けたジョブを足す（飛んだら赤）。版は手元の KiCad（10）と揃える
+# ——HHKB では CI が 9.0 で 10 の板を読めず、実形状の検査に一度も届いていなかった。
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -r requirements-dev.txt
+      - run: pytest tests -q -rs
+      - run: python -m foundry.check_zmk_config

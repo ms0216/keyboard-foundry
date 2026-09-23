@@ -1,0 +1,12 @@
+# 設計の自己検証に使う。CI（.github/workflows/checks.yml）と同じものを入れる。
+# **手で並べない。**tests/test_meta.py が import を走査して突き合わせ、
+# 版がいまの環境と一致するかも見る（HHKB で matplotlib・rtree が抜けて CI だけ落ちた）。
+build123d==0.11.1
+trimesh==5.0.0
+numpy==2.5.1
+matplotlib==3.11.1
+pillow==12.3.0
+PyYAML==6.0.3
+pytest==9.1.1
+# import 名では出てこないが、無いと trimesh の contains() が動かない（test_meta が動作で見る）
+rtree==1.4.1

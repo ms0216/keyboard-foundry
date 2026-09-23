@@ -1,0 +1,9 @@
+# このリポジトリ自身を Zephyr（ZMK）モジュールとして登録する。
+# ZMK 公式の再利用ワークフローが "if [ -e zephyr/module.yml ]" で見つけて
+# -DZMK_EXTRA_MODULES=<リポジトリ直下> を付ける。中身は firmware/ にまとめてある。
+name: keyboard-foundry
+build:
+  cmake: firmware
+  kconfig: firmware/Kconfig
+  settings:
+    dts_root: firmware

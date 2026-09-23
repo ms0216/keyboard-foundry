@@ -1,0 +1,25 @@
+name: Build ZMK firmware
+
+# ZMK 公式の再利用ワークフローを呼ぶだけ。手元に Zephyr SDK は要らない。
+# config/ と build.yaml はリポジトリ直下に置く（入れ子にすると
+# "no west workspace found" で落ちる）。
+#
+# 文書だけの push で全ターゲットを焼かない。**この一覧が足りないと、変えたのに
+# ビルドされない。**一覧の外を直して .uf2 が要るときは Actions タブから手で回す。
+on:
+  push:
+    paths:
+      - "config/**"
+      - "firmware/**"
+      - "build.yaml"
+      - "zephyr/**"
+      - ".github/workflows/build.yml"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    uses: zmkfirmware/zmk/.github/workflows/build-user-config.yml@main

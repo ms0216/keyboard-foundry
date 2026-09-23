@@ -1,0 +1,33 @@
+#!/bin/sh
+# 機種ごとの操作の入口。どの Python で動かすか（venv / KiCad 同梱）をここが決める。
+#
+#   tools/kb <機種> plate      プレートの STL と平面図（build/<機種>/）
+#   tools/kb <機種> pcb        未配線の基板（projects/<機種>/pcb/unrouted/）  ※KiCad の Python
+#   tools/kb <機種> zmk        行列表（config/boards/shields/<shield>/*-transform.dtsi）
+#   tools/kb <機種> fab-fields 発注道具が読む LCSC などを pcb/*.kicad_pcb に焼く ※KiCad の Python
+#   tools/kb <機種> drc        pcb/ の板の DRC を回して記録する（警告も数える）
+#   tools/kb <機種> render     pcb/ の板を絵にする（変わっていなければ描かない）
+#   tools/kb <機種> slice      build/<機種>/*.stl を OrcaSlicer で実際にスライス
+#   tools/kb <機種> gate       発注をせき止めているものが残っていないか
+#   tools/kb <機種> parts      部品表の在庫と単価を JLCPCB の API で取り直す
+#
+# **出力を捨てない。**各コマンドは OK / NG を行頭に出す。戻り値だけで判定しない。
+set -eu
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT"
+PY="$ROOT/.venv/bin/python3"
+KPY="${KICAD_PYTHON:-/Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/3.9/bin/python3.9}"
+[ $# -ge 2 ] || { sed -n '2,13p' "$0"; exit 2; }
+P="$1"; CMD="$2"; shift 2
+case "$CMD" in
+  plate)      exec "$PY" -m foundry.plate "$P" "$@" ;;
+  pcb)        exec "$KPY" -m foundry.pcb "$P" "$@" ;;
+  zmk)        exec "$PY" -m foundry.zmk "$P" "$@" ;;
+  fab-fields) exec "$KPY" -m foundry.fab_fields "$P" "$@" ;;
+  drc)        exec "$PY" -m foundry.drc projects/"$P"/pcb/*.kicad_pcb ;;
+  render)     exec "$PY" -m foundry.render_pcb projects/"$P"/pcb/*.kicad_pcb projects/"$P"/pcb/unrouted/*.kicad_pcb ;;
+  slice)      exec "$PY" -m foundry.slice_check "$P" "$@" ;;
+  gate)       exec "$PY" -m foundry.gate "$P" ;;
+  parts)      exec "$PY" -m foundry.jlcpcb_lookup --parts "$P" ;;
+  *) echo "知らない操作: $CMD"; sed -n '2,13p' "$0"; exit 2 ;;
+esac

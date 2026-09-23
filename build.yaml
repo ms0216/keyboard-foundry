@@ -1,0 +1,10 @@
+# ビルド対象（ボード × シールド）の一覧。**機種を作ると tools/new_project.py が足す。**
+#
+# ボード名は ZMK バリアント付き（Zephyr 4.1 以降）: 旧 seeeduino_xiao_ble → xiao_ble//zmk
+#
+# settings_reset は BLE のボンド（結合情報）を消す救済用。「一覧には出るのに繋がらない」の
+# 最も多い原因は片方だけが相手を覚えている状態。焼いて消したら本来のファームを焼き直す。
+# 詰まったら左・右・ホストの 3 者を全部消す。
+include:
+  - board: xiao_ble//zmk
+    shield: settings_reset
