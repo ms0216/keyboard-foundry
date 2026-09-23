@@ -93,11 +93,14 @@ def _apply_rules(board):
     nc.SetViaDrill(mm(VIA_DRILL))
 
 
-def sync_project_rules(pcb_path):
+def sync_project_rules(pcb_path, severities=None):
     """`.kicad_pro` の規則を JLC に揃える。**kicad-cli の DRC はここを読む。**
 
     HHKB で JLC の値を直しても DRC が古い規則で判定し続けた（#50）。
     規則以外（利用者が KiCad で設定した重大度など）は触らない。
+
+    severities: 機種が spec.DRC_SEVERITY で**理由を書いて**変える重大度（例: 違反 → 警告）。
+    **消す（ignore）ことはさせない**——警告に下げたものも drc.py が種類ごとに数えて出す。
     """
     pro = Path(str(pcb_path)[:-len(".kicad_pcb")] + ".kicad_pro")
     doc = json.loads(pro.read_text())
@@ -112,6 +115,10 @@ def sync_project_rules(pcb_path):
         "min_silk_clearance": JLC["silk_width"],
         "min_via_annular_width": JLC["annular_ring"],
     })
+    for kind, sev in (severities or {}).items():
+        if sev not in ("error", "warning"):
+            raise ValueError(f"{kind}: 重大度 {sev!r} は error / warning だけ（ignore で隠さない）")
+        doc["board"]["design_settings"].setdefault("rule_severities", {})[kind] = sev
     pro.write_text(json.dumps(doc, indent=2) + "\n")
 
 
@@ -195,9 +202,13 @@ def build(project, piece):
         board.Add(t)
         # col2row: 列 → スイッチ → ダイオード（A→K）→ 行
         d = _load(paths.KICAD_FOOTPRINTS / f"{DIODE_FP[0]}.pretty", DIODE_FP[1])
-        d.SetPosition(pcbnew.VECTOR2I_MM(ORIGIN[0] + kx + kind.diode_offset[0],
-                                         ORIGIN[1] - ky + kind.diode_offset[1]))
-        d.SetOrientationDegrees(kind.diode_angle)
+        # 機種がキーごとに置き場所を変えられる（spec.DIODE_OVERRIDE。値は
+        # Switch.diode_offset と同じ KiCad の向き・キー中心から (dx, dy, 角度)）。
+        # CCKB ではスタビの逃げ穴がいつもの場所に重なる 4 キーだけ（O7）
+        dx, dy, ang = getattr(spec, "DIODE_OVERRIDE", {}).get(piece, {}).get(
+            i, (kind.diode_offset[0], kind.diode_offset[1], kind.diode_angle))
+        d.SetPosition(pcbnew.VECTOR2I_MM(ORIGIN[0] + kx + dx, ORIGIN[1] - ky + dy))
+        d.SetOrientationDegrees(ang)
         d.SetReference(f"D{i}")
         d.SetValue("BAT46W")
         board.Add(d)
@@ -237,7 +248,11 @@ def build(project, piece):
     silk = (pcbnew.F_SilkS, pcbnew.B_SilkS)
     for fp in board.GetFootprints():
         for it in fp.GraphicalItems():
-            if it.GetLayer() in silk and it.GetWidth() < pcbnew.FromMM(JLC["silk_width"]):
+            if it.GetLayer() not in silk:
+                continue
+            if isinstance(it, pcbnew.PCB_TEXT):       # 文字は線幅ではなく太さ（CCKB の XIAO の "USB"）
+                it.SetTextThickness(max(it.GetTextThickness(), pcbnew.FromMM(JLC["silk_width"])))
+            elif it.GetWidth() < pcbnew.FromMM(JLC["silk_width"]):
                 it.SetWidth(pcbnew.FromMM(JLC["silk_width"]))
         for fld in (fp.Reference(), fp.Value()):
             if fld.GetLayer() in silk:
@@ -252,7 +267,7 @@ def build(project, piece):
     out.mkdir(parents=True, exist_ok=True)
     path = out / f"{project.root.name}_{piece}.kicad_pcb"
     board.Save(str(path))
-    sync_project_rules(path)
+    sync_project_rules(path, getattr(spec, "DRC_SEVERITY", None))
     return path, (pcb_w, pcb_h), len(keys), n_stab, len(nets)
 
 

@@ -107,6 +107,23 @@ PINS = {
     "wire_land":    {"1": ("1", PASSIVE)},
     "battery_land": {"1": ("1", POWER_OUT)},
 
+    # CR1632 ホルダ MYOUNG BS-16-B4AK003（LCSC C964732）。図面 MY-CP-0085
+    # （<https://wmsc.lcsc.com/wmsc/upload/file/pdf/v2/lcsc/2012181808_MYOUNG-BS-16-B4AK003_C964732.pdf>）
+    # の PCB Layout Diagram は「＋」の印を片方のランドの脇に描く。LCSC（EasyEDA）の
+    # フットプリント BAT-SMD_BS-16-B4AK005 は**その側のパッドを 1** にし、シルクの「＋」を
+    # そこに置いている。lib/cckb.pretty/BAT_BS-16-B4AK003 も同じ（1 = ＋・2 = −）
+    "coin_holder_bs16": {"+": ("1", POWER_OUT), "-": ("2", PASSIVE)},
+
+    # 横向きスライドスイッチ G-Switch MK-12C02-G025（LCSC C778186）。図面
+    # （<https://wmsc.lcsc.com/wmsc/upload/file/pdf/v2/lcsc/2304140030_G-Switch-MK-12C02-G025_C778186.pdf>）
+    # の端子 ①②③（1P2T・② が共通。回路図の記号で ①② が繋がった状態を描く）。
+    # パッド番号は LCSC（EasyEDA）の SW-SMD_MK-12C02-G025 と同じ: 1/2/3 が端子 ①②③
+    # （上面図で ① から 3.0・1.5 の間隔。フットプリントの x −2.25/+0.75/+2.25 と一致）、
+    # 4〜7 は本体の四隅の耳（金属の留め具。電気的には何にも繋がらない）
+    "slide_mk12c02": {"1": ("1", PASSIVE), "2": ("2", PASSIVE), "3": ("3", PASSIVE),
+                      "EAR1": ("4", PASSIVE), "EAR2": ("5", PASSIVE),
+                      "EAR3": ("6", PASSIVE), "EAR4": ("7", PASSIVE)},
+
     # XIAO nRF52840。**フットプリントのパッドは名前が付いている**ので
     # 対応は恒等。3V3 を power_out にしてあるのは、USB を挿すと
     # XIAO 側のレギュレータがレールを駆動するため（実際にそうなる）。
