@@ -583,3 +583,119 @@ def xiao_castellations():
         # 丸い内端（半径 0.762）は矩形の外。矩形の部分（縁から 2.032）だけを当てる
         out.append((xs[0], ys[0], xs[1], ys[1]))
     return out
+
+
+# ---------------------------------------------------------------------------
+# 鮮度: 配線した板は**いまの配置**から作られた（配置を変えて配線し直さない、を捕まえる）
+# ---------------------------------------------------------------------------
+
+UNROUTED = paths.PROJECTS / "cckb" / "pcb" / "unrouted" / "cckb_main.kicad_pcb"
+
+
+def test_the_committed_unrouted_board_is_what_the_generator_makes_now(tmp_path):
+    from foundry.boardhash import fingerprint
+
+    require(paths.KICAD_PYTHON, "基板の生成")
+    d = tmp_path / "cckb"
+    shutil.copytree(paths.PROJECTS / "cckb", d, ignore=shutil.ignore_patterns("pcb", "__pycache__"))
+    r = subprocess.run([paths.KICAD_PYTHON, "-m", "foundry.pcb", str(d)],
+                       cwd=ROOT, capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert fingerprint(d / "pcb/unrouted/cckb_main.kicad_pcb") == fingerprint(UNROUTED), \
+        "tools/kb cckb pcb で作り直し、route_pcb.py で配線し直すこと"
+
+
+def route_is_fresh(record, unrouted):
+    from foundry.boardhash import fingerprint
+
+    return record["unrouted_fingerprint"] == fingerprint(unrouted)
+
+
+def test_the_routed_board_was_made_from_the_current_placement():
+    rec = json.loads((BOARD.parent / "route.json").read_text())
+    assert route_is_fresh(rec, UNROUTED)
+
+
+def test_the_freshness_check_notices_a_moved_part(tmp_path):
+    """**検査器が壊れていないか。**未配線の板で U1 を 1mm 動かした写しでは鮮度が落ちる。"""
+    rec = json.loads((BOARD.parent / "route.json").read_text())
+    t = UNROUTED.read_text()
+    i = t.index('(property "Reference" "U1"')
+    blk_start = t.rfind("(footprint", 0, i)
+    at = re.search(r"\(at (-?[\d.]+) (-?[\d.]+)", t[blk_start:])
+    x = float(at.group(1))
+    s = blk_start + at.start()
+    moved = t[:s] + t[s:].replace(at.group(0), f"(at {x + 1.0:.4f} {at.group(2)}", 1)
+    f = tmp_path / "u.kicad_pcb"
+    f.write_text(moved)
+    assert not route_is_fresh(rec, f)
+
+
+# ---------------------------------------------------------------------------
+# 上の検査それぞれを、事実の写しを壊して走らせ、**落ちること**を確かめる
+# ---------------------------------------------------------------------------
+
+def _near(pos, ref_pos, r):
+    return math.hypot(pos[0] - ref_pos[0], pos[1] - ref_pos[1]) < r
+
+
+def _break_gnd_via(f):
+    u = next(p for p in f["pads"] if p["ref"] == "U1" and p["num"] == "8")
+    f["vias"] = [v for v in f["vias"] if not (v["net"] == "GND" and _near(v["pos"], u["pos"], 6))]
+
+
+def _break_relief(f):
+    f["edge"] = [e for e in f["edge"] if e["shape"] != "Line" or not _near(e["a"], (121.444, 0), 16)]
+
+
+def _break_support(f):
+    s = SPEC.SUPPORTS[0]
+    p = next(p for p in f["pads"] if p["ref"] == "D1" and p["num"] == "1")
+    p["box"] = [s[0] - 0.4, s[1] - 0.4, s[0] + 0.4, s[1] + 0.4]
+
+
+def _break_holder(f):
+    a, b = [p for p in f["pads"] if p["ref"] == "BT1"]
+    a["box"], b["box"], a["pos"], b["pos"] = b["box"], a["box"], b["pos"], a["pos"]
+
+
+def _break_switch(f):
+    p = next(p for p in f["pads"] if p["ref"] == "SW_PWR" and p["num"] == "2")
+    p["box"] = [p["box"][0], p["box"][1] + 0.5, p["box"][2], p["box"][3] + 0.5]
+
+
+def _break_under_xiao(f):
+    x, y = SPEC.XIAO_AT
+    f["tracks"].append(dict(net="SPI_SCK", layer="F.Cu", a=[x, y], b=[x + 1, y], w=0.2))
+
+
+def _break_keepout_place(f):
+    z = next(z for z in f["zones"] if z["name"] == "ANTENNA_KEEPOUT")
+    z["outline"] = [v + 3.9 if i % 2 == 0 else v for i, v in enumerate(z["outline"])]
+
+
+def _break_pour_area(f):
+    """KiCad が島を黙って消すと多角形の数は同じまま面積だけ減る（pcb.md）。面積で気づくか。"""
+    z = next(z for z in f["zones"] if z["name"] == "GND_B")
+    z["area"]["B.Cu"] = z["area"]["B.Cu"] / 2
+
+
+@pytest.mark.parametrize("check, breaker", [
+    ("test_both_layers_are_poured_with_ground_and_measured_by_area", _break_pour_area),
+    ("test_every_gnd_smd_pad_has_its_own_stub_and_via", _break_gnd_via),
+    ("test_the_stab_reliefs_are_cut_in_the_routed_board", _break_relief),
+    ("test_no_copper_under_a_support_post_or_boss_on_the_bottom_parts", _break_support),
+    ("test_the_holder_pads_are_the_drawing_land", _break_holder),
+    ("test_the_power_switch_pads_hold_the_terminals_of_the_drawing", _break_switch),
+    ("test_nothing_on_top_under_the_xiao", _break_under_xiao),
+    ("test_the_keepout_rule_area_is_where_the_antenna_is", _break_keepout_place),
+])
+def test_each_board_check_notices_a_break(facts, ifc, check, breaker):
+    import inspect
+
+    f = copy.deepcopy(facts)
+    breaker(f)
+    fn = globals()[check]
+    args = {"facts": f, "ifc": ifc}
+    with pytest.raises(AssertionError):
+        fn(**{k: args[k] for k in inspect.signature(fn).parameters})
