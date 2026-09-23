@@ -32,7 +32,10 @@ def _box(b):
 
 
 def dump(path):
-    board = pcbnew.LoadBoard(str(path))
+    return dump_board(pcbnew.LoadBoard(str(path)))
+
+
+def dump_board(board):
     out = {"footprints": [], "pads": [], "edge": _box(board.GetBoardEdgesBoundingBox())}
     for fp in board.GetFootprints():
         ref = fp.GetReference()
@@ -55,6 +58,7 @@ def dump(path):
                 box=_box(pad.GetBoundingBox()),
                 front=pad.IsOnLayer(pcbnew.F_Cu), back=pad.IsOnLayer(pcbnew.B_Cu),
                 npth=attr == pcbnew.PAD_ATTRIB_NPTH,
+                round=pad.GetShape(pcbnew.F_Cu) == pcbnew.PAD_SHAPE_CIRCLE,
                 drill=round(MM(pad.GetDrillSize().x), 4)))
     return out
 

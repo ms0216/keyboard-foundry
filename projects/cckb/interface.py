@@ -387,31 +387,20 @@ BAND_HALF = 1.0              # 段の境目で列の配線が横に渡る帯の�
 
 
 def corridors(ifc, geo):
-    """これから引く配線の通り道（設計書 §12）。線分 [(a, b), ...]。
+    """これから引く行列の配線（設計書 §12）。線分 [(a, b), ...]（表裏とも）。
 
-    - 行: 裏面の横。各段のダイオードの ROW 側パッドを x の順に結ぶ
-    - 列: 表面の縦。スイッチの COL 側パッドから、段の境目の帯で横に渡って次の段へ
-      （帯そのものは band_ys() で別に避ける）
+    **実際に板に置く線と同じ**（matrix_routes.plan。tools/route_pcb.py も同じ関数を通す）。
+    段階 1 はカソードどうしを結ぶ直線を通り道にしていたが、その直線はスイッチのボスと
+    中心穴を貫くので引けなかった（2026-09-24 基板の段で置き換えた）。
     """
-    import re
-    segs = []
-    rows, cols = {}, {}
-    for pad in geo["pads"]:
-        n = pad["net"]
-        if re.fullmatch(r"ROW\d+", n):
-            rows.setdefault(n, []).append((pad["x"], pad["y"]))
-        elif re.fullmatch(r"COL\d+", n):
-            cols.setdefault(n, []).append((pad["x"], pad["y"]))
-    for pts in rows.values():
-        pts.sort()
-        segs += list(zip(pts, pts[1:]))
-    for pts in cols.values():
-        pts.sort(key=lambda p: -p[1])
-        for (x1, y1), (x2, y2) in zip(pts, pts[1:]):
-            yb = min(ys for ys in band_ys(ifc) if ys < y1 and ys > y2) \
-                if any(y2 < ys < y1 for ys in band_ys(ifc)) else (y1 + y2) / 2
-            segs += [((x1, y1), (x1, yb)), ((x1, yb), (x2, yb)), ((x2, yb), (x2, y2))]
-    return segs
+    here = str(Path(__file__).resolve().parent)
+    if here not in sys.path:
+        sys.path.insert(0, here)
+    import matrix_routes
+
+    m = matrix_routes.plan(ifc.p, geo["pads"])
+    e, _ = matrix_routes.escape(ifc.p, geo["pads"], others=m)
+    return [(a, b) for _, _, a, b in m + e]
 
 
 def band_ys(ifc):

@@ -437,7 +437,7 @@ def test_every_mount_meets_the_five_conditions(ifc, geo):
     ((-120.99, 20.07), "裏のコートヤード"),     # Tab のダイオード（キー −128.59 + 7.6）の上
     ((-139.18, 46.5), "縁"),
     ((-57.24, -40.0), "スタビ"),
-    ((-116.18, 18.4), "配線"),                 # 行の配線の上
+    ((-110.0, 14.75), "配線"),                 # 行 1 のバス（裏・Tab の下 4.3）の上
     ((0.0, 28.575), "段の境目"),
     ((4.7625, -43.0), "継ぎ目"),
     ((128.5, -38.6), "ホルダ"),
@@ -462,19 +462,45 @@ def test_the_stab_relief_clears_the_switch_pads(ifc, geo):
     assert stab_problems(ifc, geo) == []
 
 
-@pytest.mark.xfail(strict=True, reason="O7: スタビのキー 4 つのダイオード（x 7.6）が逃げ穴に"
-                   "かかる。基板の段で動かす。直ったら XPASS で落ちるのでこの印を外す")
-def test_the_stab_relief_clears_the_diodes(ifc, geo):
+def relief_diode_problems(ifc, geo, margin=0.3):
+    """スタビの逃げ穴（Edge.Cuts）とダイオードのコートヤードの隙が margin 未満のもの（O7）。
+    相手は**いま生成した基板**の裏のコートヤード（D\\d+ を fullmatch・母数 62）。"""
+    diodes = [f for f in geo["footprints"] if re.fullmatch(r"D\d+", f["ref"])]
+    assert len(diodes) == 62 and all("back" in f["courtyard"] for f in diodes)
     bad = []
     for rel in ifc.stab_reliefs():
-        for f in geo["footprints"]:
-            if re.fullmatch(r"D\d+", f["ref"]) and "back" in f["courtyard"]:
-                b = f["courtyard"]["back"]
-                if any(I.point_in_poly(p, rel) for p in
-                       ((b[0], b[1]), (b[2], b[1]), (b[0], b[3]), (b[2], b[3]))) or \
-                        I.rect_gap(I.poly_box(rel), b) < 0:
-                    bad.append(f["ref"])
-    assert not bad, bad
+        for f in diodes:
+            b = f["courtyard"]["back"]
+            corners = ((b[0], b[1]), (b[2], b[1]), (b[0], b[3]), (b[2], b[3]))
+            inside = any(I.point_in_poly(p, rel) for p in corners) or \
+                any(I.rect_gap(b, (p[0], p[1], p[0], p[1])) < 0 for p in rel)
+            gap = min(_seg_rect_gap(rel[i], rel[(i + 1) % len(rel)], b) for i in range(len(rel)))
+            if inside or gap < margin:
+                bad.append((f["ref"], round(-1 if inside else gap, 3)))
+    return bad
+
+
+def _seg_rect_gap(a, b, box):
+    """線分 ab と矩形の距離（交われば 0）。細かく刻んで測る（0.01 mm）。"""
+    n = max(2, int(math.hypot(b[0] - a[0], b[1] - a[1]) / 0.01))
+    return min(I.rect_gap(box, (x, y, x, y)) for x, y in
+               ((a[0] + (b[0] - a[0]) * k / n, a[1] + (b[1] - a[1]) * k / n) for k in range(n + 1)))
+
+
+def test_the_stab_relief_clears_the_diodes(ifc, geo):
+    """O7（2026-09-24 基板の段で解決）: スタビのキー 4 つのダイオードは spec.DIODE_OVERRIDE で
+    中心穴の下へ横置き。逃げ穴から 0.3 以上（JLC の外形公差 ±0.2 に 0.1 残す）。"""
+    assert relief_diode_problems(ifc, geo) == []
+
+
+def test_the_relief_check_notices_the_old_diode_place(ifc, geo):
+    """**検査器が壊れていないか。**前の置き場所（7.6, −1.0・縦）に戻したダイオードで落ちること。"""
+    g = json.loads(json.dumps(geo))
+    for f in g["footprints"]:
+        if f["ref"] == "D42":                      # Enter（キー中心 121.444, 0）
+            f["courtyard"]["back"] = [121.444 + 7.6 - 1.195, 1.0 - 2.395,
+                                      121.444 + 7.6 + 1.195, 1.0 + 2.395]
+    assert [r for r, _ in relief_diode_problems(ifc, g)] == ["D42"]
 
 
 def test_the_board_outline_is_the_declared_pcb(ifc, geo):

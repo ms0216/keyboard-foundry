@@ -1,11 +1,12 @@
 {
   "board": "cckb_main.kicad_pcb",
-  "fingerprint": "3af0bdc9f93ec830525b01a7b2cf451044041eeead3c6c3615e3d63daf4a4d9f",
+  "fingerprint": "8b4471afa2bc3791be77d5d0af1de238a629c84a99e4016f0df70c04a818f291",
   "violations": 0,
-  "unconnected": 166,
-  "warnings": 2,
+  "unconnected": 212,
+  "warnings": 5,
   "warning_kinds": {
-    "silk_edge_clearance": 2
+    "silk_edge_clearance": 3,
+    "npth_inside_courtyard": 2
   },
   "violation_kinds": [],
   "details": []
