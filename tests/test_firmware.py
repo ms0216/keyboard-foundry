@@ -5,6 +5,7 @@ HHKB で状態 LED は「ソースがある・CMake が足す・.conf で =y」�
 """
 
 import re
+import subprocess
 
 import yaml
 
@@ -44,7 +45,20 @@ def test_the_module_is_registered():
 
 def test_no_hhkb_identifier_is_left_after_the_rename():
     """**置き換えたら、置き換えられた方の名前で grep する**（HHKB で 4 回踏んだ）。"""
-    left = [f"{p.relative_to(ROOT)}:{i}" for p in FW.rglob("*") if p.suffix in (".c", ".h", ".yaml", ".txt", "") and p.is_file()
+    # git が追跡するファイルだけをスキャン（.DS_Store のような未追跡ファイルは除外）
+    result = subprocess.run(
+        ["git", "ls-files", "firmware"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True
+    )
+    tracked_files = [ROOT / p for p in result.stdout.strip().split("\n") if p]
+    assert tracked_files, "firmware/ に追跡ファイルがない"
+
+    left = [f"{p.relative_to(ROOT)}:{i}"
+            for p in tracked_files
+            if p.suffix in (".c", ".h", ".yaml", ".txt", "")
             for i, line in enumerate(p.read_text().splitlines(), 1)
             if re.search(r"hhkb[,_]|HHKB_|hhkb-", line)]
     assert not left, left
