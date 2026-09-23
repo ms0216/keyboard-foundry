@@ -78,6 +78,8 @@ def test_the_machine_uses_choc_v1():
 
 
 def test_the_plate_openings_are_exactly_the_empty_corners():
+    """角の開口の**内側の 2 辺**は角のセルの境目ちょうど（隣のキーの桟を削らない）、
+    **外側の 2 辺**はプレートの外形の外まで（外周に細い帯を残さない）。"""
     from foundry.layout import centered
 
     p = load("cckb")
@@ -87,12 +89,15 @@ def test_the_plate_openings_are_exactly_the_empty_corners():
     y_bottom = bottom[0][0][1]
     left_edge = min(pos[0] - k.w_mm / 2 for pos, k in bottom)
     right_edge = max(pos[0] + k.w_mm / 2 for pos, k in bottom)
-    expect = [((-kw / 2 + left_edge) / 2, y_bottom, left_edge + kw / 2, UNIT),
-              ((right_edge + kw / 2) / 2, y_bottom, kw / 2 - right_edge, UNIT)]
-    got = p.spec.PLATE_OPENINGS["main"]
+    top = y_bottom + UNIT / 2
+    px, py = kw / 2 + p.spec.PLATE_MARGIN_X, kh / 2 + p.spec.PLATE_MARGIN_Y
+    got = [(cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2)
+           for cx, cy, w, h in p.spec.PLATE_OPENINGS["main"]]
     assert len(got) == 2
-    for g, e in zip(got, expect):
-        assert all(abs(a - b) < 1e-6 for a, b in zip(g, e)), (g, e)
+    (l0, l1, l2, l3), (r0, r1, r2, r3) = sorted(got)
+    assert abs(l2 - left_edge) < 1e-6 and abs(l3 - top) < 1e-6
+    assert abs(r0 - right_edge) < 1e-6 and abs(r3 - top) < 1e-6
+    assert l0 < -px - 0.5 and l1 < -py - 0.5 and r2 > px + 0.5 and r1 < -py - 0.5
 
 
 @pytest.fixture(scope="module")
@@ -352,8 +357,8 @@ def test_the_order_gate_is_closed_until_the_startup_test_and_the_case_are_done()
 
     doc = (paths.PROJECTS / "cckb" / "docs" / "open-gaps.md").read_text()
     b = set(gate.blockers(doc))
-    assert {"1", "2", "3", "4"} <= b, b        # 起動試験・角の断面・ケース・配線（#5 CI は 2026-09-23 に解消）
-    assert "5" not in b, b
+    assert {"1", "3", "4"} <= b, b        # 起動試験・ケース・配線
+    assert "5" not in b and "2" not in b, b   # #5 CI（09-23）・#2 角の断面（09-24 境界の決定）は解消
     assert not gate.is_gate_open(doc)
 
 
