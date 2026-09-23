@@ -15,15 +15,15 @@ Enter・左 Shift・スペース左右の計 4 キーが 2.25u 以上になり�
 ## 2. 事実はどうか（測った・読んだもの。出所を書く）
 
 - **Kailh 系製造図**（AliExpress の商品画像、中国語の工場図面。
-  `projects/cckb/docs/references/kailh_choc_stab_drawing.png` に保存）。自分の目で読んだ値:
+  <https://ae01.alicdn.com/kf/HTB1uuM3cqSs3KVjSZPiq6AsiVXaH.jpg>。**再配布してよいか分からないため
+  リポジトリには置かない**（2026-09-23、公開前に履歴から除いた）。自分の目で読んだ値:
   - 2u ワイヤ: 24.00⁰₋₀.₀₅（端口切平）
   - ワイヤの脚: 10.00±0.1、曲げ R1.50/R0.50、90°
   - ワイヤ径: φ1.00⁰₋₀.₀₃/⁰₋₀.₀₅
   - 76.00±0.1 の長いワイヤ（同じ脚形状）も同シートに記載
   - ハウジング: 幅 6.30⁺⁰·⁰²₋₀·⁰⁵・奥行 6.60（図の 6.60⁻⁰·⁰³系の寸法）・突起 3.20⁺⁰·⁰⁸／⁰・
     高さ 4.30・全体の外包絡 7.60×7.30×12.80 系
-  - この画像は WebP で配信されるため `sips -s format png` で PNG に変換して保存した
-    （手順は task brief Step 1 の curl/sips コマンドのまま実行）
+  - この画像は WebP で配信される。見るときは `sips -s format png` で PNG に変換する
 - **Keebio-Parts.pretty の `Kailh-PG1350-Stab-Cutout.kicad_mod`**
   （`projects/cckb/docs/references/` に保存。GitHub raw から取得）。
   開口の中心（支点）は x=±12.0 で、輪郭は右側（x>8）で
@@ -93,8 +93,7 @@ Enter・左 Shift・スペース左右の計 4 キーが 2.25u 以上になり�
 - `tests/test_choc.py` のスタビ関連テスト一式（`test_the_stab_half_span_is_the_drawings_wire`・
   `test_the_stab_outline_is_keebios`・`test_the_outline_leaves_a_web_to_the_switch_opening`・
   `test_the_plate_cuts_both_stab_openings`）。
-- `projects/cckb/docs/references/kailh_choc_stab_drawing.png` と
-  `Kailh-PG1350-Stab-Cutout.kicad_mod`（出典そのもの）。
+- 上の製造図の URL と `projects/cckb/docs/references/Kailh-PG1350-Stab-Cutout.kicad_mod`（出典そのもの）。
 
 ## まだ決めていないこと
 
