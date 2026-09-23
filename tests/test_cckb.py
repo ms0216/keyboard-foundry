@@ -303,3 +303,12 @@ def test_the_shield_config_passes_the_checker():
     r = subprocess.run([sys.executable, "-m", "foundry.check_zmk_config"],
                        cwd=ROOT, capture_output=True, text=True)
     assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_the_order_gate_is_closed_until_the_startup_test_and_the_case_are_done():
+    from foundry import gate
+
+    doc = (paths.PROJECTS / "cckb" / "docs" / "open-gaps.md").read_text()
+    b = set(gate.blockers(doc))
+    assert {"1", "2", "3", "4", "5"} <= b, b   # 起動試験・角の断面・ケース・配線・CI のリモート未設定
+    assert not gate.is_gate_open(doc)
