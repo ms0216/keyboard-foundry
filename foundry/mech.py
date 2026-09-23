@@ -82,7 +82,27 @@ MX_HOTSWAP = Switch(
     stab_kind="cherry",
 )
 
-SWITCHES = {s.name: s for s in (MX_HOTSWAP,)}
+# Kailh Choc V1（PG1350）を基板に**直付け**（設計書 D2・D3）。
+# 開口 13.8・プレート 1.2 は Kailh の図面 CPG135001D01（tests/test_choc.py が照合）。
+# 1.2mm は Choc のスタビがプレートに留まる厚さでもある。
+# fp は全幅で同じ（パッドが同一。幅つきは 18×17 ピッチのキャップ外形を描くので使わない）。
+# value は部品表の照合用。スイッチは JLCPCB に在庫が無く利用者が手はんだする（D3）。
+# ダイオードの位置は Task 6 で DRC を通して決める（ここはその初期値）。
+# スタビは Task 3 で外の事実から埋める。**それまでは 2u 以上のキーで落ちる。**
+CHOC_V1 = Switch(
+    name="choc_v1",
+    cutout=13.8,
+    plate_t=1.2,
+    fp={w: "SW_Kailh_Choc_V1" for w in (1.0, 1.5, 1.75, 2.25)},
+    value="PG1350",
+    diode_offset=(7.6, -1.0),
+    diode_angle=90,
+    stab_offset={},
+    stab_fp={},
+    stab_kind=None,
+)
+
+SWITCHES = {s.name: s for s in (MX_HOTSWAP, CHOC_V1)}
 
 
 def switch_of(spec):
