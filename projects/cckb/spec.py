@@ -417,7 +417,7 @@ NOT_ASSEMBLED = {"xiao_nrf52840", "coin_holder", "keyswitch", "hole", "power_swi
 # 在庫・単価は `tools/kb cckb parts`（JLCPCB の API）で発注の直前に取り直す
 PARTS = {
     # BAT46W: VF ≦0.25V@0.1mA と IR ≦0.3µA@1.5V を動作点で両方保証（foundry/parts.py の比較）。
-    # CR1632 のレールは打ち止めでも 2.0V 級（B5819W の後ろ）で、行の VIH 0.7×レールに対して
+    # CR1632 のレールは打ち止めでも 2.0V 級（D_PWR の後ろ）で、行の VIH 0.7×レールに対して
     # 列の High − VF が足りる（レール ≧ (0.25 + 0.2)/0.3 = 1.5V）
     "diode": {"lcsc": "C54110", "desc": "BAT46W SOD-123 ショットキー 100V"},
     # 74LVC595: 1.1〜3.6V（74HC595 は下限 2.0V で打ち止めに規格外）。TSSOP-16
