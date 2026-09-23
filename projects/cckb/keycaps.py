@@ -70,11 +70,45 @@ def print_counts(keys):
 
 
 def print_parts(ifc=None):
-    """刷る種類ごとに 1 個（名前 → 立体）。数は print_counts。"""
+    """刷る種類ごとに 1 個（名前 → 立体）＋全 62 個を A1 mini 2 枚に並べた物。数は print_counts。"""
     import interface as I
 
     ifc = ifc or I.Interface()
-    widths = sorted(print_counts(ifc.keys))
+    counts = print_counts(ifc.keys)
+    widths = sorted(counts)
     missing = [w for w in widths if w not in NAMES]
     assert not missing, f"キャップの名前が無い幅: {missing}"
-    return {NAMES[w]: keycap(w, ifc.s, ifc.sw) for w in widths}
+    caps = {w: keycap(w, ifc.s, ifc.sw) for w in widths}
+    out = {NAMES[w]: caps[w] for w in widths}
+    out.update(batches(caps, counts, ifc.s.PRINT_MAX))
+    return out
+
+
+def batches(caps, counts, limit, gap=2.0):
+    """全部のキャップを、刷る向き（天板が下）でベッドに並べた Compound 2 つ。
+
+    1 枚目は 1u だけ、2 枚目は幅の広いキャップ。行に左から詰め、はみ出したら次の行へ。
+    **1 枚に入らなければ落とす**（黙って 3 枚目を作らない）。
+    """
+    from build123d import Compound, Pos, Rot
+
+    def lay(items):
+        placed, x, y, row_h = [], 0.0, 0.0, 0.0
+        for w in items:
+            bb = caps[w].bounding_box()
+            if x + bb.size.X > limit:
+                x, y = 0.0, y + row_h + gap
+                row_h = 0.0
+            flip = Rot(180, 0, 0) * caps[w]
+            fb = flip.bounding_box()
+            placed.append(Pos(x - fb.min.X, y - fb.min.Y, -fb.min.Z) * flip)
+            x += bb.size.X + gap
+            row_h = max(row_h, bb.size.Y)
+        c = Compound(placed)
+        size = c.bounding_box().size
+        assert max(size.X, size.Y) <= limit, f"キャップが 1 枚に並ばない: {size}"
+        return c
+
+    ones = [1.0] * counts.get(1.0, 0)
+    wide = sorted((w for w, n in counts.items() if w != 1.0 for _ in range(n)), reverse=True)
+    return {"keycaps_set_1u": lay(ones), "keycaps_set_wide": lay(wide)}

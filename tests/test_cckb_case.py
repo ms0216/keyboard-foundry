@@ -115,7 +115,7 @@ def printed_all(asm):
 
 def test_every_printed_part_fits_the_a1_mini(asm, printed_all):
     sizes = A.print_sizes(printed_all, LIMIT)
-    assert len(sizes) == 15, sorted(sizes)          # トレイ 2・ふた 2・プレート 2・キャップ 4・小片 5
+    assert len(sizes) == 17, sorted(sizes)          # トレイ 2・ふた 2・プレート 2・キャップ 4＋並べた 2・小片 5
     bad = {n: v for n, v in sizes.items() if not v[2]}
     assert not bad, bad
 
@@ -128,7 +128,7 @@ def test_the_size_check_notices_a_long_tray(geo):
 
 def test_case_parts_and_keycaps_are_single_watertight_solids(printed_all):
     for name, part in printed_all.items():
-        if name.startswith(("tray_", "lid_", "keycap_", "plate_")):
+        if name.startswith(("tray_", "lid_", "keycap_", "plate_")):   # keycaps_set_* は並べた Compound
             assert len(part.solids()) == 1, name
         assert A.mesh_of(part).is_watertight, name
 
