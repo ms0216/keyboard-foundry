@@ -26,8 +26,7 @@ import pcbnew
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from foundry import paths, pinmap                                  # noqa: E402
 from foundry.layout import centered                                # noqa: E402
-from foundry.mech import (DIODE_ANGLE, DIODE_OFFSET, STAB_FP,      # noqa: E402
-                          SWITCH_FP, stab_flipped, stab_offset_for)
+from foundry.mech import stab_flipped, switch_of                   # noqa: E402
 from foundry.pcb_rules import (JLC, NPTH_EDGE_MIN, TRACK_W,        # noqa: E402
                                VIA_D, VIA_DRILL)
 from foundry.project import load                                   # noqa: E402
@@ -167,20 +166,18 @@ def build(project, piece):
             board.Add(nets[name])
         return nets[name]
 
+    kind = switch_of(spec)
     n_stab = 0
     for i, ((kx, ky), k, (r, c)) in enumerate(zip(positions, keys, rc), start=1):
-        name = SWITCH_FP.get(k.w_u)
-        if name is None:
-            raise RuntimeError(f"{k.label!r}: {k.w_u}u のフットプリントが mech.SWITCH_FP に無い")
-        sw = _load(KEYSWITCH_LIB, name)
+        sw = _load(KEYSWITCH_LIB, kind.footprint(k.w_u))
         sw.SetPosition(to_kicad(kx, ky))
         sw.SetReference(f"SW{i}")
         # Value は JLC の部品照合に使われる。キー名を入れると BOM から静かに漏れる（HHKB）
-        sw.SetValue("CPG151101S11-2")
+        sw.SetValue(kind.value)
         board.Add(sw)
-        s = stab_offset_for(k.w_u)
-        if s is not None:
-            st = _load(KEYSWITCH_LIB, STAB_FP[s])
+        s = kind.stab_offset_for(k.w_u)
+        if s is not None and s in kind.stab_fp:
+            st = _load(KEYSWITCH_LIB, kind.stab_fp[s])
             st.SetPosition(to_kicad(kx, ky))
             if stab_flipped(k, keys):
                 st.SetOrientationDegrees(180)
@@ -198,9 +195,9 @@ def build(project, piece):
         board.Add(t)
         # col2row: 列 → スイッチ → ダイオード（A→K）→ 行
         d = _load(paths.KICAD_FOOTPRINTS / f"{DIODE_FP[0]}.pretty", DIODE_FP[1])
-        d.SetPosition(pcbnew.VECTOR2I_MM(ORIGIN[0] + kx + DIODE_OFFSET[0],
-                                         ORIGIN[1] - ky + DIODE_OFFSET[1]))
-        d.SetOrientationDegrees(DIODE_ANGLE)
+        d.SetPosition(pcbnew.VECTOR2I_MM(ORIGIN[0] + kx + kind.diode_offset[0],
+                                         ORIGIN[1] - ky + kind.diode_offset[1]))
+        d.SetOrientationDegrees(kind.diode_angle)
         d.SetReference(f"D{i}")
         d.SetValue("BAT46W")
         board.Add(d)

@@ -10,6 +10,7 @@ HHKB の基板（tests/fixtures/hhkb_boards.json に抜き出した実物）と�
 NAME = "HHKB-REF"
 LAYOUT = "layout.json"
 PIECES = ("left", "right")
+SWITCH = "mx_hotswap"        # HHKB は MX 互換＋Kailh ホットスワップ
 PLATE_MARGIN_X = 3.125
 PLATE_MARGIN_Y = 6.375
 CORNER_R = 3.0

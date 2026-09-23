@@ -3,7 +3,7 @@
 import pytest
 from build123d import Vector
 
-from foundry.mech import PLATE_T, stab_offset_for
+from foundry.mech import switch_of
 from foundry.plate import build_plate, plate_size
 from foundry.project import load
 
@@ -16,14 +16,15 @@ def left(hhkb_ref):
     return p, keys, part, size, positions
 
 
-def _solid(part, x, y):
-    return part.is_inside(Vector(x, y, PLATE_T / 2))
+def _solid(part, x, y, t=1.5):
+    return part.is_inside(Vector(x, y, t / 2))
 
 
 def test_outline_is_key_field_plus_margins(left):
     p, keys, part, (w, h), _ = left
+    t = switch_of(p.spec).plate_t
     bb = part.bounding_box().size
-    assert abs(bb.X - w) < 1e-3 and abs(bb.Y - h) < 1e-3 and abs(bb.Z - PLATE_T) < 1e-3
+    assert abs(bb.X - w) < 1e-3 and abs(bb.Y - h) < 1e-3 and abs(bb.Z - t) < 1e-3
     assert (w, h) == plate_size(p.spec, keys)
 
 
@@ -36,9 +37,10 @@ def test_every_key_centre_is_open_and_the_web_between_keys_is_solid(left):
 
 
 def test_stab_cutouts_are_on_the_wide_keys_only(left):
-    _, keys, part, _, positions = left
+    p, keys, part, _, positions = left
+    sw = switch_of(p.spec)
     for (x, y), k in zip(positions, keys):
-        s = stab_offset_for(k.w_u)
+        s = sw.stab_offset_for(k.w_u)
         if s is None:
             continue
         # スタビ支点の中心（ワイヤの向きによらず支点の x は ±s）が抜けていること

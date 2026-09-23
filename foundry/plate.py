@@ -20,7 +20,7 @@ from build123d import (BuildLine, BuildPart, BuildSketch, Circle, Kind, Location
                        make_face, offset)
 
 from .layout import centered
-from .mech import PLATE_T, STAB_KERF, SWITCH_CUTOUT, stab_flipped, stab_offset_for
+from .mech import STAB_KERF, stab_flipped, switch_of
 
 M2_CLEAR_D = 2.4         # M2 のバカ穴（0.4 の逃げ）
 
@@ -73,23 +73,28 @@ def plate_size(spec, keys):
 
 def build_plate(spec, keys, piece):
     """1 枚のプレート。返り値は (part, (幅, 奥行), キー中心の並び)。"""
+    sw = switch_of(spec)
     positions, _ = centered(keys)
     w, h = plate_size(spec, keys)
-    stabs = [(pos, stab_offset_for(k.w_u), stab_flipped(k, keys))
+    stabs = [(pos, sw.stab_offset_for(k.w_u), stab_flipped(k, keys))
              for pos, k in zip(positions, keys)]
     with BuildPart() as plate:
         with BuildSketch():
             RectangleRounded(w, h, spec.CORNER_R)
             with Locations(*positions):
-                Rectangle(SWITCH_CUTOUT, SWITCH_CUTOUT, mode=Mode.SUBTRACT)
+                Rectangle(sw.cutout, sw.cutout, mode=Mode.SUBTRACT)
             for pos, s, f in stabs:
-                if s is not None:
-                    add(stab_cutout_face(s, at=pos, flipped=f), mode=Mode.SUBTRACT)
+                if s is None:
+                    continue
+                if sw.stab_kind != "cherry":
+                    raise NotImplementedError(
+                        f"{sw.name}: スタビ開口 {sw.stab_kind!r} の形が plate.py に無い")
+                add(stab_cutout_face(s, at=pos, flipped=f), mode=Mode.SUBTRACT)
             mounts = spec.MOUNTS[piece]
             if mounts:
                 with Locations(*mounts):
                     Circle(M2_CLEAR_D / 2, mode=Mode.SUBTRACT)
-        extrude(amount=PLATE_T)
+        extrude(amount=sw.plate_t)
     return plate.part, (w, h), positions
 
 
@@ -106,7 +111,7 @@ def main(argv):
                                 title=f"{p.name} plate {piece}  {w:.2f} x {h:.2f} mm")
         # **出力を読んでから報告する。**水密でなければ刷れない
         print(f"{'OK' if mesh.is_watertight else 'NG'} {piece:6s} {len(keys):3d} keys "
-              f"{w:7.2f} x {h:6.2f} x {PLATE_T}mm 水密={mesh.is_watertight}")
+              f"{w:7.2f} x {h:6.2f} x {switch_of(p.spec).plate_t}mm 水密={mesh.is_watertight}")
         print(f"   {stl}\n   {png}")
     return 0
 
