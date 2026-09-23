@@ -1,0 +1,12 @@
+{
+  "board": "cckb_main.kicad_pcb",
+  "fingerprint": "46d2822a06a8c194b0ee6454fb171dd6cfda40a4599128ab1e7f43911b58c8e8",
+  "violations": 0,
+  "unconnected": 166,
+  "warnings": 17,
+  "warning_kinds": {
+    "silk_edge_clearance": 17
+  },
+  "violation_kinds": [],
+  "details": []
+}

@@ -4,9 +4,13 @@
 スペースが 4.0〜10.0u を 3 キーで隙間なく覆うこと。
 """
 
+import re
+import shutil
+import subprocess
+
 import pytest
 
-from conftest import FIXTURES
+from conftest import FIXTURES, ROOT, require
 from foundry import paths
 from foundry.layout import UNIT, load_layout
 from foundry.project import load
@@ -220,3 +224,41 @@ def test_the_plate_is_1_2mm_and_printable_as_a_check(plate, tmp_path):
     assert abs(part.bounding_box().size.Z - 1.2) < 1e-6
     mesh, _ = to_mesh(part, tmp_path / "plate.stl")
     assert mesh.is_watertight
+
+
+@pytest.fixture(scope="module")
+def board(tmp_path_factory):
+    require(paths.KICAD_PYTHON, "基板の生成")
+    d = tmp_path_factory.mktemp("cckb") / "cckb"
+    shutil.copytree(paths.PROJECTS / "cckb", d, ignore=shutil.ignore_patterns("pcb", "__pycache__"))
+    r = subprocess.run([paths.KICAD_PYTHON, "-m", "foundry.pcb", str(d)],
+                       cwd=ROOT, capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout + r.stderr
+    return d / "pcb" / "unrouted" / "cckb_main.kicad_pcb"
+
+
+def test_the_board_has_one_switch_and_one_diode_per_key(board):
+    from foundry.board_dump import key_parts
+
+    parts = key_parts(board.read_text())
+    sw = [r for r in parts if re.fullmatch(r"SW\d+", r)]
+    d = [r for r in parts if re.fullmatch(r"D\d+", r)]
+    assert len(sw) == 62 and len(d) == 62
+    assert all(parts[r]["fp"].endswith("SW_Kailh_Choc_V1") for r in sw)
+    assert all(parts[r]["back"] for r in d)                      # ダイオードは裏（D8）
+
+
+def test_the_matrix_nets_are_5_rows_by_15_columns(board):
+    nets = set(re.findall(r'\(net "([^"]+)"\)', board.read_text()))
+    assert {n for n in nets if re.fullmatch(r"ROW\d+", n)} == {f"ROW{i}" for i in range(5)}
+    assert {n for n in nets if re.fullmatch(r"COL\d+", n)} == {f"COL{i}" for i in range(15)}
+
+
+def test_the_unrouted_board_has_no_drc_violations(board):
+    """Review Focus 5。**警告も数えて記録する**（隠さない）。"""
+    from foundry import drc
+
+    require(paths.KICAD_CLI, "DRC")
+    r = drc.run(board)
+    assert r["violations"] == 0, r["details"]
+    print("DRC 警告の内訳:", r["warning_kinds"])
