@@ -28,3 +28,6 @@ gerbers/
 # OS / エディタ
 .DS_Store
 .history/
+
+# 配線の途中の DSN・SES・ログ（route_pcb.py が終わりに消す。落ちたときだけ残る）
+projects/*/pcb/route_work/

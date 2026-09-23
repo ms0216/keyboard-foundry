@@ -1,0 +1,44 @@
+{
+  "board": "cckb_main.kicad_pcb",
+  "unrouted": "cckb_main.kicad_pcb",
+  "unrouted_fingerprint": "8b4471afa2bc3791be77d5d0af1de238a629c84a99e4016f0df70c04a818f291",
+  "freerouting": "freerouting-2.3.0.jar",
+  "passes": 100,
+  "margin_um": 30,
+  "margins_tried": [
+    [
+      30,
+      0
+    ]
+  ],
+  "matrix_segments": 404,
+  "gnd_fanout": 9,
+  "ring": {
+    "奥": [
+      2,
+      7
+    ],
+    "手前": [
+      4,
+      7
+    ],
+    "左": [
+      0,
+      11
+    ],
+    "右": [
+      10,
+      11
+    ]
+  },
+  "fence": 195,
+  "grid": 720,
+  "island_vias": 6,
+  "islands_removed": 18,
+  "islands_removed_mm2": 14.63,
+  "gnd_area_mm2": {
+    "F": 22599.5,
+    "B": 21745.5
+  },
+  "unconnected": 0
+}
