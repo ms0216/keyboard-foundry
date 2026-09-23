@@ -354,3 +354,114 @@ def test_the_order_gate_is_closed_until_the_startup_test_and_the_case_are_done()
     b = set(gate.blockers(doc))
     assert {"1", "2", "3", "4", "5"} <= b, b   # 起動試験・角の断面・ケース・配線・CI のリモート未設定
     assert not gate.is_gate_open(doc)
+
+
+# ---- 描き出した基板・transform が行列と揃っているか（生成し直し忘れを捕まえる）----
+
+PCB = paths.PROJECTS / "cckb" / "pcb" / "unrouted" / "cckb_main.kicad_pcb"
+TRANSFORM = SHIELD / "cckb-transform.dtsi"
+
+
+def test_the_committed_transform_is_what_the_generator_makes_now():
+    """コミット済みの transform が、いまの配列と spec の行列から作るものと 1 字違わないこと。"""
+    from foundry import zmk
+
+    assert TRANSFORM.read_text() == zmk.transform_dtsi(load("cckb")), \
+        "python -m foundry.zmk cckb で作り直すこと"
+
+
+def test_the_freshness_check_notices_a_changed_rc(tmp_path, monkeypatch):
+    """**検査器が壊れていないか。**RC を 1 つ書き換えた transform で落ちること。"""
+    import test_cckb
+
+    text = TRANSFORM.read_text()
+    assert "RC(4,12)" in text
+    fake = tmp_path / TRANSFORM.name
+    fake.write_text(text.replace("RC(4,12)", "RC(4,11)"))
+    monkeypatch.setattr(test_cckb, "TRANSFORM", fake)
+    with pytest.raises(AssertionError):
+        test_cckb.test_the_committed_transform_is_what_the_generator_makes_now()
+
+
+def _transform_rcs(text):
+    """transform の map を、キーマップの並び順の [(row, col)] で。"""
+    body = re.search(r"map\s*=\s*<(.*?)>;", re.sub(r"/\*.*?\*/", " ", text, flags=re.S), re.S)
+    return [(int(r), int(c)) for r, c in re.findall(r"RC\((\d+),(\d+)\)", body.group(1))]
+
+
+def board_matrix_mismatches(pcb_text, dtsi_text):
+    """基板の各スイッチの COL とそのダイオードの ROW が、同じ位置のキーの transform の
+    RC と違うものを返す（空なら一致）。
+
+    キーは**物理の位置**で引く（参照番号の並びを信じない）。基板は ORIGIN（pcb.py）を
+    原点に Y 下向き、layout.centered は Y 上向き。ダイオードは参照番号ではなく、
+    スイッチの COL でない側のネットを共有するものを引く。
+    """
+    from foundry import zmk
+    from foundry.board_dump import key_parts
+    from foundry.layout import centered
+
+    p = load("cckb")
+    rows, _ = zmk.layout(p)
+    positions, _ = centered([k for _, k, _ in rows])            # キーマップ順
+    rcs = _transform_rcs(dtsi_text)
+    assert len(rcs) == len(positions) == 62, (len(rcs), len(positions))
+
+    parts = key_parts(pcb_text)
+    switches = sorted((r for r in parts if re.fullmatch(r"SW\d+", r)), key=lambda r: int(r[2:]))
+    diodes = [r for r in parts if re.fullmatch(r"D\d+", r)]
+    assert len(switches) == 62 and len(diodes) == 62
+
+    out, seen = [], set()
+    for ref in switches:
+        sw = parts[ref]
+        hit = [j for j, (x, y) in enumerate(positions)
+               if abs(sw["x"] - x) < 1e-3 and abs(-sw["y"] - y) < 1e-3]
+        if len(hit) != 1:
+            out.append(f"{ref}: 位置 ({sw['x']}, {-sw['y']}) のキーが {len(hit)} 個")
+            continue
+        j = hit[0]
+        seen.add(j)
+        r, c = rcs[j]
+        label = rows[j][1].label
+        nets = set(sw["pads"].values())
+        cols = {n for n in nets if re.fullmatch(r"COL\d+", n)}
+        if cols != {f"COL{c}"}:
+            out.append(f"{ref}（{label}）: 列 {sorted(cols)} / transform COL{c}")
+        others = nets - cols - {""}
+        ds = [d for d in diodes if others & set(parts[d]["pads"].values())]
+        drows = {n for d in ds for n in parts[d]["pads"].values() if re.fullmatch(r"ROW\d+", n)}
+        if len(ds) != 1 or drows != {f"ROW{r}"}:
+            out.append(f"{ref}（{label}）: ダイオード {ds} の行 {sorted(drows)} / transform ROW{r}")
+    if len(seen) != len(positions):
+        out.append(f"基板にスイッチの無いキー {sorted(set(range(len(positions))) - seen)}")
+    return out
+
+
+def test_the_committed_board_wires_every_key_as_the_transform_says():
+    assert board_matrix_mismatches(PCB.read_text(), TRANSFORM.read_text()) == []
+
+
+def test_the_board_check_notices_two_swapped_columns():
+    """**検査器が壊れていないか。**2 つのスイッチの COL を入れ替えた基板で落ちること。"""
+    from foundry.board_dump import key_parts
+
+    text = PCB.read_text()
+    parts = key_parts(text)
+    col = lambda ref: next(n for n in parts[ref]["pads"].values() if re.fullmatch(r"COL\d+", n))
+    a, b = "SW1", "SW2"
+    assert col(a) != col(b)
+    # 各スイッチのブロックの中だけで COL のネット名を入れ替える
+    from foundry.boardhash import _blocks
+
+    out = text
+    for name, blk in _blocks(text):
+        m = re.search(r'\(property "Reference" "([^"]+)"', blk)
+        if m and m.group(1) in (a, b):
+            other = col(b) if m.group(1) == a else col(a)
+            new = re.sub(r'(\(net (?:\d+ )?")' + col(m.group(1)) + r'"', r"\g<1>" + other + '"', blk)
+            assert new != blk
+            out = out.replace(blk, new, 1)
+    assert out != text
+    bad = board_matrix_mismatches(out, TRANSFORM.read_text())
+    assert len(bad) == 2, bad
