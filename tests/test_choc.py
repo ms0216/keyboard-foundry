@@ -184,10 +184,13 @@ def test_the_stab_outline_is_keebios():
 
 
 def test_the_outline_leaves_a_web_to_the_switch_opening():
-    """スイッチの開口（13.8）とスタビの開口の間に、刷れる幅（≧ 0.4×4）の桟が残ること。"""
-    from foundry.mech import CHOC_STAB_OUTLINE
+    """スイッチの開口（13.8）とスタビの開口の間に、刷れる幅（≧ 0.4×4）の桟が残ること。
 
-    inner = 12.0 + min(x for x, _ in CHOC_STAB_OUTLINE)
+    プレートは輪郭を STAB_KERF だけ広げて開けるので、**広げたあとの**内側の縁で測る。
+    """
+    from foundry.mech import CHOC_STAB_OUTLINE, STAB_KERF
+
+    inner = 12.0 + min(x for x, _ in CHOC_STAB_OUTLINE) - STAB_KERF
     assert inner - SWITCHES["choc_v1"].cutout / 2 >= 1.6, inner
 
 

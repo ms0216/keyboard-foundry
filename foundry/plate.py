@@ -20,7 +20,7 @@ from build123d import (BuildLine, BuildPart, BuildSketch, Circle, Kind, Location
                        make_face, offset)
 
 from .layout import centered
-from .mech import STAB_KERF, stab_flipped, switch_of
+from .mech import CHOC_STAB_OUTLINE, STAB_KERF, stab_flipped, switch_of
 
 M2_CLEAR_D = 2.4         # M2 のバカ穴（0.4 の逃げ）
 
@@ -51,15 +51,17 @@ def stab_polygon(s, at=(0.0, 0.0), flipped=False):
     return [(ax + x, ay - y) for x, y in pts]
 
 
-def stab_cutout_face(s, at=(0.0, 0.0), kerf=STAB_KERF, flipped=False):
+def stab_cutout_face(s, at=(0.0, 0.0), kerf=STAB_KERF, flipped=False, polygon=None):
     """スタビ開口の面を、規格の輪郭から kerf だけ外へ広げて返す。
 
+    `polygon` を渡すとその点列を使う（Choc の開口）。無ければ Cherry の 28 点。
     **点列に ±kerf を足さない。**28 点は凹凸が混じり点ごとに外向きが違う（HHKB #30）。
     多角形のオフセットに任せる（INTERSECTION は角を丸めず相似に広げる）。
     """
+    pts = polygon if polygon is not None else stab_polygon(s, at=at, flipped=flipped)
     with BuildSketch(mode=Mode.PRIVATE) as sk:
         with BuildLine():
-            Polyline(*stab_polygon(s, at=at, flipped=flipped), close=True)
+            Polyline(*pts, close=True)
         make_face()
         if kerf:
             offset(amount=kerf, kind=Kind.INTERSECTION)
@@ -67,9 +69,10 @@ def stab_cutout_face(s, at=(0.0, 0.0), kerf=STAB_KERF, flipped=False):
 
 
 def choc_stab_polygons(s, at=(0.0, 0.0)):
-    """Choc スタビの左右 2 つの開口（mech.CHOC_STAB_OUTLINE）。ワイヤは常に奥。"""
-    from .mech import CHOC_STAB_OUTLINE
+    """Choc スタビの左右 2 つの開口（mech.CHOC_STAB_OUTLINE・kerf 0）。ワイヤは常に奥。
 
+    プレートに開けるときは Cherry と同じく STAB_KERF だけ外へ広げる（build_plate）。
+    """
     ax, ay = at
     right = [(ax + s + x, ay + y) for x, y in CHOC_STAB_OUTLINE]
     left = [(ax - s - x, ay + y) for x, y in reversed(CHOC_STAB_OUTLINE)]
@@ -99,12 +102,10 @@ def build_plate(spec, keys, piece):
                 if sw.stab_kind == "cherry":
                     add(stab_cutout_face(s, at=pos, flipped=f), mode=Mode.SUBTRACT)
                 elif sw.stab_kind == "choc":
+                    # Keebio の輪郭は幅がハウジングと同じ 6.30（隙間 0）。刷った PLA では
+                    # 締まるので Cherry と同じ STAB_KERF を足す（mech.CHOC_STAB_OUTLINE）
                     for poly in choc_stab_polygons(s, at=pos):
-                        with BuildSketch(mode=Mode.PRIVATE) as psk:
-                            with BuildLine():
-                                Polyline(*poly, close=True)
-                            make_face()
-                        add(psk.sketch, mode=Mode.SUBTRACT)
+                        add(stab_cutout_face(s, polygon=poly), mode=Mode.SUBTRACT)
                 else:
                     raise NotImplementedError(
                         f"{sw.name}: スタビ開口 {sw.stab_kind!r} の形が plate.py に無い")

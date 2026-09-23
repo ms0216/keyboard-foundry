@@ -133,6 +133,50 @@ def _in_polygon(x, y, poly):
     return inside
 
 
+def _in_opening(x, y, poly, kerf=None):
+    """プレートに開く穴（輪郭を kerf だけ角を丸めず広げたもの）の中か。
+
+    輪郭は軸に平行な辺だけなので、INTERSECTION のオフセットは「輪郭の中、または
+    どれかの辺からチェビシェフ距離 kerf 以内」と同じになる。
+    """
+    from foundry.mech import STAB_KERF
+
+    kerf = STAB_KERF if kerf is None else kerf
+    if _in_polygon(x, y, poly):
+        return True
+    n = len(poly)
+    for i in range(n):
+        (x1, y1), (x2, y2) = poly[i], poly[(i + 1) % n]
+        assert x1 == x2 or y1 == y2, "軸に平行でない辺（この判定は使えない）"
+        dx = max(min(x1, x2) - x, 0.0, x - max(x1, x2))
+        dy = max(min(y1, y2) - y, 0.0, y - max(y1, y2))
+        if max(dx, dy) <= kerf:
+            return True
+    return False
+
+
+def test_the_choc_stab_openings_are_widened_by_the_kerf(plate):
+    """Keebio の輪郭は幅がハウジングと同じ 6.30（隙間 0）。プレートでは STAB_KERF だけ
+    広げて開けていること: 輪郭の横の辺から 0.1mm 外は穴、STAB_KERF + 0.1mm 外は板。"""
+    from foundry.mech import CHOC_STAB_OUTLINE, STAB_KERF, switch_of
+
+    p, part, _, positions = plate
+    sw = switch_of(p.spec)
+    half = max(x for x, _ in CHOC_STAB_OUTLINE)             # 3.15（横の辺）
+    probed = 0
+    for (x, y), k in zip(positions, p.keys()):
+        s = sw.stab_offset_for(k.w_u)
+        if s is None:
+            continue
+        for centre in (x - s, x + s):
+            for side in (-1, 1):
+                edge = centre + side * half
+                assert not _solid(part, edge + side * 0.1, y), (k.label, centre, side)
+                assert _solid(part, edge + side * (STAB_KERF + 0.1), y), (k.label, centre, side)
+                probed += 1
+    assert probed == 4 * 4, probed                            # Enter・左 Shift・スペース 2 つ
+
+
 def test_the_web_around_the_corner_keys_survives(plate):
     """角の開口が隣接するキー（最下段の角のキーと、その 1 段上で角にかぶるキー）の
     自分のセルの桟を削っていないこと（Review Focus 4）。
@@ -185,8 +229,9 @@ def test_the_web_around_the_corner_keys_survives(plate):
             px = x + side * r
             for dy in (-5.0, 0.0, 5.0):
                 py = y + dy
-                if any(_in_polygon(px, py, poly) for poly in stabs):
-                    continue   # 自分のスタビ開口の中は桟ではない
+                # 前提: プローブ点は自分のスタビ開口（広げたあと）の外。外れたら気づく
+                assert not any(_in_opening(px, py, poly) for poly in stabs), \
+                    (k.label, side, r, dy, "プローブがスタビ開口にかかった")
                 checked_total += 1
                 assert _solid(part, px, py), (k.label, side, r, dy)
 
@@ -205,13 +250,10 @@ def test_the_web_around_the_corner_keys_survives(plate):
         for r in (7.2, 8.2, 9.2):
             py = y - r
             for px in xs:
-                in_stab = any(_in_polygon(px, py, poly) for poly in stabs)
-                if r <= 3.05:
-                    # ブリーフの前提（スタビ輪郭は中心から y=-3.05 までしか伸びない）を
-                    # 検算する。想定に反していたら assert で気づく（推測で除外しない）
-                    assert not in_stab, (k.label, r, px, "スタビの範囲の想定が外れた")
-                if in_stab:
-                    continue
+                # 前提: スタビの開口は中心から y −3.05 − kerf までしか下に伸びないので、
+                # 7.2mm 以上下のプローブは開口の外。**推測で除外せず** assert で確かめる
+                assert not any(_in_opening(px, py, poly) for poly in stabs), \
+                    (k.label, r, px, "プローブがスタビ開口にかかった")
                 checked_total += 1
                 assert _solid(part, px, py), (k.label, r, px)
 
