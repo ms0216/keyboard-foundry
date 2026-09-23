@@ -12,6 +12,7 @@ HHKB で高くついたものだけを入れてある:
 import ast
 import re
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -54,8 +55,10 @@ def _listed():
 
 
 def test_every_import_is_listed_in_requirements():
-    local = {"foundry", "conftest"} | {p.stem for p in PY_FILES}
-    used = set().union(*(_imports(p) for p in PY_FILES))
+    # spec.py も見る（PY_FILES からは「読まれた」の数え方のために外してある。最終レビュー M9）
+    files = PY_FILES + sorted(paths.PROJECTS.glob("*/spec.py"))
+    local = {"foundry", "conftest"} | {p.stem for p in files}
+    used = set().union(*(_imports(p) for p in files))
     ext = used - set(sys.stdlib_module_names) - local - KICAD_ONLY - BLENDER_ONLY - BUNDLED
     missing = sorted(m for m in ext if DIST.get(m, m).lower() not in _listed())
     assert not missing, f"requirements-dev.txt に無い: {missing}"
@@ -100,6 +103,43 @@ def test_kicad_side_modules_need_only_the_standard_library(name):
         if isinstance(n, ast.ImportFrom) and n.level == 1:
             mods = [n.module] if n.module else [a.name for a in n.names]
             assert set(mods) <= set(KICAD_SIDE), f"{name}.py が .{mods} に頼っている"
+
+
+# **機種の中の、KiCad の Python から import されるモジュール**（最終レビュー I3）。
+# foundry と同じく 3.9 の文法・標準ライブラリだけ。頼ってよい機種のモジュールはこの中だけ
+# （interface は case.py＝build123d 側からも読まれる。build123d を混ぜると KiCad 側で落ちる）
+KICAD_SIDE_PROJECT = ["projects/cckb/pcb_extra.py", "projects/cckb/circuit.py",
+                      "projects/cckb/interface.py", "projects/cckb/matrix_routes.py",
+                      "projects/cckb/case_spec.py", "projects/cckb/tools/route_pcb.py",
+                      "projects/cckb/tools/board_geometry.py", "projects/cckb/tools/board_facts.py"]
+
+
+def _kicad_side_problems(path):
+    src = path.read_text()
+    ast.parse(src, feature_version=(3, 9))            # 3.10 以降の文法で書かない
+    local = {Path(f).stem for f in KICAD_SIDE_PROJECT}
+    bad = sorted(_imports(path) - set(sys.stdlib_module_names) - KICAD_ONLY - {"foundry"} - local)
+    for n in ast.walk(ast.parse(src)):              # foundry からは KiCad 側のものだけ
+        if isinstance(n, ast.ImportFrom) and n.level == 0 and n.module and n.module.startswith("foundry"):
+            mods = [n.module.split(".")[1]] if "." in n.module else [a.name for a in n.names]
+            bad += [f"foundry.{m}" for m in mods if m not in KICAD_SIDE]
+    return bad
+
+
+@pytest.mark.parametrize("rel", KICAD_SIDE_PROJECT)
+def test_kicad_side_project_modules_need_only_the_standard_library(rel):
+    bad = _kicad_side_problems(ROOT / rel)
+    assert not bad, f"{rel} が KiCad の Python に無いものに頼っている: {bad}"
+
+
+def test_the_kicad_side_check_notices_build123d_and_new_syntax(tmp_path):
+    """**検査器が壊れていないか。**"""
+    f = tmp_path / "x.py"
+    f.write_text("from build123d import Box\nfrom foundry.verify import to_mesh\n")
+    assert _kicad_side_problems(f) == ["build123d", "foundry.verify"]
+    f.write_text("match 1:\n    case 1:\n        pass\n")
+    with pytest.raises(SyntaxError):
+        _kicad_side_problems(f)
 
 
 def _constant_files():
@@ -157,3 +197,63 @@ def test_the_tag_scanners_actually_find_tags(tmp_path):
     assert tags.provisional_mismatches(f, doc) == []
     doc.write_text("| `A` | 2 | x |\n")                  # 数値がずれたら気づく
     assert tags.provisional_mismatches(f, doc) == ["A: コード 1 / 文書 2.0"]
+
+
+# ---------------------------------------------------------------------------
+# 規則の値の写し（最終レビュー I1）
+# ---------------------------------------------------------------------------
+# 機種のコードが pcb_rules の値を**数字で写す**と、規則を変えたとき Freerouting とネットクラスは
+# 新しい値、自前の計画（matrix_routes）や取付の判定（interface）は古い値のまま、で黙ってずれる。
+# 見分け方: 大文字の定数に**数字だけの式**を入れ、その行か直前の続いたコメントが規則を名指ししている。
+# 導けば（`TRACK_W / 2`・`JLC["edge_clearance"] + 0.05`）式に名前が入るので引っかからない
+RULE_WORDS = re.compile(r"pcb_rules|TRACK_W|VIA_D|NPTH_EDGE_MIN|JLC\[|規則")
+
+
+def _numeric_literal(n):
+    if isinstance(n, ast.Constant):
+        return isinstance(n.value, (int, float)) and not isinstance(n.value, bool)
+    if isinstance(n, ast.UnaryOp):
+        return _numeric_literal(n.operand)
+    if isinstance(n, ast.BinOp):
+        return _numeric_literal(n.left) and _numeric_literal(n.right)
+    return False
+
+
+def rule_copies(src):
+    """数字で書いた規則の写し [(行, 名前)]。"""
+    lines = src.splitlines()
+    out = []
+    for node in ast.parse(src).body:
+        if not (isinstance(node, ast.Assign) and _numeric_literal(node.value)):
+            continue
+        names = [t.id for t in node.targets if isinstance(t, ast.Name) and t.id.isupper()]
+        if not names:
+            continue
+        text, j = [lines[node.lineno - 1]], node.lineno - 2
+        while j >= 0 and lines[j].lstrip().startswith("#"):
+            text.append(lines[j])
+            j -= 1
+        comment = " ".join(t.split("#", 1)[1] for t in text if "#" in t)
+        if RULE_WORDS.search(comment):
+            out.append((node.lineno, names[0]))
+    return out
+
+
+PROJECT_PY = sorted(p for p in paths.PROJECTS.rglob("*.py") if "__pycache__" not in p.parts)
+
+
+@pytest.mark.parametrize("path", PROJECT_PY, ids=lambda p: str(p.relative_to(ROOT)))
+def test_project_code_derives_board_rules_instead_of_copying_them(path):
+    bad = rule_copies(path.read_text())
+    assert not bad, f"pcb_rules から導かずに数字で写している: {bad}"
+
+
+def test_the_rule_copy_check_notices_a_copied_value():
+    """**検査器が壊れていないか。**最終レビューで見つかった写し（matrix_routes の元の書き方）で数える。"""
+    src = ("HALF_W = 0.1              # 線の半幅（pcb_rules.TRACK_W 0.2）\n"
+           "# 外形の帯。JLC の銅と外形 0.3（pcb_rules）に 0.02\n"
+           "EDGE_BAND = 0.32\n"
+           "TRACK_CLEAR = 0.2 + 0.2   # 線幅 ＋ 間隔（規則）\n"
+           "OK = TRACK_W / 2          # pcb_rules から導いた\n"
+           "PLAIN = 0.5               # 足す余裕だけ\n")
+    assert rule_copies(src) == [(1, "HALF_W"), (3, "EDGE_BAND"), (4, "TRACK_CLEAR")]

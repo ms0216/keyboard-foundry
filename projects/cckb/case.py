@@ -168,12 +168,6 @@ class Case:
         right = [(back + g, B), (B, B), (B, -B), (front + g, -B), (front + g, -g), (back + g, -g)]
         return left, right
 
-    def seam_line(self):
-        """継ぎ目の中心線（奥から手前へ）。"""
-        back, front = self.s.CASE_SEAM
-        o = self.i.case_outer
-        return [(back, o[3]), (back, 0.0), (front, 0.0), (front, o[1])]
-
     # --- ネジの座（下から入れる皿ネジ） -----------------------------------------
     def screw_seat(self, x, y, sink):
         """下から入れる皿ネジの座ぐり＋円錐の座＋穴（**削る側の立体**）。sink は頭の面の高さ。"""
@@ -312,13 +306,15 @@ def print_pose(name, part):
 
 
 def export_all(out=None):
-    """印刷する全部品を build/cckb/ に書く（プレートは foundry.plate、キャップと小片も）。
+    """印刷する全部品を out（既定 build/cckb/）に書く（プレートは foundry.plate、キャップと小片も）。
 
     slice_check は projects/cckb/*.py より古い STL を「古い」として落とすので、**全部を一度に作る**。
+    返り値の report の各部品に ok（水密で A1 mini に入る）。NG があれば __main__ は 1 で終わる。
     """
+    from foundry.plate import build_plate, split_plate
     from foundry.plate import main as plate_main
     from foundry.project import load
-    from foundry.verify import to_mesh
+    from foundry.verify import render_outline_2d, to_mesh
 
     import coupons
     import keycaps
@@ -326,7 +322,16 @@ def export_all(out=None):
     p = load("cckb")
     out = Path(out or p.build)
     out.mkdir(parents=True, exist_ok=True)
-    plate_main(["cckb"])
+    plate_bad = 0
+    if out == p.build:
+        plate_bad = plate_main(["cckb"])         # 絵（plate_*.png）も出す
+    else:                                        # 前は out を無視して build/ に書いていた（M5）
+        for piece, keys in p.pieces().items():
+            whole, _, _ = build_plate(p.spec, keys, piece)
+            for name, part in split_plate(p.spec, whole, piece, keys):
+                mesh, _ = to_mesh(part, out / f"plate_{name}.stl")
+                render_outline_2d(part, out / f"plate_{name}.png", title=f"{p.name} plate {name}")
+                plate_bad += not mesh.is_watertight
     parts = dict(Case().parts())
     parts.update(keycaps.print_parts())
     parts.update(coupons.parts())
@@ -339,10 +344,14 @@ def export_all(out=None):
                             volume=round(part.volume, 1), watertight=bool(mesh.is_watertight),
                             solids=len(part.solids()))
         ok = mesh.is_watertight and max(bb.size.X, bb.size.Y) <= p.spec.PRINT_MAX
+        report[name]["ok"] = bool(ok)
         print(f"{'OK' if ok else 'NG'} {name:14s} {bb.size.X:7.2f} x {bb.size.Y:6.2f} x {bb.size.Z:5.2f}"
               f"  体積 {part.volume / 1000:6.2f} cm3  水密={mesh.is_watertight}  立体 {len(part.solids())}")
+    if plate_bad:
+        report["plates"] = dict(ok=False)
+        print(f"NG プレート（水密でない物 {plate_bad}）")
     return report
 
 
 if __name__ == "__main__":
-    export_all()
+    sys.exit(0 if all(r["ok"] for r in export_all().values()) else 1)

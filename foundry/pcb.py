@@ -16,7 +16,6 @@ MCU などは projects/<機種>/pcb_extra.py の `place(board, ctx)` で足す�
 """
 
 import importlib.util
-import json
 import math
 import sys
 from pathlib import Path
@@ -28,7 +27,7 @@ from foundry import paths, pinmap                                  # noqa: E402
 from foundry.layout import centered                                # noqa: E402
 from foundry.mech import stab_flipped, switch_of                   # noqa: E402
 from foundry.pcb_rules import (JLC, NPTH_EDGE_MIN, TRACK_W,        # noqa: E402
-                               VIA_D, VIA_DRILL)
+                               VIA_D, VIA_DRILL, sync_project_rules)
 from foundry.project import load                                   # noqa: E402
 
 # 基板の中心を置く KiCad 上の座標（mm）。0,0 だと座標が負になり GUI で扱いにくい
@@ -93,35 +92,6 @@ def _apply_rules(board):
     nc.SetViaDrill(mm(VIA_DRILL))
 
 
-def sync_project_rules(pcb_path, severities=None):
-    """`.kicad_pro` の規則を JLC に揃える。**kicad-cli の DRC はここを読む。**
-
-    HHKB で JLC の値を直しても DRC が古い規則で判定し続けた（#50）。
-    規則以外（利用者が KiCad で設定した重大度など）は触らない。
-
-    severities: 機種が spec.DRC_SEVERITY で**理由を書いて**変える重大度（例: 違反 → 警告）。
-    **消す（ignore）ことはさせない**——警告に下げたものも drc.py が種類ごとに数えて出す。
-    """
-    pro = Path(str(pcb_path)[:-len(".kicad_pcb")] + ".kicad_pro")
-    doc = json.loads(pro.read_text())
-    rules = doc.setdefault("board", {}).setdefault("design_settings", {}).setdefault("rules", {})
-    rules.update({
-        "min_track_width": JLC["track_min"],
-        "min_clearance": JLC["clearance_min"],
-        "min_via_diameter": JLC["via_dia_min"],
-        "min_through_hole_diameter": JLC["hole_min"],
-        "min_hole_to_hole": JLC["hole_to_hole"],
-        "min_copper_edge_clearance": JLC["edge_clearance"],
-        "min_silk_clearance": JLC["silk_width"],
-        "min_via_annular_width": JLC["annular_ring"],
-    })
-    for kind, sev in (severities or {}).items():
-        if sev not in ("error", "warning"):
-            raise ValueError(f"{kind}: 重大度 {sev!r} は error / warning だけ（ignore で隠さない）")
-        doc["board"]["design_settings"].setdefault("rule_severities", {})[kind] = sev
-    pro.write_text(json.dumps(doc, indent=2) + "\n")
-
-
 def npth_too_close_to_edge(board, w, h):
     """穴（NPTH）の縁から外形（矩形）までが NPTH_EDGE_MIN 未満のもの。
 
@@ -174,6 +144,7 @@ def build(project, piece):
         return nets[name]
 
     kind = switch_of(spec)
+    diode_override = project.diode_override(piece)     # 無い部品・キー番号は落とす
     n_stab = 0
     for i, ((kx, ky), k, (r, c)) in enumerate(zip(positions, keys, rc), start=1):
         sw = _load(KEYSWITCH_LIB, kind.footprint(k.w_u))
@@ -205,7 +176,7 @@ def build(project, piece):
         # 機種がキーごとに置き場所を変えられる（spec.DIODE_OVERRIDE。値は
         # Switch.diode_offset と同じ KiCad の向き・キー中心から (dx, dy, 角度)）。
         # CCKB ではスタビの逃げ穴がいつもの場所に重なる 4 キーだけ（O7）
-        dx, dy, ang = getattr(spec, "DIODE_OVERRIDE", {}).get(piece, {}).get(
+        dx, dy, ang = diode_override.get(
             i, (kind.diode_offset[0], kind.diode_offset[1], kind.diode_angle))
         d.SetPosition(pcbnew.VECTOR2I_MM(ORIGIN[0] + kx + dx, ORIGIN[1] - ky + dy))
         d.SetOrientationDegrees(ang)

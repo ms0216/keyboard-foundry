@@ -8,7 +8,8 @@
     基板の面に当たる金属（ナット・インサート）の下の銅の禁止
   - ネットクラス POWER
 
-**寸法は持たない**（spec.py・interface.py）。**回路は持たない**（circuit.py。ここは pinmap を通して
+**寸法は持たない**（spec.py・interface.py）。持つのは規則に足す余裕（EDGE_BAND の ＋0.02）と、
+Edge.Cuts に描く線の幅 0.1（外形の線の太さは切り方に効かない。KiCad の外形の既定）だけ。**回路は持たない**（circuit.py。ここは pinmap を通して
 パッドにネットを張るだけ。引けないピン・宣言に無いパッドは落とす）。
 """
 
@@ -28,7 +29,7 @@ for p in (str(ROOT), str(HERE)):
 import circuit                                   # noqa: E402
 import interface                                 # noqa: E402
 from foundry import paths                        # noqa: E402
-from foundry.pcb_rules import TRACK_W, VIA_D, VIA_DRILL   # noqa: E402
+from foundry.pcb_rules import JLC, TRACK_W, VIA_D, VIA_DRILL   # noqa: E402
 from foundry.project import load                 # noqa: E402
 
 XIAO_LIB = paths.LIB / "xiao.pretty"
@@ -160,9 +161,9 @@ def circle_poly(c, r, n=24):
              c[1] + R * math.sin(2 * math.pi * (i + 0.5) / n)) for i in range(n)]
 
 
-# 外形・逃げ穴の縁の、配線・ビアを入れない帯の幅。JLC の銅と外形 0.3（pcb_rules）に 0.02。
-# 自分で引く行列（matrix_routes の EDGE_GAP 0.35）はこの外にいる
-EDGE_BAND = 0.32
+# 外形・逃げ穴の縁の、配線・ビアを入れない帯の幅。JLC の銅と外形の規則に 0.02 足す。
+# 自分で引く行列（matrix_routes.EDGE_GAP・規則 ＋ 0.05）はこの外にいる
+EDGE_BAND = JLC["edge_clearance"] + 0.02
 
 
 def place(board, ctx):

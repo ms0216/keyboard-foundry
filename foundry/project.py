@@ -66,6 +66,22 @@ class Project:
             raise ValueError(f"{self.name}/{piece}: 同じ (row, col) に 2 つのキーがある")
         return keys, rc
 
+    def diode_override(self, piece):
+        """spec.DIODE_OVERRIDE[piece]（キー番号 → (dx, dy, 角度)）。無ければ {}。
+
+        **綴り違いを黙って無視しない**: 無い部品名・キー番号（1〜キーの数）を書いたら落とす。
+        前は効かないまま DRC 0 で通った（最終レビュー M2）。
+        """
+        over = getattr(self.spec, "DIODE_OVERRIDE", {})
+        extra = set(over) - set(self.spec.PIECES)
+        if extra:
+            raise ValueError(f"{self.name}: DIODE_OVERRIDE の部品 {sorted(extra)} は PIECES {self.spec.PIECES} に無い")
+        n = len(self.pieces()[piece])
+        bad = sorted(set(over.get(piece, {})) - set(range(1, n + 1)), key=str)
+        if bad:
+            raise ValueError(f"{self.name}/{piece}: DIODE_OVERRIDE のキー番号 {bad} は 1〜{n} に無い")
+        return over.get(piece, {})
+
 
 def load(name_or_path):
     p = Path(name_or_path)

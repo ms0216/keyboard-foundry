@@ -348,7 +348,7 @@ def plate_pieces():
 
     p = load("cckb")
     whole, _, _ = build_plate(p.spec, p.keys(), "main")
-    return whole, split_plate(p.spec, whole, "main")
+    return whole, split_plate(p.spec, whole, "main", p.keys())
 
 
 def test_every_printed_part_fits_the_a1_mini(ifc, plate_pieces):
@@ -361,6 +361,22 @@ def test_every_printed_part_fits_the_a1_mini(ifc, plate_pieces):
         assert max(bb.X, bb.Y) <= ifc.s.PRINT_MAX, (name, bb)
     for name, box in ifc.case_pieces().items():
         assert max(I.size(box)) <= ifc.s.PRINT_MAX, (name, I.size(box))
+
+
+@pytest.mark.parametrize("over, msg", [
+    ({"PLATE_SPLIT": {"main": (9.525, 0.0, 4.7625, -4.7625)}}, "キーの段は 5 段"),   # 段より 1 つ少ない
+    ({"PLATE_MARGIN_Y": 2.0}, "段の高さ"),        # 外形から割り出す段の高さがキーの段とずれる
+])
+def test_the_plate_split_refuses_a_split_that_does_not_match_the_rows(plate_pieces, over, msg):
+    """最終レビュー M1: 個数が段数と違う・外形から割り出した段の高さがキーと違うときは黙って
+    別の所で切らずに落とす（外形は本物のまま、分け方の前提だけを壊す）。"""
+    from foundry.plate import split_plate
+
+    p = load("cckb")
+    for k, v in over.items():
+        setattr(p.spec, k, v)
+    with pytest.raises(ValueError, match=msg):
+        split_plate(p.spec, plate_pieces[0], "main", p.keys())
 
 
 def test_the_print_check_notices_a_long_piece():
@@ -402,20 +418,63 @@ def test_the_seam_check_notices_a_seam_through_a_key():
 # 取付・支え ↔ いま生成した基板
 # ---------------------------------------------------------------------------
 
+def _read_geometry(board, out):
+    r = subprocess.run([paths.KICAD_PYTHON, str(ROOT / "projects/cckb/tools/board_geometry.py"),
+                        str(board), str(out)], cwd=ROOT, capture_output=True, text=True)
+    assert r.returncode == 0 and r.stdout.startswith("OK"), r.stdout + r.stderr
+    return json.loads(out.read_text())
+
+
+def _shape(g):
+    """板の形だけ（どの板から作ったかの印を除く）。部品・パッドは並びを問わない（生成し直すと
+    KiCad の並びが変わる。中身は同じ）。"""
+    out = {k: v for k, v in g.items() if k != "board_sha256"}
+    for k in ("footprints", "pads"):
+        out[k] = sorted(json.dumps(x, sort_keys=True, ensure_ascii=False) for x in out[k])
+    return out
+
+
 @pytest.fixture(scope="module")
-def geo(tmp_path_factory):
+def geo():
+    """発注する板の形（コミットした写し・板の sha256 で突き合わせる）。KiCad が要らないので CI でも
+    走る（最終レビュー I5）。写しが**いま生成した基板**と同じ形であることは下の 2 つの検査が
+    KiCad で見る（配線は形を変えない: パッド・コートヤード・外形は未配線の板と同じ）。"""
+    return I.board_geometry()
+
+
+@pytest.fixture(scope="module")
+def generated_geo(tmp_path_factory):
+    """foundry.pcb が**いま生成した**未配線の板の形（KiCad の Python）。"""
     require(paths.KICAD_PYTHON, "基板の生成")
     d = tmp_path_factory.mktemp("cckbif") / "cckb"
     shutil.copytree(paths.PROJECTS / "cckb", d, ignore=shutil.ignore_patterns("pcb", "__pycache__"))
     r = subprocess.run([paths.KICAD_PYTHON, "-m", "foundry.pcb", str(d)],
                        cwd=ROOT, capture_output=True, text=True)
     assert r.returncode == 0, r.stdout + r.stderr
-    out = d / "geo.json"
-    r = subprocess.run([paths.KICAD_PYTHON, str(ROOT / "projects/cckb/tools/board_geometry.py"),
-                        str(d / "pcb/unrouted/cckb_main.kicad_pcb"), str(out)],
-                       cwd=ROOT, capture_output=True, text=True)
-    assert r.returncode == 0 and r.stdout.startswith("OK"), r.stdout + r.stderr
-    return json.loads(out.read_text())
+    return _read_geometry(d / "pcb/unrouted/cckb_main.kicad_pcb", d / "geo.json")
+
+
+def test_the_committed_geometry_is_what_kicad_reads_from_the_routed_board(tmp_path):
+    """写しの中身 = KiCad がいま発注する板から読む物（sha256 が合っていても、手で直した写しを通さない）。"""
+    require(paths.KICAD_PYTHON, "配線済みの板を読む")
+    for suf in (".kicad_pcb", ".kicad_pro"):
+        shutil.copy(I.ROUTED_BOARD.with_suffix(suf), tmp_path / I.ROUTED_BOARD.with_suffix(suf).name)
+    got = _read_geometry(tmp_path / I.ROUTED_BOARD.name, tmp_path / "geo.json")
+    assert got == json.loads(I.BOARD_GEOMETRY.read_text())
+
+
+def test_the_committed_geometry_is_what_the_generator_makes_now(geo, generated_geo):
+    """取付・支えの検査は前は**いま生成した**板を読んでいた。写しに替えても同じ物を見ていること。"""
+    assert _shape(geo) == _shape(generated_geo)
+
+
+def test_the_geometry_check_notices_a_changed_board(tmp_path):
+    """**検査器が壊れていないか。**板が 1 バイト変われば写しは古い（KiCad は要らない）。"""
+    board = tmp_path / "b.kicad_pcb"
+    board.write_bytes(I.ROUTED_BOARD.read_bytes() + b"\n")
+    with pytest.raises(I.StaleGeometry):
+        I.board_geometry(board)
+    assert I.board_geometry()["board_sha256"]           # 本物は通る
 
 
 def test_the_board_has_exactly_the_declared_mounts(ifc, geo):
@@ -530,3 +589,51 @@ def test_the_pocket_check_notices_round_holes():
     s = load("cckb").spec
     del s.MOUNT_POCKET_AF                      # 核の既定（M2 のバカ穴）に戻す
     assert not any(_plate_open_at_pockets(s))
+
+
+# ---------------------------------------------------------------------------
+# 規則の値は pcb_rules から導く（最終レビュー I1）
+# ---------------------------------------------------------------------------
+# pcb_rules の値を変えてから機種のモジュールを読み、機種の値が**ついてくる**かを見る。
+# 数字で写していれば古い値のまま残る（test_meta の写しの検査はコメントで見分けるので、
+# コメントに規則を書かない写しはこちらが捕まえる）
+_FOLLOW = r"""
+import sys
+sys.path[:0] = [{root!r}, {proj!r}]
+from foundry import pcb_rules as R
+R.TRACK_W, R.VIA_D, R.NPTH_EDGE_MIN = 0.25, 0.7, 1.3
+R.JLC["edge_clearance"] = 0.4
+import {mods}
+got = dict({got})
+want = dict({want})
+bad = {{k: (got[k], want[k]) for k in want if abs(got[k] - want[k]) > 1e-12}}
+print("OK" if not bad else "NG %r" % bad)
+"""
+
+
+def _follow(python, mods, got, want):
+    src = _FOLLOW.format(root=str(ROOT), proj=str(ROOT / "projects/cckb"), mods=mods, got=got, want=want)
+    r = subprocess.run([python, "-c", src], cwd=ROOT, capture_output=True, text=True)
+    return r.stdout.strip() + r.stderr[-1500:]
+
+
+def test_the_project_rule_values_follow_pcb_rules():
+    out = _follow(sys.executable, "matrix_routes as M, interface as I",
+                  "HALF_W=M.HALF_W, VIA_R=M.VIA_R, TRACK_CLEAR=M.TRACK_CLEAR, PAD_GAP=M.PAD_GAP, "
+                  "HOLE_GAP=M.HOLE_GAP, EDGE_GAP=M.EDGE_GAP, EDGE_MIN=I.EDGE_MIN, "
+                  "COPPER_GAP=I.COPPER_GAP, TRACK_HALF=I.TRACK_HALF",
+                  "HALF_W=0.125, VIA_R=0.35, TRACK_CLEAR=0.5, PAD_GAP=0.3, HOLE_GAP=0.4, "
+                  "EDGE_GAP=0.45, EDGE_MIN=1.3, COPPER_GAP=0.4, TRACK_HALF=0.125")
+    assert out == "OK", out
+
+
+def test_the_pcb_extra_rule_values_follow_pcb_rules():
+    require(paths.KICAD_PYTHON, "pcb_extra を KiCad の Python で読む")
+    out = _follow(paths.KICAD_PYTHON, "pcb_extra as P", "EDGE_BAND=P.EDGE_BAND", "EDGE_BAND=0.42")
+    assert out == "OK", out
+
+
+def test_the_follow_check_notices_a_copied_value():
+    """**検査器が壊れていないか。**写した値（ついてこない値）を NG と言うこと。"""
+    out = _follow(sys.executable, "matrix_routes as M", "HALF_W=0.1", "HALF_W=0.125")
+    assert out.startswith("NG"), out

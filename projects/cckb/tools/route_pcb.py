@@ -19,14 +19,14 @@
      離島（面積で見る。つなぎ直し、残りは消して面積を記録）→ 塗り直し
   6. 保存と記録（route.json: 未配線の板の指紋・Freerouting・数）
 
-**寸法は持たない**（spec.py・pcb_rules.py）。**配線を加工する判定を書かない**——線は置くか、
+**板の寸法・規則は持たない**（spec.py・pcb_rules.py から読む）。持つのは規則に足す余裕だけ
+（GND_CLEAR・SAME_NET_PAD_CLEAR・DETOUR_CLEAR など。どれも名前とコメントで余裕と書いてある）。**配線を加工する判定を書かない**——線は置くか、
 置いた線が残っているかを数えるだけ（HHKB の教訓）。
 """
 
 import hashlib
 import json
 import math
-import os
 import re
 import shutil
 import subprocess
@@ -45,16 +45,17 @@ for p in (str(ROOT), str(PROJ), str(HERE)):
 import board_geometry                                   # noqa: E402
 import interface                                        # noqa: E402
 import matrix_routes                                    # noqa: E402
-from foundry import boardhash                           # noqa: E402
+from foundry import boardhash, paths                    # noqa: E402
 from foundry.pcb import ORIGIN, sync_project_rules      # noqa: E402
 from foundry.pcb_rules import JLC, TRACK_W, VIA_D, VIA_DRILL   # noqa: E402
 from foundry.project import load                        # noqa: E402
 
 SRC = PROJ / "pcb" / "unrouted" / "cckb_main.kicad_pcb"
 OUT = PROJ / "pcb" / "cckb_main.kicad_pcb"
-JAR = Path(os.environ.get("FREEROUTING_JAR",
-                          Path.home() / ".local/share/freerouting/freerouting-2.3.0.jar"))
-JAVA_CANDIDATES = ("/opt/homebrew/opt/openjdk/bin/java", "/usr/local/opt/openjdk/bin/java")
+JAR = paths.FREEROUTING_JAR
+# 使う Freerouting の版。**jar の名前ではなく中身で確かめる**（MANIFEST の Build-Revision）。
+# v2.3.0 のタグ = この commit（GitHub API repos/freerouting/freerouting/git/ref/tags/v2.3.0、2026-09-24 に確認）
+FREEROUTING_REVISION = "2d4de019aa89e9fa3dc1dc44e09bf509760cafc1"
 PASSES = 100
 # Freerouting は丸めで規則を下回る（HHKB: 20→30）。**同じ入力なら同じ結果**（HHKB で 3 回確かめた）
 # だが、板を少し変えると未配線が 0 から 2 に揺れた（2026-09-24・名札を動かしただけ）。
@@ -312,7 +313,7 @@ def gnd_fanout(board, space):
 
 def _java():
     tried = []
-    for cand in (shutil.which("java"),) + JAVA_CANDIDATES:
+    for cand in (shutil.which("java"),) + paths.JAVA_CANDIDATES:
         if not cand or not Path(cand).exists():
             continue
         tried.append(cand)
@@ -426,9 +427,24 @@ def edit_dsn(dsn, ends, margin_um, only=None):
                 twins_dropped=n_twin[0])
 
 
+def freerouting_revision(jar):
+    """jar の MANIFEST の Build-Revision（無ければ None）。"""
+    import zipfile
+
+    with zipfile.ZipFile(jar) as z:
+        for line in z.read("META-INF/MANIFEST.MF").decode().splitlines():
+            if line.startswith("Build-Revision:"):
+                return line.split(":", 1)[1].strip()
+    return None
+
+
 def freeroute(board, work, only=None):
     if not JAR.exists():
         raise SystemExit(f"Freerouting が無い: {JAR}")
+    rev = freerouting_revision(JAR)
+    if rev != FREEROUTING_REVISION:
+        raise SystemExit(f"Freerouting の版が違う: {JAR} の Build-Revision {rev}"
+                         f"（v2.3.0 は {FREEROUTING_REVISION}）")
     dsn, ses = work / "cckb.dsn", work / "cckb.ses"
     ends = matrix_ends(board)
     tried = []
@@ -820,7 +836,7 @@ def kept_in_rule_areas(board, tracks, vias):
     return out
 
 
-DETOUR_CLEAR = 0.25      # ずらした線とほかの銅・禁止域の間（ネットクラスの 0.2 ＋ Freerouting と同じ余裕 0.05）
+DETOUR_CLEAR = TRACK_W + 0.05   # ずらした線とほかの銅・禁止域の間（ネットクラスの間隔 = TRACK_W ＋ Freerouting と同じ余裕 0.05）
 
 
 def detours(board, dropped):

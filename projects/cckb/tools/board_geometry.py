@@ -5,6 +5,7 @@
 なぜ要るか: 取付ネジ・支柱・角の部品が「基板の部品に当たらないか」を、
 **自分の宣言ではなく生成した基板そのもの**と突き合わせるため
 （tests/test_cckb_interface.py・projects/cckb/tools/find_mounts.py が読む）。
+発注する板の出力は projects/cckb/pcb/board_geometry.json としてコミットしてある（interface.board_geometry）。
 pcbnew はパッドの位置を回転・裏返しまで解いた世界座標で返すので、
 S 式を自分で解くより取り違えが無い（board_dump.py は位置の回転を解かない）。
 
@@ -12,6 +13,7 @@ S 式を自分で解くより取り違えが無い（board_dump.py は位置の�
 **寸法は持たない**（読むだけ）。
 """
 
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -85,5 +87,7 @@ if __name__ == "__main__":
     board = pcbnew.LoadBoard(sys.argv[1])
     data = dump_board(board)
     data["outline"] = outline(board)
+    # どの板から作ったか（interface.board_geometry がコミットした写しと板を突き合わせる）
+    data["board_sha256"] = hashlib.sha256(Path(sys.argv[1]).read_bytes()).hexdigest()
     Path(sys.argv[2]).write_text(json.dumps(data, indent=1, ensure_ascii=False))
     print(f"OK 部品 {len(data['footprints'])} / パッド {len(data['pads'])} → {sys.argv[2]}")

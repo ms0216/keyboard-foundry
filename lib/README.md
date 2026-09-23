@@ -136,8 +136,11 @@ Seeed XIAO nRF52840 のフットプリントと公式 STEP（HHKB で作り、14
 | `BAT_BS-16-B4AK003` | 図面 MY-CP-0085 の PCB Layout（3.75×4.5・外外 28.0）。LCSC（EasyEDA）の BAT-SMD_BS-16-B4AK005 と同じ位置・大きさ。パッド 1 = ＋ | 同上 |
 | `Hole_NPTH_6.0mm` | 右のふたの柱の穴（spec.LID_PILLAR_HOLE） | — |
 
-出典の PDF・EasyEDA のデータは再配布の許しが明らかでないので置かない（URL と読んだ値を決定記録・
-projects/cckb/docs/parts-audit.md に書いた）。
+出典の PDF・EasyEDA の部品データ**そのもの**は再配布の許しが明らかでないので置かない（URL と読んだ値を
+決定記録・projects/cckb/docs/parts-audit.md に書いた）。検査が突き合わせる相手として、EasyEDA の
+データからは**座標の事実だけ**（パッケージ名・原点・パッドの番号・中心・大きさ）を抜いて
+tests/fixtures/easyeda/footprints.json に置いた（形の描画・3D・記号などは含めない）。
+XIAO の Seeed のフットプリントは CC-BY-SA-4.0 なので無改変で置いた（tests/fixtures/seeed_xiao/README.md）。
 
 ## ライセンス表記
 

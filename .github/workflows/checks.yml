@@ -7,6 +7,10 @@ name: 設計の自己検証
 # ので skip になる。**skip の数は必ず出力に出る**（-rs）。KiCad 入りで回すなら
 # REQUIRE_KICAD=1 を付けたジョブを足す（飛んだら赤）。版は手元の KiCad（10）と揃える
 # ——HHKB では CI が 9.0 で 10 の板を読めず、実形状の検査に一度も届いていなかった。
+#
+# CCKB のケース・取付の検査は、発注する板の形をコミットした写し
+# （projects/cckb/pcb/board_geometry.json・板の sha256 つき）で読むので、ここでも走る。
+# 写しが板と同じかは KiCad のある所の検査が見る（projects/cckb/interface.py）
 on:
   push:
   pull_request:

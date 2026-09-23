@@ -101,7 +101,8 @@ HHKB 分割機（`../2608042258_HHKB_devided`・2026-08〜09）で積み上げ�
 ## よく使うコマンド
 
 ```
-.venv/bin/pytest tests -q                  # 全検査（KiCad があれば基板の生成と DRC も・約 15 秒）
+.venv/bin/pytest tests -q                  # 全検査（KiCad があれば基板の生成と DRC も・約 3 分半）
+.venv/bin/pytest tests -q -m "not slow"   # 編集中の速い回（5 秒を超えるケースの形状の検査を飛ばす）
 REQUIRE_KICAD=1 .venv/bin/pytest tests -q  # KiCad の要る検査が飛んだら赤にする
 tools/kb <機種> plate|pcb|zmk|fab-fields|drc|render|slice|gate|parts
 .venv/bin/python3 -m foundry.check_zmk_config   # ZMK の設定を push 前に検査

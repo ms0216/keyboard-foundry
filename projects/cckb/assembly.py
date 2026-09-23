@@ -47,25 +47,32 @@ from case import Case, box, cone, cyl, fuse, hex_prism, prism, rbox  # noqa: E40
 from foundry import paths  # noqa: E402
 from foundry.layout import UNIT  # noqa: E402
 
-PLA_DENSITY = 1.24           # g/cm3（PLA の一般値。重さの見積もり）
-FR4_DENSITY = 1.85           # g/cm3（基板。決定記録 §2-4 と同じ値）
-
 
 # ---------------------------------------------------------------------------
 # 基板の実物（KiCad）
 # ---------------------------------------------------------------------------
 
-ROUTED_BOARD = HERE / "pcb" / "cckb_main.kicad_pcb"
+ROUTED_BOARD = I.ROUTED_BOARD
 
 
 def board_geometry(board=ROUTED_BOARD):
     """**発注する配線済みの板**のフットプリント（位置・向き・裏か）・パッド・コートヤード・
-    外形（Edge.Cuts）を CAD 座標で返す（KiCad の Python）。
+    外形（Edge.Cuts）を CAD 座標で返す。
 
     生成器の板ではなく配線済みの板を読む: ケースが当たるかを見る相手は、刷ったケースに
     入る実物だから。板が生成器と食い違わないことは tests/test_cckb_pcb.py の鮮度の検査が見る
     （未配線の板 = いまの生成器・route.json の指紋 = 未配線の板）。
+
+    発注する板は、コミットした写し（interface.board_geometry・板の sha256 で突き合わせる）を読む
+    ので KiCad が要らない（CI でもケースの検査が走る。最終レビュー I5）。ほかの板は KiCad の Python で読む。
     """
+    if Path(board) == ROUTED_BOARD:
+        return I.board_geometry(board)
+    return read_board_geometry(board)
+
+
+def read_board_geometry(board):
+    """板を KiCad の Python（tools/board_geometry.py）で読む。"""
     with tempfile.TemporaryDirectory() as t:
         out = Path(t) / "geo.json"
         r = subprocess.run([paths.KICAD_PYTHON, str(HERE / "tools/board_geometry.py"), str(board), str(out)],
@@ -94,15 +101,24 @@ def _bb_overlap(a, b, eps=1e-6):
 SLIVER = 1e-3               # 共通部分の一番薄い向きがこれ未満なら丸めの削りかす（基板の座標は 1e-4 に丸めてある）
 
 
+class GeometryFailure(RuntimeError):
+    """形状演算（共通部分・体積）が失敗した。**干渉 0 と数えない。**"""
+
+
 def common_volume(a, b, slivers=None):
-    """共通部分の体積。**丸めの削りかす**（厚さ SLIVER 未満）は 0 にして slivers に数える。"""
+    """共通部分の体積。**丸めの削りかす**（厚さ SLIVER 未満）は 0 にして slivers に数える。
+
+    OCC の真偽演算が壊れた立体を返して体積が取れないときは GeometryFailure を上げる。
+    前は 0 を返していて、その組は「重なっていない」ことになった（最終レビュー I2）。
+    検査が一番信用できなくなる場所で緑になるので、握り潰さない。
+    """
     c = a & b
     if c is None:
         return 0.0
     try:
         v = float(c.volume)
-    except (AttributeError, ValueError):
-        return 0.0
+    except (AttributeError, ValueError) as e:
+        raise GeometryFailure(f"共通部分の体積が取れない: {type(e).__name__}: {e}") from e
     if v > 0:
         sz = c.bounding_box().size
         if min(sz.X, sz.Y, sz.Z) < SLIVER:
@@ -112,12 +128,15 @@ def common_volume(a, b, slivers=None):
     return v
 
 
-def interference(groups_a, groups_b=None, skip=(), tol=1e-3, slivers=None):
+def interference(groups_a, groups_b=None, skip=(), tol=1e-3, slivers=None, failures=None):
     """群どうしの重なり {(名前 a, 名前 b): 体積}。**外接箱で絞ってから B-rep の共通部分**。
 
     groups: {名前: 立体}。groups_b が無ければ groups_a の中の全組。skip は見ない組（名前の組）。
     返すのは tol を超えた組だけ。削りかす（common_volume）は slivers（リスト）に数える——
     **隠さない**: 呼ぶ側が数を報告する。
+
+    形状演算の失敗（GeometryFailure）は、failures（リスト）を渡せば ((a, b), 理由) を積んで
+    続ける（呼ぶ側が 0 件を確かめる）。渡さなければそのまま上げる。どちらでも 0 とは数えない。
     """
     names_a = list(groups_a)
     if groups_b is None:
@@ -142,7 +161,12 @@ def interference(groups_a, groups_b=None, skip=(), tol=1e-3, slivers=None):
         for sa, ba in sols(groups_a, a):
             for sb, bb in sols(gb, b):
                 if _bb_overlap(ba, bb):
-                    v += common_volume(sa, sb, slivers)
+                    try:
+                        v += common_volume(sa, sb, slivers)
+                    except GeometryFailure as e:
+                        if failures is None:
+                            raise GeometryFailure(f"{a} × {b}: {e}") from e
+                        failures.append(((a, b), str(e)))
         if v > tol:
             out[(a, b)] = v
     return out
@@ -285,9 +309,10 @@ class Assembly:
         from foundry.plate import build_plate, split_plate
 
         p = self.i.p
-        whole, _, _ = build_plate(self.s, p.pieces()["main"], "main")
+        keys = p.pieces()["main"]
+        whole, _, _ = build_plate(self.s, keys, "main")
         out = {}
-        for name, part in split_plate(self.s, whole, "main"):
+        for name, part in split_plate(self.s, whole, "main", keys):
             out["plate_" + name.split("_")[-1]] = Pos(0, 0, self.z["plate_bottom"]) * part
         return out
 
@@ -840,16 +865,6 @@ def pad_problems(asm):
             if I.circle_rect_gap(m, r, p) < c.ANTISLIP_INSET]
 
 
-def weights(asm, printed, plates):
-    """重さの見積もり（g）。印刷物は体積 × PLA、基板は体積 × FR4。"""
-    counts = KC.print_counts(asm.i.keys)
-    caps = {w: KC.keycap(w, asm.s, asm.i.sw, asm.c).volume for w in counts}
-    out = {n: p.volume / 1000 * PLA_DENSITY for n, p in {**printed, **plates}.items()}
-    out["keycaps(62)"] = sum(caps[w] * n for w, n in counts.items()) / 1000 * PLA_DENSITY
-    out["pcb"] = asm.pcb().volume / 1000 * FR4_DENSITY
-    return out
-
-
 def render_all(asm, g, out):
     """断面と分解図を out/ に書く。返り値は書いた絵のパス。"""
     s, z = asm.s, asm.z
@@ -922,17 +937,22 @@ def main():
     out = asm.i.p.build
     out.mkdir(parents=True, exist_ok=True)
     print(f"組み立て {len(g)} 群・立体 {sum(len(solids_of(v)) for v in g.values())}  ({time.time() - t0:.0f}s)")
-    sl = []
-    bad = interference(g, skip=set(EXPECTED) | {("pads", "desk")}, slivers=sl)
+    sl, failed = [], []
+    bad = interference(g, skip=set(EXPECTED) | {("pads", "desk")}, slivers=sl, failures=failed)
     print("干渉:", bad or "0", f"（丸めの削りかす {len(sl)} 件・計 {sum(sl):.4f} mm3 は 0 に数えた）")
-    print("経路:", path_problems(asm, g) or "0")
-    print("設計どおりの重なり:", expected_overlaps_ok(asm, g) or "OK")
+    print("形状演算の失敗:", failed or "0")
+    paths_bad = path_problems(asm, g)
+    print("経路:", paths_bad or "0")
+    overlaps_bad = expected_overlaps_ok(asm, g)
+    print("設計どおりの重なり:", overlaps_bad or "OK")
+    ng = bool(bad or failed or paths_bad or overlaps_bad)
     for p in render_all(asm, g, out):
         print("   ", p)
     b = export_blend(g, out)
     print("Blender:", *(b or ["無い（BLENDER の場所: foundry/paths.py）"]))
-    return asm, g
+    return asm, g, ng
 
 
 if __name__ == "__main__":
-    main()
+    # NG を print だけにしない（CI・スクリプトから判定できるように。最終レビュー M5）
+    sys.exit(1 if main()[2] else 0)

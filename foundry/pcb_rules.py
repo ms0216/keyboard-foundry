@@ -1,9 +1,12 @@
-"""基板の設計規則の数値。**pcbnew を import しない**（検査は venv から読む）。
+"""基板の設計規則の数値と、それを `.kicad_pro` に書く関数。**pcbnew を import しない**（検査は venv から読む）。
 
 HHKB で「違反 0」を「JLCPCB で作れる」と取り違えた（KiCad 既定の規則のまま
 だった・#3）。製造者の能力を規則として板と `.kicad_pro` の両方に書き込む
 （`kicad-cli` の DRC は**隣の .kicad_pro から**規則を読む・#50）。
 """
+
+import json
+from pathlib import Path
 
 # JLCPCB の製造能力（2 層・1oz・標準工程）。
 JLC = {
@@ -29,3 +32,45 @@ VIA_D, VIA_DRILL = 0.6, 0.3    # φ0.5/0.3 はアニュラ 0.10 で規則 0.13 �
 # NPTH（スタビの大穴など）の縁から基板外形まで。スペースのスタビを素の向きで
 # 置くと 0.381mm しか残らず、外形公差 ±0.2 で 0.18mm の橋になった（#53）
 NPTH_EDGE_MIN = 1.0
+
+# 機種が spec.DRC_SEVERITY で**警告に下げてよい**種類。製造・電気に効かないもの（コートヤード・
+# シルク・ライブラリとの差）だけ。clearance・hole_to_hole・copper_edge_clearance などは下げさせない
+# （最終レビュー M3。CCKB は npth_inside_courtyard だけを下げている）
+DOWNGRADABLE = frozenset({
+    "npth_inside_courtyard", "pth_inside_courtyard", "courtyards_overlap",
+    "silk_overlap", "silk_over_copper", "silk_edge_clearance",
+    "lib_footprint_issues", "lib_footprint_mismatch",
+})
+
+
+def sync_project_rules(pcb_path, severities=None):
+    """`.kicad_pro` の規則を JLC に揃える。**kicad-cli の DRC はここを読む。**
+
+    HHKB で JLC の値を直しても DRC が古い規則で判定し続けた（#50）。
+    規則以外（利用者が KiCad で設定した重大度など）は触らない。
+
+    severities: 機種が spec.DRC_SEVERITY で**理由を書いて**変える重大度（例: 違反 → 警告）。
+    **消す（ignore）ことはさせない**——警告に下げたものも drc.py が種類ごとに数えて出す。
+    警告に下げてよいのは DOWNGRADABLE の種類だけ（clearance などを下げさせない）。
+    """
+    pro = Path(str(pcb_path)[:-len(".kicad_pcb")] + ".kicad_pro")
+    doc = json.loads(pro.read_text())
+    rules = doc.setdefault("board", {}).setdefault("design_settings", {}).setdefault("rules", {})
+    rules.update({
+        "min_track_width": JLC["track_min"],
+        "min_clearance": JLC["clearance_min"],
+        "min_via_diameter": JLC["via_dia_min"],
+        "min_through_hole_diameter": JLC["hole_min"],
+        "min_hole_to_hole": JLC["hole_to_hole"],
+        "min_copper_edge_clearance": JLC["edge_clearance"],
+        "min_silk_clearance": JLC["silk_width"],
+        "min_via_annular_width": JLC["annular_ring"],
+    })
+    for kind, sev in (severities or {}).items():
+        if sev not in ("error", "warning"):
+            raise ValueError(f"{kind}: 重大度 {sev!r} は error / warning だけ（ignore で隠さない）")
+        if sev == "warning" and kind not in DOWNGRADABLE:
+            raise ValueError(f"{kind} は警告に下げられない（下げてよいのは {sorted(DOWNGRADABLE)}。"
+                             "製造・電気に効く種類を機種が黙って軽くしない）")
+        doc["board"]["design_settings"].setdefault("rule_severities", {})[kind] = sev
+    pro.write_text(json.dumps(doc, indent=2) + "\n")

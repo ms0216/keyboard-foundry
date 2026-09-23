@@ -31,3 +31,6 @@ gerbers/
 
 # 配線の途中の DSN・SES・ログ（route_pcb.py が終わりに消す。落ちたときだけ残る）
 projects/*/pcb/route_work/
+
+# 作業の記録（計画・レビュー・報告）。公開リポジトリに載せない
+.superpowers/

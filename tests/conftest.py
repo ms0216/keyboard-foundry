@@ -27,6 +27,12 @@ from foundry import paths  # noqa: E402
 FIXTURES = ROOT / "tests" / "fixtures"
 
 
+def pytest_configure(config):
+    # 編集のたびに全部（約 3 分半）を待たない: `pytest tests -q -m "not slow"`。
+    # slow は CCKB のケースの 5〜13 秒の検査（経路・水密・干渉・壁厚）。CI と発注前は全部を回す
+    config.addinivalue_line("markers", "slow: 5 秒を超える形状の検査（-m 'not slow' で飛ばせる）")
+
+
 def require(tool_path, what):
     if Path(tool_path).exists():
         return

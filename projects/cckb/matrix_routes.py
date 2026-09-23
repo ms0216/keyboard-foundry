@@ -24,17 +24,20 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from foundry.layout import UNIT, centered   # noqa: E402
+from foundry.pcb_rules import JLC, TRACK_W, VIA_D   # noqa: E402
 
 F, B = "F.Cu", "B.Cu"
-TRACK_CLEAR = 0.2 + 0.2          # 線の中心どうし: 線幅 0.2 ＋ 間隔 0.2（pcb_rules.TRACK_W）
+# **規則の値は pcb_rules から導く**（写すと、規則を変えたとき自前の計画だけ古い値のまま
+# ずれる。最終レビュー I1）。機種が持つのは足した余裕だけ
+CLEAR = TRACK_W                  # ネットクラスの間隔（foundry.pcb が線幅と同じ値を間隔にも使う）
+TRACK_CLEAR = TRACK_W + CLEAR    # 線の中心どうし: 線幅 ＋ 間隔
 
-
-# 線と障害物の間に残す距離（線の縁から）。規則（pcb_rules・JLC）に少し足す
-PAD_GAP = 0.25            # パッド（規則 0.2）
-HOLE_GAP = 0.3            # 穴（NPTH・スルーホールの穴）
-EDGE_GAP = 0.35           # 外形・スタビの逃げ穴（規則 0.3）
-HALF_W = 0.1              # 線の半幅（pcb_rules.TRACK_W 0.2）
-VIA_R = 0.3               # ビアの半径（pcb_rules.VIA_D 0.6）
+# 線と障害物の間に残す距離（線の縁から）。規則に少し足す
+PAD_GAP = CLEAR + 0.05                    # パッド
+HOLE_GAP = JLC["edge_clearance"]          # 穴（NPTH・スルーホールの穴）。外形と同じ扱い
+EDGE_GAP = JLC["edge_clearance"] + 0.05   # 外形・スタビの逃げ穴
+HALF_W = TRACK_W / 2                      # 線の半幅
+VIA_R = VIA_D / 2                         # ビアの半径
 
 
 def _pads(pads):
@@ -153,7 +156,7 @@ def escape(project, pads, reliefs=None, edge=None, others=()):
     bad = clashes(list(others) + segs) + [
         f"ビア {n} {p} が {m} {a}->{b} に近い" for n, p in vias
         for m, _, a, b in list(others) + segs
-        if m != n and seg_seg_dist(p, p, a, b) < VIA_R + 0.2 + HALF_W - 1e-9]
+        if m != n and seg_seg_dist(p, p, a, b) < VIA_R + CLEAR + HALF_W - 1e-9]
     if bad:
         raise ValueError("XIAO からの線がぶつかる:\n  " + "\n  ".join(bad[:10]))
     return segs, vias

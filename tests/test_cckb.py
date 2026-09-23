@@ -4,6 +4,7 @@
 スペースが 4.0〜10.0u を 3 キーで隙間なく覆うこと。
 """
 
+import json
 import re
 import shutil
 import subprocess
@@ -472,3 +473,47 @@ def test_the_board_check_notices_two_swapped_columns():
     assert out != text
     bad = board_matrix_mismatches(out, TRANSFORM.read_text())
     assert len(bad) == 2, bad
+
+
+# ---------------------------------------------------------------------------
+# 核の約束: ダイオードの置き換えと DRC の重大度（最終レビュー M2・M3。KiCad は要らない）
+# ---------------------------------------------------------------------------
+
+def test_the_diode_override_names_real_keys():
+    assert sorted(load("cckb").diode_override("main")) == [42, 43, 58, 60]
+
+
+@pytest.mark.parametrize("over, msg", [
+    ({"mian": {42: (5.55, 2.9, 180)}}, "PIECES"),            # 部品名の綴り違い
+    ({"main": {63: (5.55, 2.9, 180)}}, "1〜62"),              # 無いキー番号
+    ({"main": {0: (5.55, 2.9, 180)}}, "1〜62"),               # 0 始まりと取り違えた
+])
+def test_the_diode_override_refuses_a_typo(over, msg):
+    p = load("cckb")
+    p.spec.DIODE_OVERRIDE = over
+    with pytest.raises(ValueError, match=msg):
+        p.diode_override("main")
+
+
+def _pro(tmp_path):
+    (tmp_path / "x.kicad_pro").write_text("{}")
+    return tmp_path / "x.kicad_pcb"
+
+
+def test_the_project_rules_take_the_spec_severity(tmp_path):
+    from foundry.pcb_rules import sync_project_rules
+
+    sync_project_rules(_pro(tmp_path), load("cckb").spec.DRC_SEVERITY)
+    doc = json.loads((tmp_path / "x.kicad_pro").read_text())
+    assert doc["board"]["design_settings"]["rule_severities"] == {"npth_inside_courtyard": "warning"}
+
+
+@pytest.mark.parametrize("sev, msg", [
+    ({"npth_inside_courtyard": "ignore"}, "ignore で隠さない"),   # 消させない
+    ({"clearance": "warning"}, "警告に下げられない"),              # 製造に効く種類は下げさせない
+])
+def test_the_project_rules_refuse_to_hide_a_violation(tmp_path, sev, msg):
+    from foundry.pcb_rules import sync_project_rules
+
+    with pytest.raises(ValueError, match=msg):
+        sync_project_rules(_pro(tmp_path), sev)

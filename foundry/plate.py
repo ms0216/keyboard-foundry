@@ -16,7 +16,7 @@ from __future__ import annotations
 import sys
 
 from build123d import (BuildLine, BuildPart, BuildSketch, Circle, Kind, Locations,
-                       Mode, Polyline, Rectangle, RectangleRounded, RegularPolygon, add,
+                       Mode, Polygon, Polyline, Rectangle, RectangleRounded, RegularPolygon, add,
                        extrude, make_face, offset)
 
 from .layout import centered
@@ -126,22 +126,31 @@ def build_plate(spec, keys, piece):
     return plate.part, (w, h), positions
 
 
-def split_plate(spec, part, piece):
+def split_plate(spec, part, piece, keys):
     """PLATE_SPLIT があればプレートを左右に分ける。無ければ [(piece, part)]。
 
     PLATE_SPLIT[piece] は段ごと（上の段から）の分ける x。段の中は縦に切り、段の境目で
     横に渡る。**x はキーの境目に置く**（スイッチ・スタビの開口を切らない。機種の検査が見る）。
+
+    段の数と高さは keys（その部品のキー）から数え、外形から割り出した段の高さと合わなければ
+    落とす。前は個数を段数とみなして黙って別の所で切った（最終レビュー M1）。
     """
     xs = getattr(spec, "PLATE_SPLIT", {}).get(piece)
     if not xs:
         return [(piece, part)]
-    from build123d import Polygon
+    rows = sorted({round(k.y_mm, 4) for k in keys})
+    if len(xs) != len(rows):
+        raise ValueError(f"PLATE_SPLIT[{piece!r}] は {len(xs)} 個、キーの段は {len(rows)} 段")
 
     bb = part.bounding_box()
     pad = 10.0
     top, bottom = bb.max.Y + pad, bb.min.Y - pad
     n = len(xs)
     step = (bb.max.Y - bb.min.Y - 2 * spec.PLATE_MARGIN_Y) / n     # 段の高さ（1u）
+    pitches = {round(b - a, 4) for a, b in zip(rows, rows[1:])}
+    if pitches and pitches != {round(step, 4)}:
+        raise ValueError(f"{piece}: 外形から割り出した段の高さ {step:.4f} がキーの段の間隔 {sorted(pitches)} と違う"
+                         "（外形が段の外に張り出している）")
     y0 = bb.max.Y - spec.PLATE_MARGIN_Y
     ys = [top] + [y0 - i * step for i in range(1, n)] + [bottom]
     seam = []
@@ -163,9 +172,11 @@ def main(argv):
 
     p = load(argv[0])
     p.build.mkdir(parents=True, exist_ok=True)
+    bad = 0
     for piece, keys in p.pieces().items():
         whole, _, _ = build_plate(p.spec, keys, piece)
-        for name, part in split_plate(p.spec, whole, piece):
+        print(f"{piece}: キー {len(keys)}")          # 数を見る（HHKB で使っていた情報。M11）
+        for name, part in split_plate(p.spec, whole, piece, keys):
             size = part.bounding_box().size
             w, h = size.X, size.Y
             mesh, stl = to_mesh(part, p.build / f"plate_{name}.stl")
@@ -175,7 +186,8 @@ def main(argv):
             print(f"{'OK' if mesh.is_watertight else 'NG'} {name:6s} "
                   f"{w:7.2f} x {h:6.2f} x {switch_of(p.spec).plate_t}mm 水密={mesh.is_watertight}")
             print(f"   {stl}\n   {png}")
-    return 0
+            bad += not mesh.is_watertight
+    return 1 if bad else 0          # NG を print だけにしない（スクリプトから判定できるように）
 
 
 if __name__ == "__main__":

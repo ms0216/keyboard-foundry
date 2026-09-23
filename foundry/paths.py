@@ -33,3 +33,8 @@ KICAD_FOOTPRINTS = Path(_env("KICAD_FOOTPRINTS", _KICAD_APP / "SharedSupport/foo
 ORCA = _env("ORCA_SLICER", "/Applications/OrcaSlicer.app/Contents/MacOS/OrcaSlicer")
 # 組み立てモデルを開ける .blend にする（projects/<機種>/tools/blend_assembly.py）
 BLENDER = _env("BLENDER", "/Applications/Blender.app/Contents/MacOS/Blender")
+# 自動配線（projects/<機種>/tools/route_pcb.py）。版は jar の中の Build-Revision で確かめる
+FREEROUTING_JAR = Path(_env("FREEROUTING_JAR", Path.home() / ".local/share/freerouting/freerouting-2.3.0.jar"))
+# Freerouting を動かす java。PATH の java が動かなければ Homebrew の openjdk を順に試す
+JAVA_CANDIDATES = tuple(p for p in (os.environ.get("JAVA"), "/opt/homebrew/opt/openjdk/bin/java",
+                                    "/usr/local/opt/openjdk/bin/java") if p)

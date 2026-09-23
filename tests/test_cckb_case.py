@@ -61,7 +61,8 @@ def geo_with(geo, ref, dx=0.0, dy=0.0, **fields):
 
 @pytest.fixture(scope="module")
 def geo():
-    require(paths.KICAD_PYTHON, "配線済みの板を読む")
+    # 発注する板の形のコミットした写し（板の sha256 で突き合わせる）。KiCad が要らないので CI でも
+    # 走る。写しが KiCad の読みと同じかは test_cckb_interface が見る（最終レビュー I5）
     return A.board_geometry()
 
 
@@ -107,9 +108,10 @@ def test_case_provisional_values_are_listed_with_the_same_numbers():
 
 
 def test_every_case_constant_is_read():
-    """読まれていない定数は効いていると思い込ませる（test_meta と同じ約束をケースの値にも）。"""
+    """読まれていない定数は効いていると思い込ませる（test_meta と同じ約束をケースの値にも）。
+    **検査だけが読む定数は数えない**（検査が読んでも形は変わらない。最終レビュー M9）。"""
     path = ROOT / "projects/cckb/case_spec.py"
-    readers = [p for p in (ROOT / "projects/cckb").glob("*.py") if p != path] + [ROOT / "tests/test_cckb_case.py"]
+    readers = [p for p in (ROOT / "projects/cckb").rglob("*.py") if p != path and "__pycache__" not in p.parts]
     reads = set().union(*(tags.names_read(p) for p in readers))
     silent = [n for n in tags.module_constants(path) if n not in reads]
     assert not silent, silent
@@ -145,6 +147,7 @@ def test_the_size_check_notices_a_long_tray(geo):
     assert not sizes["tray_L"][2], sizes
 
 
+@pytest.mark.slow
 def test_case_parts_and_keycaps_are_single_watertight_solids(printed_all):
     for name, part in printed_all.items():
         if name.startswith(("tray_", "lid_", "keycap_", "plate_")):   # keycaps_set_* は並べた Compound
@@ -205,12 +208,49 @@ def test_the_interference_check_notices_a_power_switch_moved_on_the_board(geo):
     assert ("psw", "tray_R") in bad, bad
 
 
+@pytest.mark.slow
 def test_nothing_interferes(g):
-    sl = []
-    bad = A.interference(g, skip=set(A.EXPECTED) | {("pads", "desk")}, slivers=sl)
+    sl, failed = [], []
+    bad = A.interference(g, skip=set(A.EXPECTED) | {("pads", "desk")}, slivers=sl, failures=failed)
     assert bad == {}, bad
+    assert failed == [], failed          # 形状演算の失敗を「干渉 0」と数えない（最終レビュー I2）
     # 丸めの削りかす（厚さ < 0.001）は 0 に数える。**数を隠さない**: 増えたら中身を見る
     assert len(sl) <= 10 and sum(sl) < 0.02, sl
+
+
+class _BrokenVolume:
+    """OCC が壊れた立体を返したときの形（体積を聞くと例外）。"""
+
+    @property
+    def volume(self):
+        raise ValueError("壊れた立体")
+
+
+class _BreaksOnCommon:
+    """共通部分が壊れた立体になる物（外接箱は本物の箱）。"""
+
+    def __init__(self, solid):
+        self.s = solid
+
+    def __and__(self, other):
+        return _BrokenVolume()
+
+    def bounding_box(self):
+        return self.s.bounding_box()
+
+
+def test_the_interference_check_counts_a_failed_boolean_as_a_failure(monkeypatch):
+    """**壊して落ちることを示す。**共通部分の体積が取れない組を 0 と数えず、failures に積む。
+    failures を渡さなければ例外で止まる（ほかの呼び手も黙って 0 にしない）。KiCad は要らない。"""
+    a, b = C.box(0, 0, 0, 2, 2, 2), C.box(1, 1, 1, 3, 3, 3)
+    monkeypatch.setattr(A, "solids_of", lambda part: [_BreaksOnCommon(part)] if part is a else [part])
+    failed = []
+    assert A.interference({"a": a, "b": b}, failures=failed) == {}
+    assert [pair for pair, _ in failed] == [("a", "b")], failed
+    with pytest.raises(A.GeometryFailure):
+        A.interference({"a": a, "b": b})
+    with pytest.raises(A.GeometryFailure):
+        A.common_volume(_BreaksOnCommon(a), b)
 
 
 def test_the_interference_check_notices_a_bigger_cell(asm, geo):
@@ -230,6 +270,7 @@ def test_designed_overlaps_are_only_what_the_reason_says(asm, g):
     assert A.expected_overlaps_ok(asm, g) == []
 
 
+@pytest.mark.slow
 def test_the_designed_overlap_check_notices_a_lost_captive_web(geo):
     a = A.Assembly(geo, cs=cs_with(CAPTIVE_HOLE_D=2.4))
     bad = A.expected_overlaps_ok(a, a.groups())
@@ -240,6 +281,7 @@ def test_the_designed_overlap_check_notices_a_lost_captive_web(geo):
 # 押し切ったキャップ
 # ---------------------------------------------------------------------------
 
+@pytest.mark.slow
 def test_pressed_keycaps_hit_nothing(asm):
     gp = asm.groups(pressed=True)
     bad = A.interference({"keycaps": gp["keycaps"]}, {k: v for k, v in gp.items() if k != "keycaps"})
@@ -253,6 +295,7 @@ def test_the_pressed_check_notices_caps_over_the_wall(geo):
     assert bad, "壁がキャップの下に入っても落ちない"
 
 
+@pytest.mark.slow
 def test_the_pressed_check_notices_a_long_skirt(geo):
     a = A.Assembly(geo, cs=cs_with(KEYCAP_SKIRT_H=3.5))      # 押し切った下端 6.5 < プレートの上面 7.2
     gp = slim(a, ["keycaps", "switches", "plate_L", "plate_R"], pressed=True)
@@ -264,10 +307,12 @@ def test_the_pressed_check_notices_a_long_skirt(geo):
 # 入れられるか・外せるか・留まるか
 # ---------------------------------------------------------------------------
 
+@pytest.mark.slow
 def test_every_part_can_be_put_in_and_taken_out(asm, g):
     assert A.path_problems(asm, g) == {}
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("move,cs_over,path", [
     (("U_MCU", 1.5, 0.0), {}, "usb_plug"),                      # 板の XIAO が 1.5 奥 → プラグの樹脂が壁に入り込む
     (("BT1", 0.0, 2.6), {}, "cell"),                            # 板のホルダが奥 → 電池がプレートの下
@@ -314,6 +359,7 @@ def _thin(asm, parts):
     return bad
 
 
+@pytest.mark.slow
 def test_every_wall_is_thick_enough(asm):
     parts = dict(asm.printed())
     parts.update(asm.plates())
@@ -327,6 +373,7 @@ def test_the_wall_probes_were_measured(asm):
     assert len(res) == 23 and all(t > 0.3 for _, _, t, _, _ in res), res
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("over", [{"CASE_WALL": 0.8}, {"LID_T": 0.8}])
 def test_the_wall_check_notices_a_thin_wall(geo, over):
     a = A.Assembly(geo, ifc_with(**over))

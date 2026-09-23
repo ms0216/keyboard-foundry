@@ -190,12 +190,30 @@ KNOWN_WARNINGS = {
 }
 
 
+def board_copy(d):
+    """発注する板を .kicad_pro ごと d へ同じ名前で写す。**原本を KiCad に開かせない**
+    （kicad-cli の DRC は隣に .kicad_prl を書く。最終レビュー M8）。"""
+    d.mkdir(parents=True, exist_ok=True)
+    for suf in (".kicad_pcb", ".kicad_pro"):
+        shutil.copy(BOARD.with_suffix(suf), d / BOARD.with_suffix(suf).name)
+    return d / BOARD.name
+
+
 @pytest.fixture(scope="module")
-def drc_record():
+def drc_record(tmp_path_factory):
     from foundry import drc
 
     require(paths.KICAD_CLI, "DRC")
-    return drc.run(BOARD)
+    return drc.run(board_copy(tmp_path_factory.mktemp("drc")))
+
+
+def test_the_committed_drc_record_is_what_the_drc_says_now(drc_record):
+    """コミットした記録（cckb_main.drc.json・数を人が読む所）が、いまの板の DRC と同じ。
+    前は検査が原本に DRC をかけて記録を書き直していた（M8）ので、古い記録は検査の副作用で
+    黙って直っていた。今は写しで回して、記録と突き合わせる。"""
+    from foundry import drc
+
+    assert json.loads(drc.report_path(BOARD).read_text()) == drc_record
 
 
 def test_the_routed_board_has_no_drc_violation_and_nothing_unrouted(drc_record, facts):
@@ -230,14 +248,15 @@ def test_the_warning_count_notices_a_label_on_the_edge(tmp_path):
     assert r["warning_kinds"].get("silk_edge_clearance", 0) > 3, r["warning_kinds"]
 
 
-def test_the_npth_warning_is_only_the_switch_pegs_under_the_holder():
+def test_the_npth_warning_is_only_the_switch_pegs_under_the_holder(tmp_path):
     """下げた重大度（npth_inside_courtyard）に**ほかの物が紛れていない**こと。"""
     require(paths.KICAD_CLI, "DRC")
-    out = BOARD.parent / "_npth.json"
-    subprocess.run([paths.KICAD_CLI, "pcb", "drc", "--format", "json", "--severity-all",
-                    "-o", str(out), str(BOARD)], capture_output=True, text=True)
+    board = board_copy(tmp_path / "b")
+    out = tmp_path / "_npth.json"
+    r = subprocess.run([paths.KICAD_CLI, "pcb", "drc", "--format", "json", "--severity-all",
+                        "-o", str(out), str(board)], capture_output=True, text=True)
+    assert out.exists(), r.stdout + r.stderr
     d = json.loads(out.read_text())
-    out.unlink()
     items = [v for v in d["violations"] if v["type"] == "npth_inside_courtyard"]
     assert len(items) == 2
     for v in items:
@@ -401,8 +420,8 @@ def production(tmp_path_factory):
     import csv
 
     require(paths.KICAD_PYTHON, "Fabrication Toolkit")
-    if not (FT_PLUGIN / "com_github_bennymeg_JLC-Plugin-for-KiCad").exists():
-        pytest.skip("Fabrication Toolkit が入っていない")
+    # 発注の CPL を確かめる検査。**REQUIRE_KICAD=1 なら無いのは赤**（前は黙って skip した。I6）
+    require(FT_PLUGIN / "com_github_bennymeg_JLC-Plugin-for-KiCad", "Fabrication Toolkit")
     d = tmp_path_factory.mktemp("ft")
     for suf in (".kicad_pcb", ".kicad_pro"):
         shutil.copy(BOARD.with_suffix(suf), d / ("cckb_main" + suf))
@@ -1236,3 +1255,68 @@ def test_each_board_check_notices_a_break(facts, ifc, check, breaker):
     args = {"facts": f, "ifc": ifc}
     with pytest.raises(AssertionError):
         fn(**{k: args[k] for k in inspect.signature(fn).parameters})
+
+
+# ---------------------------------------------------------------------------
+# 配線の道具（tools/route_pcb.py）の煙の検査（最終レビュー I3）
+# ---------------------------------------------------------------------------
+# route_pcb.py は発注前の直しのときしか回らない。interface・matrix_routes・boardhash の API が
+# 変わっても、次に回すまで——発注の直前まで——気づかない。KiCad の Python で import し（main は
+# 引かない）、route_pcb が相手のモジュールに求める名前が全部あることと、引数の読みを確かめる
+_ROUTE_SMOKE = r"""
+import ast, sys, types
+path, src_path = sys.argv[1], sys.argv[2]        # 置き場所（sys.path の組み方）と中身
+src = open(src_path).read()
+m = types.ModuleType("route_pcb")
+m.__file__ = path
+exec(compile(src, path, "exec"), m.__dict__)
+assert callable(m.main)
+assert m.parse_args([]) is None and m.parse_args(["--reroute", "CS,ROW1"]) == {"CS", "ROW1"}
+missing = []
+mods = {n: getattr(m, n) for n in ("interface", "matrix_routes", "boardhash", "board_geometry",
+                                   "paths", "pcbnew")}
+for node in ast.walk(ast.parse(src)):
+    if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id in mods:
+        if not hasattr(mods[node.value.id], node.attr):
+            missing.append(node.value.id + "." + node.attr)
+print("OK" if not missing else "NG " + " ".join(sorted(set(missing))))
+"""
+
+
+ROUTE_PCB = ROOT / "projects/cckb/tools/route_pcb.py"
+
+
+def route_smoke(src_path):
+    r = subprocess.run([paths.KICAD_PYTHON, "-c", _ROUTE_SMOKE, str(ROUTE_PCB), str(src_path)],
+                       cwd=ROOT, capture_output=True, text=True)
+    return (r.stdout.strip().splitlines() or [""])[-1] + ("" if r.returncode == 0 else r.stderr[-2000:])
+
+
+def test_the_routing_tool_imports_and_finds_every_name_it_uses():
+    require(paths.KICAD_PYTHON, "route_pcb.py を KiCad の Python で読む")
+    out = route_smoke(ROUTE_PCB)
+    assert out == "OK", out
+
+
+def test_the_routing_smoke_check_notices_a_renamed_function(tmp_path):
+    """**検査器が壊れていないか。**route_pcb が呼ぶ matrix_routes.plan を別名にした写しは NG。"""
+    require(paths.KICAD_PYTHON, "route_pcb.py を KiCad の Python で読む")
+    src = ROUTE_PCB.read_text()
+    assert "matrix_routes.plan(" in src
+    f = tmp_path / "route_pcb.py"            # 中身だけ写す（置き場所は本物として読む）
+    f.write_text(src.replace("matrix_routes.plan(", "matrix_routes.plan_renamed("))
+    out = route_smoke(f)
+    assert out.startswith("NG") and "matrix_routes.plan_renamed" in out, out
+
+
+def test_the_easyeda_fixture_holds_only_coordinates():
+    """lib/README.md の約束: EasyEDA のデータそのものは置かず、座標の事実（パッケージ名・原点・
+    パッドの番号・中心・大きさ）だけ（最終レビュー I4）。形の描画などが紛れ込んだら落とす。"""
+    d = json.loads((ROOT / "tests/fixtures/easyeda/footprints.json").read_text())
+    assert set(d) == {"source", "parts"}
+    for c, part in d["parts"].items():
+        assert set(part) == {"package", "head", "pads"}, c
+        assert len(part["head"]) == 2 and all(isinstance(v, float) for v in part["head"]), c
+        for n, pad in part["pads"].items():
+            assert re.fullmatch(r"\d+", n) and len(pad) == 4, (c, n, pad)
+            assert all(isinstance(v, (int, float)) for v in pad), (c, n, pad)

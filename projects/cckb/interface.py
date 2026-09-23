@@ -19,6 +19,7 @@ if str(ROOT) not in sys.path:
 from foundry.layout import UNIT, centered          # noqa: E402
 from foundry.mech import CHOC_STAB_OUTLINE, STAB_KERF, switch_of  # noqa: E402
 from foundry.project import load                    # noqa: E402
+from foundry.pcb_rules import JLC, NPTH_EDGE_MIN, TRACK_W  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -433,12 +434,13 @@ def size(box):
 # ---------------------------------------------------------------------------
 # 取付位置の 5 条件（縁・キーとプレート開口・部品・コートヤード・配線の通り道）
 # ---------------------------------------------------------------------------
-# 基板の規則（foundry/pcb_rules.py の JLC の値）。穴 φ2.2（MountingHole_2.2mm_M2）
+# 取付穴のフットプリント MountingHole_2.2mm_M2 の事実
 HOLE_D = 2.2
 HOLE_CRTYD_R = 2.45          # KiCad の MountingHole_2.2mm_M2 の F.CrtYd（円）
-EDGE_MIN = 1.0               # 穴の縁から外形まで（依頼の条件・pcb_rules.NPTH_EDGE_MIN と同じ）
-COPPER_GAP = 0.3             # 穴と銅（パッド）の間（JLC の外形・穴と銅の規則）
-TRACK_HALF = 0.1             # 配線 0.2 の半分（pcb_rules.TRACK_W）
+# 基板の規則は foundry/pcb_rules.py から導く（写さない。最終レビュー I1）
+EDGE_MIN = NPTH_EDGE_MIN               # 穴の縁から外形まで
+COPPER_GAP = JLC["edge_clearance"]     # 穴と銅（パッド）の間（外形と同じ扱い）
+TRACK_HALF = TRACK_W / 2               # 配線の半幅
 BAND_HALF = 1.0              # 段の境目で列の配線が横に渡る帯の半幅
 
 
@@ -580,3 +582,34 @@ def support_problems(ifc, geo, p):
         if math.hypot(p[0] - m[0], p[1] - m[1]) < r + ifc.s.MOUNT_BOSS_D / 2 + COPPER_GAP:
             out.append("取付のボス")
     return out
+
+
+# ---------------------------------------------------------------------------
+# 発注する板の形（コミットした写し。最終レビュー I5）
+# ---------------------------------------------------------------------------
+# ケースと取付の検査は板の形（フットプリント・パッド・コートヤード・外形）を読む。KiCad の Python で
+# 板を読むと CI（KiCad 無し）で 125 件が skip になっていたので、tools/board_geometry.py の出力を
+# **板の sha256 つきで**コミットし、検査はそれを読む。
+#   - 写しが板と食い違えば（sha256 が違う）落とす——CI でも見える（板もコミットしてある）
+#   - 写しが「KiCad がいま読んだ物」と同じかは、KiCad のある所で test_cckb_interface が見る
+#   書き直し: "$KICAD_PYTHON" projects/cckb/tools/board_geometry.py \
+#                 projects/cckb/pcb/cckb_main.kicad_pcb projects/cckb/pcb/board_geometry.json
+ROUTED_BOARD = ROOT / "projects" / "cckb" / "pcb" / "cckb_main.kicad_pcb"
+BOARD_GEOMETRY = ROUTED_BOARD.with_name("board_geometry.json")
+
+
+class StaleGeometry(AssertionError):
+    """コミットした板の形の写しが、いまの板から作られていない。"""
+
+
+def board_geometry(board=ROUTED_BOARD, geometry=BOARD_GEOMETRY):
+    """発注する配線済みの板の形（CAD 座標）。写しの board_sha256 が板と違えば StaleGeometry。"""
+    import hashlib
+    import json
+
+    data = json.loads(Path(geometry).read_text())
+    got = hashlib.sha256(Path(board).read_bytes()).hexdigest()
+    if data.get("board_sha256") != got:
+        raise StaleGeometry(f"{Path(geometry).name} は別の板から作られた（写し {data.get('board_sha256')}"
+                            f" / 板 {got}）。上の書き直しのコマンドで作り直す")
+    return data
