@@ -828,6 +828,35 @@ def render_all(asm, g, out):
     return paths_
 
 
+def export_blend(g, out):
+    """組み立てを build/cckb/assembly/*.stl ＋ style.json に書き、Blender で cckb.blend にする。
+
+    **Blender は失敗しても 0 を返す**ので、出力の「OK <数>」とできたファイルで判定する。
+    返り値は (.blend, 絵) のパス。Blender が無ければ None。
+    """
+    from foundry.verify import to_mesh
+
+    d = out / "assembly"
+    shutil.rmtree(d, ignore_errors=True)
+    d.mkdir(parents=True)
+    style = {}
+    for name, part in g.items():
+        if name == "desk":
+            continue
+        to_mesh(part, d / f"{name}.stl")
+        style[name] = (COLORS.get(name, "#888888"), 0.55 if name.startswith("tray_") else 1.0)
+    (d / "style.json").write_text(json.dumps(style))
+    if not Path(paths.BLENDER).exists():
+        return None
+    r = subprocess.run([paths.BLENDER, "-b", "-P", str(HERE / "tools/blend_assembly.py")],
+                       capture_output=True, text=True, timeout=900)
+    ok = [line for line in r.stdout.splitlines() if line.startswith("OK ")]
+    n = int(ok[-1].split()[1]) if ok else 0
+    blend, png = d / "cckb.blend", d / "cckb_blender.png"
+    assert n == len(style) and blend.exists() and png.exists(), r.stdout[-2000:] + r.stderr[-2000:]
+    return blend, png
+
+
 def main():
     import time
 
@@ -845,6 +874,8 @@ def main():
     print("設計どおりの重なり:", expected_overlaps_ok(asm, g) or "OK")
     for p in render_all(asm, g, out):
         print("   ", p)
+    b = export_blend(g, out)
+    print("Blender:", *(b or ["無い（BLENDER の場所: foundry/paths.py）"]))
     return asm, g
 
 
