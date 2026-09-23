@@ -27,6 +27,8 @@ PY_FILES = sorted(p for d in ("foundry", "tests", "tools", "projects") for p in 
 # import 名 → 配布名（一致しないものだけ）
 DIST = {"PIL": "pillow", "yaml": "PyYAML", "mpl_toolkits": "matplotlib"}
 KICAD_ONLY = {"pcbnew"}
+# Blender の Python の中だけで動く（projects/*/tools/blend_assembly.py）。pip では入らない
+BLENDER_ONLY = {"bpy", "mathutils"}
 # listed の依存が連れてくるもの。**どれが連れてくるかを書く。**
 #   OCP … build123d の実体。verify.shape_digest が直接触る
 BUNDLED = {"OCP"}
@@ -54,7 +56,7 @@ def _listed():
 def test_every_import_is_listed_in_requirements():
     local = {"foundry", "conftest"} | {p.stem for p in PY_FILES}
     used = set().union(*(_imports(p) for p in PY_FILES))
-    ext = used - set(sys.stdlib_module_names) - local - KICAD_ONLY - BUNDLED
+    ext = used - set(sys.stdlib_module_names) - local - KICAD_ONLY - BLENDER_ONLY - BUNDLED
     missing = sorted(m for m in ext if DIST.get(m, m).lower() not in _listed())
     assert not missing, f"requirements-dev.txt に無い: {missing}"
 

@@ -31,3 +31,5 @@ KICAD_PYTHON = _env(
 # KiCad 標準フットプリント（Diode_SMD.pretty など）の置き場
 KICAD_FOOTPRINTS = Path(_env("KICAD_FOOTPRINTS", _KICAD_APP / "SharedSupport/footprints"))
 ORCA = _env("ORCA_SLICER", "/Applications/OrcaSlicer.app/Contents/MacOS/OrcaSlicer")
+# 組み立てモデルを開ける .blend にする（projects/<機種>/tools/blend_assembly.py）
+BLENDER = _env("BLENDER", "/Applications/Blender.app/Contents/MacOS/Blender")
