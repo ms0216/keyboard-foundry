@@ -30,11 +30,13 @@
 |---|---|---|
 | #1 | CR1632 で起動・スリープ復帰できるか（設計書 D4。新品で内部抵抗 約 25Ω） | 利用者が task-10a-coin-cell-startup.md を実施。不合格なら D4 を CR2032 に替える |
 | ~~#2~~ | ~~右の角の断面（ホルダ BS-16-B4AK003＋電池＋ふた）と左の角（XIAO・USB）~~ | 無し。2026-09-24 に境界を決めた（decisions/2026-09-24-interface.md）。平面図・断面図 `build/cckb/interface_corner_left.png`・`interface_corner_right.png` を描いて見た。外の事実: ホルダ・電源スイッチはデータシート、XIAO は公式 STEP を検査が毎回測る。`tests/test_cckb_interface.py::test_the_corner_parts_fit_their_corners` が角の部品・壁・ふた・隣のキャップ・USB の口を見る（故意に壊す 10 通りで落ちることを確認: `test_the_corner_check_notices_a_break`） |
-| #3 | ケース（**トレイ**・角のふた 2・滑り止め）と組み立て検査・スライス | 形と寸法は decisions/2026-09-24-interface.md（トレイ＋角のふた・継ぎ目 案 C・取付 10・支え 38）。ケースの段で立体にする |
+| ~~#3~~ | ~~ケース（**トレイ**・角のふた 2・滑り止め）と組み立て検査・スライス~~ | 無し。2026-09-24 ケースの段（decisions/2026-09-24-case.md）: 全 17 STL を A1 mini の設定でスライス 17/17 成功（統合の後に出し直して再確認）。組み立て（**発注する配線済みの板 pcb/cckb_main.kicad_pcb**〔外形と逃げ穴は Edge.Cuts・穴はパッド・XIAO／ホルダ／電源スイッチは板のフットプリントの位置〕＋買う物＋USB プラグ・机）で B-rep の干渉 0・入れる経路・留め方・肉厚・継ぎ目を tests/test_cckb_case.py が見る（各々を故意に壊して落ちることを確認）。統合で出た 2 つの赤（トレイの柱と裏の部品・電源スイッチの二重）は組み立てモデルの誤り（穴 H_LID を部品に数えた・電源スイッチをコートヤードの箱と図面の形で二重に置いた）で、ケースも基板も動かしていない（.superpowers/sdd/cckb-autonomy/integration-report.md）。嵌め合いの実物での確かめは P8 |
 | #4 | 基板の完成（XIAO・595・電源の配置、配線、GND、発注データ） | **2026-09-24 配線まで済み・発注前の人の確認が残る。**板 `pcb/cckb_main.kicad_pcb`（`projects/cckb/tools/route_pcb.py` が未配線の板から作る）: DRC 違反 0・未配線 0・警告 5（silk_edge_clearance 3・npth_inside_courtyard 2 は理由つき）。Fabrication Toolkit（`-t`）の出力を読んだ: BOM 6 行すべて LCSC 番号・CPL 70 行すべて bottom・ガーバーは 2 層だけ。`tests/test_cckb_pcb.py`（33 本・各々に故意に壊す検査）。**残り**: 段階 3 の独立監査、fab-checklist §1（JLC の配置プレビューで U1/U2 の 1 番・ダイオードの帯・電源スイッチの向き）と §3（ピン配置を独立した 3 視点で）。引き継ぎ `docs/pcb-routing-handover.md` |
 | ~~#5~~ | ~~ファームを CI でビルドできない（GitHub のリモートが未設定）~~ | 無し。2026-09-23 に公開リポジトリ ms0216/keyboard-foundry を作り、CI で cckb の .uf2（423KB）のビルドに成功（外の事実: GitHub Actions の実行結果） |
 
 ### 物を買う・刷るまで進まないもの
+
+（P8〜P10 はケースの段が P5〜P7 として提案した物。基板の段が先に P5〜P7 を使っていたので統合で改番した。.superpowers/sdd/cckb-autonomy/stage4-report.md の P5〜P7 はここの P8〜P10）
 
 | # | 何 | 要るもの |
 |---|---|---|
@@ -45,6 +47,9 @@
 | P5 | 電源スイッチ MK-12C02-G025 の入の向き。図面の上面図はつまみを ① の側に描き回路図は ①② を繋ぐ → ② 共通・③ = VBAT_SW なので**つまみを ③ の側（手前・−y）へ寄せると入**と読んだ。図の読みで、実物では未確認 | 部品が届いたらテスターで ②③ の導通を見る（違ったら circuit.py の ①③ を入れ替えれば直る——**発注前なら**） |
 | P6 | XIAO の手前の列 D0〜D6 のパッド内ビア（φ0.6/0.3。段階 1 の「穴なし」から変えた。手前は基板の縁で、XIAO の下は表の銅を禁止しているので表で外へ出る道が無い）。はんだがビアに吸われて痩せないか | 試作の手はんだで見る。痩せたら足す |
 | P7 | アンテナの禁止域の縁の GND ビアは右 10/11・手前 4/7・奥 2/7・左 0/11（rf-antenna.md の「4 辺とも」を満たさない）。左の辺は XIAO 自身の下（表の銅を禁止）、奥と手前は XIAO のパッドの列が塞ぐ | 試作で RSSI（P3 と同じ手順） |
+| P8 | 嵌め合い: キャップの脚（`STEM_POST_FIT`）・スイッチの開口・スタビの開口・ナットの六角の穴・インサートの下穴（`INSERT_HOLE_D`）・電池のふたのネジを捕まえる膜（`CAPTIVE_HOLE_D`）。値は provisional-values-case.md | 小片 5 つ（build/cckb/coupon_*.stl）を刷り実物をはめる（docs/printing-and-assembly.md §1） |
+| P9 | 電池がホルダの中で座る高さ（`CELL_Z_IN_HOLDER` 1.3 [暫定]。ふたとの隙 1.3）と、Choc スタビの軸がキャップの脚（Choc の穴 2 つ）を受ける形か | ホルダ・電池・スタビが届いたら |
+| P10 | 長いトレイ（154mm・床 1.6）の反り | トレイを刷って定規を当てる |
 
 ### まだ決めていない判断
 

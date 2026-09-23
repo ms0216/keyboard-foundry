@@ -1,10 +1,11 @@
 """CCKB のケース・キーキャップ・組み立て（projects/cckb/{case,keycaps,coupons,assembly}.py）。
 
-**生成した立体そのもの**と、外の事実（基板はいま KiCad で生成した物・スイッチは Kailh 図面・
+**生成した立体そのもの**と、外の事実（基板は発注する配線済みの板を KiCad で読んだ物・スイッチは Kailh 図面・
 印刷機は A1 mini の実効 168.4）に突き合わせる。各検査の下に「故意に壊すと落ちる」検査を置く
 （CLAUDE.md 検証の作法 2）。壊す検査は、壊した値で立体を作り直して同じ関数に通す。
 """
 
+import copy
 import math
 import re
 import sys
@@ -40,9 +41,27 @@ def cs_with(**over):
     return types.SimpleNamespace(**ns)
 
 
+def geo_with(geo, ref, dx=0.0, dy=0.0, **fields):
+    """板の写しで、フットプリント ref（とそのパッド）を (dx, dy) 動かし、fields を書き換えた物。
+    **板の上の実物が動いた**ことにする（ケースは境界の決定のまま）。"""
+    g = copy.deepcopy(geo)
+    for f in g["footprints"]:
+        if f["ref"] == ref:
+            f["x"] += dx
+            f["y"] += dy
+            f.update(fields)
+    for p in g["pads"]:
+        if p["ref"] == ref:
+            p["x"] += dx
+            p["y"] += dy
+            b = p["box"]
+            p["box"] = [b[0] + dx, b[1] + dy, b[2] + dx, b[3] + dy]
+    return g
+
+
 @pytest.fixture(scope="module")
 def geo():
-    require(paths.KICAD_PYTHON, "基板の生成")
+    require(paths.KICAD_PYTHON, "配線済みの板を読む")
     return A.board_geometry()
 
 
@@ -149,6 +168,42 @@ def test_the_switches_on_the_board_sit_under_the_layout_keys(asm, geo):
     assert all(math.hypot(a[0] - b[0], a[1] - b[1]) < 1e-3 for a, b in zip(sw, lay))
 
 
+def test_the_assembly_models_the_routed_board(asm, geo):
+    """組み立ての基板は**発注する配線済みの板**（pcb/cckb_main.kicad_pcb）で、裏の部品を物の数で数える。
+
+    - 外形と逃げ穴は板の Edge.Cuts（穴 = スタビ 8）
+    - 板で裏返した部品 70 = JLC の CPL 70 行（段階 2 の報告・fab-checklist）: 箱で置く 69 ＋ 図面の形で置く
+      電源スイッチ 1。**穴（H_LID）を部品に数えない・電源スイッチを二重に数えない**（統合で起きた 2 つの赤）
+    - XIAO・ホルダ・電源スイッチは板のフットプリントの位置に置く
+    """
+    assert A.ROUTED_BOARD.name == "cckb_main.kicad_pcb" and A.ROUTED_BOARD.parent.name == "pcb"
+    assert len(geo["outline"]["holes"]) == 8
+    flipped = [f["ref"] for f in geo["footprints"] if f["back"]]
+    assert len(flipped) == 70
+    refs = asm.bottom_refs()
+    assert len(refs) == 69 and "SW_PWR" not in refs and "H_LID" not in refs
+    assert sorted(refs + ["SW_PWR"]) == sorted(flipped)
+    copper = {p["ref"] for p in geo["pads"] if not p["npth"]}
+    assert all(r in copper for r in refs)                      # 穴だけのフットプリントは部品ではない
+    fps = {f["ref"]: f for f in geo["footprints"]}
+    assert asm.r.s.PSW_AT == (fps["SW_PWR"]["x"], fps["SW_PWR"]["y"])
+    assert asm.r.s.HOLDER_AT == (fps["BT1"]["x"], fps["BT1"]["y"])
+    assert abs(asm.r.s.XIAO_AT[0] + asm.s.XIAO_PIN_SHIFT - fps["U_MCU"]["x"]) < 1e-9
+
+
+def test_the_placement_check_notices_a_rotated_part(geo):
+    """形の向きは決め打ちなので、板で回っていたら組み立てを作らせない。"""
+    with pytest.raises(AssertionError):
+        A.Assembly(geo_with(geo, "U_MCU", deg=0.0))
+
+
+def test_the_interference_check_notices_a_power_switch_moved_on_the_board(geo):
+    """板の電源スイッチを 0.6 外へ（耳の外端 142.875 → 143.475 が壁の内面 143.375 を越える）。"""
+    a = A.Assembly(geo_with(geo, "SW_PWR", dx=0.6))
+    bad = A.interference(slim(a, ["psw", "tray_R", "lid_R"]))
+    assert ("psw", "tray_R") in bad, bad
+
+
 def test_nothing_interferes(g):
     sl = []
     bad = A.interference(g, skip=set(A.EXPECTED) | {("pads", "desk")}, slivers=sl)
@@ -212,14 +267,14 @@ def test_every_part_can_be_put_in_and_taken_out(asm, g):
     assert A.path_problems(asm, g) == {}
 
 
-@pytest.mark.parametrize("over,cs_over,path", [
-    ({"XIAO_AT": (-131.17, -38.1)}, {}, "usb_plug"),            # メスが 1.5 奥 → 樹脂が壁に入り込む
-    ({"HOLDER_AT": (128.5, -36.0)}, {}, "cell"),               # 電池がプレートの下
-    ({}, {"PSW_SLOT_CLEAR": -1.0}, "board"),                    # つまみの切り欠きが狭い
-    ({}, {"DRIVER_D": 5.0}, "screws"),                          # ドライバーが座ぐりに入らない
+@pytest.mark.parametrize("move,cs_over,path", [
+    (("U_MCU", 1.5, 0.0), {}, "usb_plug"),                      # 板の XIAO が 1.5 奥 → プラグの樹脂が壁に入り込む
+    (("BT1", 0.0, 2.6), {}, "cell"),                            # 板のホルダが奥 → 電池がプレートの下
+    (None, {"PSW_SLOT_CLEAR": -1.0}, "board"),                  # つまみの切り欠きが狭い
+    (None, {"DRIVER_D": 5.0}, "screws"),                        # ドライバーが座ぐりに入らない
 ])
-def test_the_path_check_notices_a_blocked_path(geo, over, cs_over, path):
-    a = A.Assembly(geo, ifc_with(**over) if over else None, cs_with(**cs_over) if cs_over else CS)
+def test_the_path_check_notices_a_blocked_path(geo, move, cs_over, path):
+    a = A.Assembly(geo_with(geo, *move) if move else geo, None, cs_with(**cs_over) if cs_over else CS)
     bad = A.path_problems(a, a.groups())
     assert path in bad, bad
 

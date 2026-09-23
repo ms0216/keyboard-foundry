@@ -48,7 +48,7 @@ def dump_board(board):
         out["footprints"].append(dict(
             ref=ref, fp=fp.GetFPID().GetLibItemName().wx_str(),
             x=round(MM(q.x) - ORIGIN[0], 4), y=round(ORIGIN[1] - MM(q.y), 4),
-            back=fp.IsFlipped(), courtyard=crt))
+            deg=round(fp.GetOrientationDegrees(), 4), back=fp.IsFlipped(), courtyard=crt))
         for pad in fp.Pads():
             p = pad.GetPosition()
             attr = pad.GetAttribute()
@@ -63,7 +63,27 @@ def dump_board(board):
     return out
 
 
+def outline(board):
+    """Edge.Cuts を KiCad が組んだ多角形（外形 ＋ 内側の穴 = スタビの逃げ穴）で返す。
+
+    {"outer": [[x, y], ...], "holes": [[[x, y], ...], ...]}（CAD 座標。円弧は KiCad が折れ線にした物）。
+    組み立てモデル（projects/cckb/assembly.py）が**発注する板の形**として読む。
+    """
+    ps = pcbnew.SHAPE_POLY_SET()
+    assert board.GetBoardPolygonOutlines(ps, False), "Edge.Cuts が閉じていない"
+    assert ps.OutlineCount() == 1, ps.OutlineCount()
+
+    def pts(chain):
+        return [[round(MM(chain.CPoint(k).x) - ORIGIN[0], 4), round(ORIGIN[1] - MM(chain.CPoint(k).y), 4)]
+                for k in range(chain.PointCount())]
+
+    return {"outer": pts(ps.Outline(0)),
+            "holes": [pts(ps.Hole(0, k)) for k in range(ps.HoleCount(0))]}
+
+
 if __name__ == "__main__":
-    data = dump(sys.argv[1])
+    board = pcbnew.LoadBoard(sys.argv[1])
+    data = dump_board(board)
+    data["outline"] = outline(board)
     Path(sys.argv[2]).write_text(json.dumps(data, indent=1, ensure_ascii=False))
     print(f"OK 部品 {len(data['footprints'])} / パッド {len(data['pads'])} → {sys.argv[2]}")

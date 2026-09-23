@@ -4,8 +4,10 @@
 ケーブルがモデルに入っていなかったから）。入っていない物は検査していない。
 
   印刷する物: トレイ 2・ふた 2・プレート 2・キーキャップ 62
-  基板: **いま生成した基板**（KiCad の Python で世界座標に解いたパッドの穴）＋境界の決定の
-        逃げ穴（スタビ 8・ふたの柱）。裏の部品は基板のコートヤード × 裏の一番背の高い物
+  基板: **発注する配線済みの板**（pcb/cckb_main.kicad_pcb を KiCad の Python で読む）。外形と
+        スタビの逃げ穴は Edge.Cuts、穴はパッドの穴（取付 10・ふたの柱の穴・スイッチの足・ビア入りの
+        パッド）。XIAO・電池ホルダ・電源スイッチは**板の上のフットプリントの位置と向き**に、
+        図面の外形（spec）で置く。裏の部品は板の裏に付いたフットプリントのコートヤード × 背の上限
   買う物: スイッチ 62（図面の外形＋足）・スタビ 8・XIAO（USB-C のメス）・電池ホルダ・CR1632・
         電源スイッチ・M2 ナット 9・M2×6 皿 11・インサート 2・滑り止め 4
   外から来る物: USB-C プラグ（金属＋樹脂）・机・ドライバー・爪
@@ -29,6 +31,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import types
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -40,7 +43,7 @@ from build123d import Compound, Pos, Solid  # noqa: E402
 import case_spec as CS  # noqa: E402
 import interface as I  # noqa: E402
 import keycaps as KC  # noqa: E402
-from case import Case, box, cone, cyl, fuse, hex_prism, prism, rbox, rounded  # noqa: E402
+from case import Case, box, cone, cyl, fuse, hex_prism, prism, rbox  # noqa: E402
 from foundry import paths  # noqa: E402
 from foundry.layout import UNIT  # noqa: E402
 
@@ -52,18 +55,20 @@ FR4_DENSITY = 1.85           # g/cm3（基板。決定記録 §2-4 と同じ値�
 # 基板の実物（KiCad）
 # ---------------------------------------------------------------------------
 
-def board_geometry(project_dir=None):
-    """いまのコードで基板を生成し、パッド・コートヤードを CAD 座標で返す（KiCad の Python）。"""
-    src = Path(project_dir or paths.PROJECTS / "cckb")
+ROUTED_BOARD = HERE / "pcb" / "cckb_main.kicad_pcb"
+
+
+def board_geometry(board=ROUTED_BOARD):
+    """**発注する配線済みの板**のフットプリント（位置・向き・裏か）・パッド・コートヤード・
+    外形（Edge.Cuts）を CAD 座標で返す（KiCad の Python）。
+
+    生成器の板ではなく配線済みの板を読む: ケースが当たるかを見る相手は、刷ったケースに
+    入る実物だから。板が生成器と食い違わないことは tests/test_cckb_pcb.py の鮮度の検査が見る
+    （未配線の板 = いまの生成器・route.json の指紋 = 未配線の板）。
+    """
     with tempfile.TemporaryDirectory() as t:
-        d = Path(t) / "cckb"
-        shutil.copytree(src, d, ignore=shutil.ignore_patterns("pcb", "__pycache__"))
-        r = subprocess.run([paths.KICAD_PYTHON, "-m", "foundry.pcb", str(d)],
-                           cwd=paths.ROOT, capture_output=True, text=True)
-        assert r.returncode == 0, r.stdout + r.stderr
-        out = d / "geo.json"
-        r = subprocess.run([paths.KICAD_PYTHON, str(HERE / "tools/board_geometry.py"),
-                            str(d / "pcb/unrouted/cckb_main.kicad_pcb"), str(out)],
+        out = Path(t) / "geo.json"
+        r = subprocess.run([paths.KICAD_PYTHON, str(HERE / "tools/board_geometry.py"), str(board), str(out)],
                            cwd=paths.ROOT, capture_output=True, text=True)
         assert r.returncode == 0 and r.stdout.startswith("OK"), r.stdout + r.stderr
         return json.loads(out.read_text())
@@ -227,8 +232,41 @@ EXPECTED = {
 }
 
 
+# 板の上の部品で、**図面の外形で別に置く物**（ref → 群・板の上の向き〔度〕・裏か）。
+# 位置と向きは板のフットプリントから読み、形は spec（データシート）から。向きが違えば落とす
+# （形の向きを決め打ちしているので、板で回っていたら形が嘘になる）
+PLACED = {"U_MCU": ("xiao", 90.0, False), "BT1": ("holder", 0.0, False), "SW_PWR": ("psw", -90.0, True)}
+
+
+def placed_interface(ifc, geo):
+    """ifc の写しで、XIAO・ホルダ・電源スイッチの位置を**板のフットプリント**に置き換えた物。
+
+    ケース（self.i）は境界の決定の位置で作り、買う物（self.r）は板の実物の位置に置く——
+    両者がずれればケースと部品が当たる（自分の宣言どうしを突き合わせない）。
+    """
+    import copy
+
+    fps = {f["ref"]: f for f in geo["footprints"]}
+    for ref, (_, deg, back) in PLACED.items():
+        f = fps[ref]
+        assert abs((f["deg"] - deg + 180) % 360 - 180) < 1e-6 and f["back"] == back, (ref, f)
+    s = ifc.s
+    over = {"XIAO_AT": (fps["U_MCU"]["x"] - s.XIAO_PIN_SHIFT, fps["U_MCU"]["y"]),   # 原点はピンの並びの中心
+            "HOLDER_AT": (fps["BT1"]["x"], fps["BT1"]["y"]),                        # 原点は本体の中心
+            "PSW_AT": (fps["SW_PWR"]["x"], fps["SW_PWR"]["y"])}                     # 原点は本体の中心
+    ns = {k: getattr(s, k) for k in dir(s) if k.isupper()}
+    ns.update(over)
+    r = copy.copy(ifc)
+    r.s = types.SimpleNamespace(**ns)
+    return r
+
+
 class Assembly:
-    """組み上げた物。geo は board_geometry() の結果。"""
+    """組み上げた物。geo は board_geometry() の結果。
+
+    self.i: 境界の決定（ケースはこれで作る）。self.r: 同じ物で、板の上の部品の位置を
+    **配線済みの板のフットプリント**に置き換えた物（XIAO・ホルダ・電池・電源スイッチ・プラグはこれで置く）。
+    """
 
     def __init__(self, geo, ifc=None, cs=CS):
         self.i = ifc or I.Interface()
@@ -237,6 +275,7 @@ class Assembly:
         self.z = self.i.z()
         self.case = Case(self.i, cs)
         self.geo = geo
+        self.r = placed_interface(self.i, geo)
 
     # --- 印刷する物 ---------------------------------------------------------
     def printed(self):
@@ -264,13 +303,16 @@ class Assembly:
 
     # --- 基板 ---------------------------------------------------------------
     def pcb(self):
-        s, z = self.s, self.z
-        slab = rounded(self.i.pcb, s.CORNER_R, z["pcb_bottom"], z["pcb_top"])
+        """配線済みの板の Edge.Cuts（外形・スタビの逃げ穴 8）と、パッドの穴（取付・ふたの柱の穴 H_LID・
+        スイッチの足・XIAO のパッド内ビア）。"""
+        z = self.z
+        o = self.geo["outline"]
+        poly = lambda pts: [tuple(q) for q in pts]          # noqa: E731  build123d は点を tuple で受ける（list は面が潰れる）
+        slab = prism(poly(o["outer"]), z["pcb_bottom"], z["pcb_top"])
         holes = [cyl(p["x"], p["y"], z["pcb_bottom"] - 1, z["pcb_top"] + 1, p["drill"])
                  for p in self.geo["pads"] if p["drill"] > 0]
-        holes += [prism(poly, z["pcb_bottom"] - 1, z["pcb_top"] + 1) for poly in self.i.stab_reliefs()]
-        (px, py), _ = self.i.lid_pillar()
-        holes.append(cyl(px, py, z["pcb_bottom"] - 1, z["pcb_top"] + 1, s.LID_PILLAR_HOLE))
+        holes += [prism(poly(h), z["pcb_bottom"] - 1, z["pcb_top"] + 1) for h in o["holes"]]
+        assert len(o["holes"]) == len(self.i.stab_pivots()), len(o["holes"])   # スタビの逃げ穴 8 だけ
         return slab - fuse(holes)
 
     def switch_solids(self, pressed=False):
@@ -317,22 +359,30 @@ class Assembly:
         z = self.z
         return [prism(poly, z["stab_bottom"], z["plate_top"]) for poly in self.i.stab_housings()]
 
+    def bottom_refs(self):
+        """裏に付く部品（板で**裏返したフットプリント**）のうち、図面の形で別に置かない物。
+
+        「裏のコートヤードがある物」で拾うと、表から開けた穴（H_LID は両面にコートヤードを持つ）を
+        部品として数え、図面の形で置いた電源スイッチ（psw）を二重に数える（2026-09-24 の統合で起きた）。
+        """
+        return sorted(f["ref"] for f in self.geo["footprints"] if f["back"] and f["ref"] not in PLACED)
+
     def bottom_parts(self):
-        """裏の部品: 生成した基板の裏のコートヤード × 裏の一番背の高い物（電源スイッチ 1.45）。"""
+        """裏の部品（ダイオード 62・595 ×2・パスコン 2・分圧 2・B5819W）: コートヤード × 背の上限 PSW_H。
+
+        背の上限: SOD-123 1.35・TSSOP-16 1.2・0805 の C 1.35（データシートの最大）はどれも PSW_H 1.45 以下。
+        """
         z = self.z
-        out = []
-        for f in self.geo["footprints"]:
-            cy = f["courtyard"].get("back")
-            if cy and not re.fullmatch(r"H\d+", f["ref"]):
-                out.append(rbox(cy, z["pcb_bottom"] - self.s.PSW_H, z["pcb_bottom"]))
-        return out
+        fps = {f["ref"]: f for f in self.geo["footprints"]}
+        return [rbox(fps[r]["courtyard"]["back"], z["pcb_bottom"] - self.s.PSW_H, z["pcb_bottom"])
+                for r in self.bottom_refs()]
 
     def xiao(self):
-        """XIAO: 基板＋上の部品（USB の上面の高さまでの箱）＋ USB-C のメス（中空）。"""
+        """XIAO: 基板＋上の部品（USB の上面の高さまでの箱）＋ USB-C のメス（中空）。板の U_MCU の位置。"""
         s, z = self.s, self.z
-        b = self.i.xiao()
+        b = self.r.xiao()
         board_t = s.XIAO_USB_Z - s.XIAO_USB_H / 2          # メスの下面 = XIAO の基板の上面
-        u = self.i.usb_shell()
+        u = self.r.usb_shell()
         zc = z["usb_center"]
         board = rbox(b, z["pcb_top"], z["pcb_top"] + board_t)
         comps = box(u[2], b[1], z["pcb_top"] + board_t, b[2], b[3], z["xiao_top"])
@@ -346,8 +396,8 @@ class Assembly:
 
     def usb_plug(self):
         s, c = self.s, self.c
-        u = self.i.usb_shell()
-        y, zc = s.XIAO_AT[1], self.z["usb_center"]
+        u = self.r.usb_shell()
+        y, zc = self.r.s.XIAO_AT[1], self.z["usb_center"]
         pw, ph = s.USB_PLUG_SHELL
         x_face = u[0] - s.USB_SHELL_EXPOSED                 # 樹脂の先端
         metal = box(x_face, y - pw / 2, zc - ph / 2, u[0] + c.USB_PLUG_INSERT, y + pw / 2, zc + ph / 2)
@@ -357,19 +407,24 @@ class Assembly:
 
     def holder(self):
         z = self.z
-        (cx, cy), _ = self.i.cell()
-        return rbox(self.i.holder_body(), z["pcb_top"], z["holder_top"]) \
+        (cx, cy), _ = self.r.cell()
+        return rbox(self.r.holder_body(), z["pcb_top"], z["holder_top"]) \
             - cyl(cx, cy, z["pcb_top"] + self.c.CELL_Z_IN_HOLDER, z["holder_top"] + 1, self.s.CELL_D)
 
     def cell(self):
-        (cx, cy), _ = self.i.cell()
+        (cx, cy), _ = self.r.cell()
         z0 = self.z["pcb_top"] + self.c.CELL_Z_IN_HOLDER
         return cyl(cx, cy, z0, z0 + self.s.CELL_T, self.c.CELL_REAL_D)
 
     def psw(self):
+        """電源スイッチ（板の SW_PWR の位置）: 本体＋つまみ（動く範囲）は図面の外形、端子と耳の金具は
+        **板のパッドの範囲** × 本体の高さ（金具は実際には薄い板。上に大きく取る）。"""
         z = self.z
-        return fuse([rbox(self.i.psw_body(), z["psw_bottom"], z["pcb_bottom"]),
-                     rbox(self.i.psw_knob(), z["psw_bottom"], z["pcb_bottom"])])
+        legs = [rbox(p["box"], z["psw_bottom"], z["pcb_bottom"]) for p in self.geo["pads"]
+                if p["ref"] == "SW_PWR" and p["drill"] == 0]
+        assert len(legs) == 7, len(legs)                    # 端子 3・耳 4（lib/cckb.pretty/SW_MK-12C02-G025）
+        return fuse([rbox(self.r.psw_body(), z["psw_bottom"], z["pcb_bottom"]),
+                     rbox(self.r.psw_knob(), z["psw_bottom"], z["pcb_bottom"])] + legs)
 
     def key_mounts(self):
         return [m for m in self.i.mounts() if not self.i.in_corner(m)]
@@ -763,7 +818,7 @@ def nail_problems(asm, g):
     """電源スイッチのつまみに爪がかかるか: 先が窪みの底から PSW_NAIL_REACH 以上出て、
     つまみの両脇に爪（NAIL_T の箱）が入る。"""
     s, c, z = asm.s, asm.c, asm.z
-    k = asm.i.psw_knob()
+    k = asm.r.psw_knob()
     floor_x = asm.i.case_outer[2] - s.PSW_SCOOP
     bad = []
     if k[2] - floor_x < c.PSW_NAIL_REACH - 1e-9:

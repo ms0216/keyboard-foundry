@@ -352,13 +352,14 @@ def test_the_shield_config_passes_the_checker():
     assert r.returncode == 0, r.stdout + r.stderr
 
 
-def test_the_order_gate_is_closed_until_the_startup_test_and_the_case_are_done():
+def test_the_order_gate_is_closed_until_the_startup_test_and_the_board_review_are_done():
     from foundry import gate
 
     doc = (paths.PROJECTS / "cckb" / "docs" / "open-gaps.md").read_text()
     b = set(gate.blockers(doc))
-    assert {"1", "3", "4"} <= b, b        # 起動試験・ケース・配線
-    assert "5" not in b and "2" not in b, b   # #5 CI（09-23）・#2 角の断面（09-24 境界の決定）は解消
+    assert {"1", "4"} <= b, b             # 起動試験・基板（発注前の人の確認と独立監査）
+    # #5 CI（09-23）・#2 角の断面（09-24 境界の決定）・#3 ケース（09-24 ケースの段と統合）は解消
+    assert not {"2", "3", "5"} & b, b
     assert not gate.is_gate_open(doc)
 
 
