@@ -1,0 +1,852 @@
+"""CCKB を組み上げたモデルと、その検査の道具。**寸法は持たない**（spec / interface / case_spec）。
+
+**製品として存在する物を全部置く**（HHKB の教訓: USB が挿さらなかったのは、利用者が挿す
+ケーブルがモデルに入っていなかったから）。入っていない物は検査していない。
+
+  印刷する物: トレイ 2・ふた 2・プレート 2・キーキャップ 62
+  基板: **いま生成した基板**（KiCad の Python で世界座標に解いたパッドの穴）＋境界の決定の
+        逃げ穴（スタビ 8・ふたの柱）。裏の部品は基板のコートヤード × 裏の一番背の高い物
+  買う物: スイッチ 62（図面の外形＋足）・スタビ 8・XIAO（USB-C のメス）・電池ホルダ・CR1632・
+        電源スイッチ・M2 ナット 9・M2×6 皿 11・インサート 2・滑り止め 4
+  外から来る物: USB-C プラグ（金属＋樹脂）・机・ドライバー・爪
+
+形は実物より**大きく**取る（包絡）。印刷する物は生成した立体そのもの。
+
+検査の道具:
+  interference(...)  B-rep の総当たり（外接箱で絞ってから共通部分の体積）
+  sweep(...)         平行移動で通る領域（前を向いた面の角柱 ∪ 元の立体 = 厳密）
+  probe(...)         断面を線で刺して、材料の厚さを測る
+
+    .venv/bin/python3 projects/cckb/assembly.py     # 検査の結果と絵を build/cckb/ に
+"""
+
+from __future__ import annotations
+
+import json
+import math
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+
+from build123d import Compound, Pos, Solid  # noqa: E402
+
+import case_spec as CS  # noqa: E402
+import interface as I  # noqa: E402
+import keycaps as KC  # noqa: E402
+from case import Case, box, cone, cyl, fuse, hex_prism, prism, rbox, rounded  # noqa: E402
+from foundry import paths  # noqa: E402
+from foundry.layout import UNIT  # noqa: E402
+
+PLA_DENSITY = 1.24           # g/cm3（PLA の一般値。重さの見積もり）
+FR4_DENSITY = 1.85           # g/cm3（基板。決定記録 §2-4 と同じ値）
+
+
+# ---------------------------------------------------------------------------
+# 基板の実物（KiCad）
+# ---------------------------------------------------------------------------
+
+def board_geometry(project_dir=None):
+    """いまのコードで基板を生成し、パッド・コートヤードを CAD 座標で返す（KiCad の Python）。"""
+    src = Path(project_dir or paths.PROJECTS / "cckb")
+    with tempfile.TemporaryDirectory() as t:
+        d = Path(t) / "cckb"
+        shutil.copytree(src, d, ignore=shutil.ignore_patterns("pcb", "__pycache__"))
+        r = subprocess.run([paths.KICAD_PYTHON, "-m", "foundry.pcb", str(d)],
+                           cwd=paths.ROOT, capture_output=True, text=True)
+        assert r.returncode == 0, r.stdout + r.stderr
+        out = d / "geo.json"
+        r = subprocess.run([paths.KICAD_PYTHON, str(HERE / "tools/board_geometry.py"),
+                            str(d / "pcb/unrouted/cckb_main.kicad_pcb"), str(out)],
+                           cwd=paths.ROOT, capture_output=True, text=True)
+        assert r.returncode == 0 and r.stdout.startswith("OK"), r.stdout + r.stderr
+        return json.loads(out.read_text())
+
+
+# ---------------------------------------------------------------------------
+# 幾何の道具
+# ---------------------------------------------------------------------------
+
+def solids_of(part):
+    return list(part.solids()) if part is not None else []
+
+
+def _bb(s):
+    b = s.bounding_box()
+    return (b.min.X, b.min.Y, b.min.Z, b.max.X, b.max.Y, b.max.Z)
+
+
+def _bb_overlap(a, b, eps=1e-6):
+    return all(a[k] < b[k + 3] - eps and b[k] < a[k + 3] - eps for k in range(3))
+
+
+SLIVER = 1e-3               # 共通部分の一番薄い向きがこれ未満なら丸めの削りかす（基板の座標は 1e-4 に丸めてある）
+
+
+def common_volume(a, b, slivers=None):
+    """共通部分の体積。**丸めの削りかす**（厚さ SLIVER 未満）は 0 にして slivers に数える。"""
+    c = a & b
+    if c is None:
+        return 0.0
+    try:
+        v = float(c.volume)
+    except (AttributeError, ValueError):
+        return 0.0
+    if v > 0:
+        sz = c.bounding_box().size
+        if min(sz.X, sz.Y, sz.Z) < SLIVER:
+            if slivers is not None:
+                slivers.append(v)
+            return 0.0
+    return v
+
+
+def interference(groups_a, groups_b=None, skip=(), tol=1e-3, slivers=None):
+    """群どうしの重なり {(名前 a, 名前 b): 体積}。**外接箱で絞ってから B-rep の共通部分**。
+
+    groups: {名前: 立体}。groups_b が無ければ groups_a の中の全組。skip は見ない組（名前の組）。
+    返すのは tol を超えた組だけ。削りかす（common_volume）は slivers（リスト）に数える——
+    **隠さない**: 呼ぶ側が数を報告する。
+    """
+    names_a = list(groups_a)
+    if groups_b is None:
+        pairs = [(a, b) for k, a in enumerate(names_a) for b in names_a[k + 1:]]
+        gb = groups_a
+    else:
+        pairs = [(a, b) for a in names_a for b in groups_b]
+        gb = groups_b
+    cache = {}
+
+    def sols(g, n):
+        key = (id(g), n)
+        if key not in cache:
+            cache[key] = [(s, _bb(s)) for s in solids_of(g[n])]
+        return cache[key]
+
+    out = {}
+    for a, b in pairs:
+        if (a, b) in skip or (b, a) in skip or a == b:
+            continue
+        v = 0.0
+        for sa, ba in sols(groups_a, a):
+            for sb, bb in sols(gb, b):
+                if _bb_overlap(ba, bb):
+                    v += common_volume(sa, sb, slivers)
+        if v > tol:
+            out[(a, b)] = v
+    return out
+
+
+def sweep(part, vec):
+    """part を vec だけ平行移動するときに通る領域（元の立体 ∪ 前を向いた面の角柱）。
+
+    厳密: 移動後の立体の点 q について、q − vec から q への線分が立体を出るなら、出た所の
+    前向きの面の角柱に q が入る。出なければ q は元の立体の中。
+    """
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakePrism
+    from OCP.gp import gp_Vec
+
+    v = gp_Vec(*vec)
+    n = math.sqrt(sum(c * c for c in vec))
+    d = tuple(c / n for c in vec)
+    prisms = []
+    for s in solids_of(part):
+        for f in s.faces():
+            nrm = f.normal_at(f.center())
+            if nrm.X * d[0] + nrm.Y * d[1] + nrm.Z * d[2] > 1e-6:
+                prisms.append(Solid(BRepPrimAPI_MakePrism(f.wrapped, v).Shape()))
+    return fuse(solids_of(part) + prisms)
+
+
+def moved(part, vec):
+    return Pos(*vec) * part
+
+
+def material_runs(mesh, origin, direction):
+    """線（origin から direction へ）が立体の中を通る区間の長さ [(入る, 出る), ...]。"""
+    import numpy as np
+
+    o = np.array([origin], dtype=float)
+    d = np.array([direction], dtype=float)
+    locs, _, _ = mesh.ray.intersects_location(o, d, multiple_hits=True)
+    if len(locs) == 0:
+        return []
+    t = sorted(set(round(float((p - o[0]) @ d[0]), 6) for p in locs))
+    return [(t[k], t[k + 1]) for k in range(0, len(t) - 1, 2)]
+
+
+def mesh_of(part):
+    import trimesh
+
+    verts, faces = part.tessellate(0.02, 0.2)
+    return trimesh.Trimesh([(v.X, v.Y, v.Z) for v in verts], faces, process=True)
+
+
+# ---------------------------------------------------------------------------
+# 組み立て
+# ---------------------------------------------------------------------------
+
+# **部品ごとに「何で留まっているか」**。ここに無い部品を組み立てに足すと検査が落ちる
+# （留め方が書かれていない部品は、留まっていないのと同じ。HHKB gen_assembly.HELD_BY）
+HELD_BY = {
+    "tray_L": "下からの M2×6 皿 5 本（H0・H1・H2・H4・H5）で基板の上面のナットへ（＋H3 は左のふたと共締め）",
+    "tray_R": "下からの M2×6 皿 4 本（H6〜H9）で基板の上面のナットへ",
+    "lid_L": "下からの M2×6 皿（H3）がトレイ・基板を抜けて、ふたのボスのインサートへ。ボスの下面が基板の上面に締まる",
+    "lid_R": "上からの M2×6 皿 1 本（膜で捕まえてあり、外してもふたから落ちない）が、トレイの柱のインサートへ",
+    "plate_L": "スイッチ（はんだ付け）の爪。プレートはスイッチで基板に留まる（D11）",
+    "plate_R": "同上",
+    "pcb": "取付 10 本（ナット）と、ボス・柱に載る",
+    "switches": "基板にはんだ付け（足 2 本）＋プレートの爪",
+    "stabs": "プレートの開口に爪で",
+    "bottom_parts": "基板にはんだ付け（JLC の実装）",
+    "xiao": "基板の表にはんだ付け（キャステレーション）",
+    "holder": "基板の表にはんだ付け",
+    "cell": "ホルダの＋のクリップが上から押さえ、右のふたが上を塞ぐ",
+    "psw": "基板の裏にはんだ付け（JLC の実装）＋位置決めの突起 2",
+    "nuts": "下からのネジが締める。回り止めはプレートの六角の穴",
+    "screws": "ナット（キーの下 9）とインサート（H3）へねじ込み",
+    "screw_lid": "柱のインサートへねじ込み。ふたの膜が抜け落ちを止める",
+    "inserts": "熱圧入（下穴 INSERT_HOLE_D が外径より小さい）",
+    "keycaps": "ステムの穴 2 つに脚を圧入",
+    "pads": "くぼみに粘着",
+    "usb_plug": "利用者が挿すケーブル（留める物ではない）",
+    "desk": "机（基準）",
+}
+
+# 設計どおりに重なる組（名前の組 → 理由）。**見ない組には代わりの検査を置く**（下の EXPECTED_CHECKS）
+EXPECTED = {
+    ("inserts", "tray_R"): "熱圧入（下穴は外径より小さい）",
+    ("inserts", "lid_L"): "熱圧入（同上）",
+    ("screw_lid", "lid_R"): "ネジが膜をねじ切って通る（捕まえる膜）",
+}
+
+
+class Assembly:
+    """組み上げた物。geo は board_geometry() の結果。"""
+
+    def __init__(self, geo, ifc=None, cs=CS):
+        self.i = ifc or I.Interface()
+        self.s = self.i.s
+        self.c = cs
+        self.z = self.i.z()
+        self.case = Case(self.i, cs)
+        self.geo = geo
+
+    # --- 印刷する物 ---------------------------------------------------------
+    def printed(self):
+        return self.case.parts()
+
+    def plates(self):
+        from foundry.plate import build_plate, split_plate
+
+        p = self.i.p
+        whole, _, _ = build_plate(self.s, p.pieces()["main"], "main")
+        out = {}
+        for name, part in split_plate(self.s, whole, "main"):
+            out["plate_" + name.split("_")[-1]] = Pos(0, 0, self.z["plate_bottom"]) * part
+        return out
+
+    def keycap_solids(self, pressed=False):
+        z0 = self.z["switch_top" if pressed else "stem_top"]
+        out = []
+        cache = {}
+        for (x, y), k in zip(self.i.positions, self.i.keys):
+            if k.w_u not in cache:
+                cache[k.w_u] = KC.keycap(k.w_u, self.s, self.i.sw, self.c)
+            out.append(Pos(x, y, z0) * cache[k.w_u])
+        return out
+
+    # --- 基板 ---------------------------------------------------------------
+    def pcb(self):
+        s, z = self.s, self.z
+        slab = rounded(self.i.pcb, s.CORNER_R, z["pcb_bottom"], z["pcb_top"])
+        holes = [cyl(p["x"], p["y"], z["pcb_bottom"] - 1, z["pcb_top"] + 1, p["drill"])
+                 for p in self.geo["pads"] if p["drill"] > 0]
+        holes += [prism(poly, z["pcb_bottom"] - 1, z["pcb_top"] + 1) for poly in self.i.stab_reliefs()]
+        (px, py), _ = self.i.lid_pillar()
+        holes.append(cyl(px, py, z["pcb_bottom"] - 1, z["pcb_top"] + 1, s.LID_PILLAR_HOLE))
+        return slab - fuse(holes)
+
+    def switch_solids(self, pressed=False):
+        """スイッチ（図面の外形）。足・突起は**基板の穴の位置から**（穴より 0.2 細い）。
+
+        ハウジングの上面にはステムの入る穴（ステムの外形 × ストローク 3.0）を開けておく。
+        押し切るとステムはその中へ沈み、キャップの脚もステムの穴ごと沈む。
+        """
+        s, c, z = self.s, self.c, self.z
+        cut = self.i.sw.cutout
+        travel = z["stem_top"] - z["switch_top"]
+        fps = {f["ref"]: f for f in self.geo["footprints"] if re.fullmatch(r"SW\d+", f["ref"])}
+        pads = {}
+        for p in self.geo["pads"]:
+            if re.fullmatch(r"SW\d+", p["ref"]) and p["drill"] > 0:
+                pads.setdefault(p["ref"], []).append(p)
+        out = []
+        sx, sy = c.SW_STEM_BLOCK
+        slot_x, slot_y = c.STEM_SLOT
+        dz = -travel if pressed else 0.0
+        for ref, f in sorted(fps.items()):
+            x, y = f["x"], f["y"]
+            h = cut / 2
+            f2 = c.SW_FLANGE / 2
+            housing = fuse([box(x - h, y - h, z["pcb_top"], x + h, y + h, z["plate_top"]),
+                            box(x - f2, y - f2, z["plate_top"], x + f2, y + f2, z["plate_top"] + c.SW_FLANGE_T),
+                            box(x - h, y - h, z["plate_top"] + c.SW_FLANGE_T, x + h, y + h, z["switch_top"])])
+            housing = housing - box(x - sx / 2, y - sy / 2, z["switch_top"] - travel,
+                                    x + sx / 2, y + sy / 2, z["switch_top"] + 1)
+            parts = [housing]
+            stem = box(x - sx / 2, y - sy / 2, z["switch_top"] + dz, x + sx / 2, y + sy / 2, z["stem_top"] + dz)
+            for d in (-c.STEM_PITCH / 2, c.STEM_PITCH / 2):
+                stem = stem - box(x + d - slot_x / 2, y - slot_y / 2, z["switch_top"] + dz,
+                                  x + d + slot_x / 2, y + slot_y / 2, z["stem_top"] + dz + 1)
+            parts.append(stem)
+            for p in pads[ref]:
+                length = c.SW_POST_BELOW if p["npth"] else s.SWITCH_PIN_L + s.SWITCH_PIN_TOL
+                parts.append(cyl(p["x"], p["y"], z["pcb_top"] - length, z["pcb_top"] + 0.01,
+                                 p["drill"] - 0.2))
+            out.append(fuse(parts))
+        return out
+
+    def stab_solids(self):
+        z = self.z
+        return [prism(poly, z["stab_bottom"], z["plate_top"]) for poly in self.i.stab_housings()]
+
+    def bottom_parts(self):
+        """裏の部品: 生成した基板の裏のコートヤード × 裏の一番背の高い物（電源スイッチ 1.45）。"""
+        z = self.z
+        out = []
+        for f in self.geo["footprints"]:
+            cy = f["courtyard"].get("back")
+            if cy and not re.fullmatch(r"H\d+", f["ref"]):
+                out.append(rbox(cy, z["pcb_bottom"] - self.s.PSW_H, z["pcb_bottom"]))
+        return out
+
+    def xiao(self):
+        """XIAO: 基板＋上の部品（USB の上面の高さまでの箱）＋ USB-C のメス（中空）。"""
+        s, z = self.s, self.z
+        b = self.i.xiao()
+        board_t = s.XIAO_USB_Z - s.XIAO_USB_H / 2          # メスの下面 = XIAO の基板の上面
+        u = self.i.usb_shell()
+        zc = z["usb_center"]
+        board = rbox(b, z["pcb_top"], z["pcb_top"] + board_t)
+        comps = box(u[2], b[1], z["pcb_top"] + board_t, b[2], b[3], z["xiao_top"])
+        shell = box(u[0], u[1], zc - s.XIAO_USB_H / 2, u[2], u[3], zc + s.XIAO_USB_H / 2)
+        pw, ph = s.USB_PLUG_SHELL
+        m = 0.05                                            # プラグの金属とメスの内側の隙
+        cavity = box(u[0] - 1, u[1] + (s.XIAO_USB_W - pw) / 2 - m, zc - ph / 2 - m,
+                     u[0] + self.c.USB_PLUG_INSERT + 0.2, u[3] - (s.XIAO_USB_W - pw) / 2 + m,
+                     zc + ph / 2 + m)
+        return fuse([board, comps, shell - cavity])
+
+    def usb_plug(self):
+        s, c = self.s, self.c
+        u = self.i.usb_shell()
+        y, zc = s.XIAO_AT[1], self.z["usb_center"]
+        pw, ph = s.USB_PLUG_SHELL
+        x_face = u[0] - s.USB_SHELL_EXPOSED                 # 樹脂の先端
+        metal = box(x_face, y - pw / 2, zc - ph / 2, u[0] + c.USB_PLUG_INSERT, y + pw / 2, zc + ph / 2)
+        body = box(x_face - c.USB_PLUG_BODY_L, y - s.USB_PLUG_BODY_W / 2, zc - s.USB_PLUG_BODY_H / 2,
+                   x_face, y + s.USB_PLUG_BODY_W / 2, zc + s.USB_PLUG_BODY_H / 2)
+        return fuse([metal, body])
+
+    def holder(self):
+        z = self.z
+        (cx, cy), _ = self.i.cell()
+        return rbox(self.i.holder_body(), z["pcb_top"], z["holder_top"]) \
+            - cyl(cx, cy, z["pcb_top"] + self.c.CELL_Z_IN_HOLDER, z["holder_top"] + 1, self.s.CELL_D)
+
+    def cell(self):
+        (cx, cy), _ = self.i.cell()
+        z0 = self.z["pcb_top"] + self.c.CELL_Z_IN_HOLDER
+        return cyl(cx, cy, z0, z0 + self.s.CELL_T, self.c.CELL_REAL_D)
+
+    def psw(self):
+        z = self.z
+        return fuse([rbox(self.i.psw_body(), z["psw_bottom"], z["pcb_bottom"]),
+                     rbox(self.i.psw_knob(), z["psw_bottom"], z["pcb_bottom"])])
+
+    def key_mounts(self):
+        return [m for m in self.i.mounts() if not self.i.in_corner(m)]
+
+    def nuts(self):
+        s, z = self.s, self.z
+        return [hex_prism(x, y, s.NUT_AF, z["pcb_top"], z["pcb_top"] + s.NUT_T)
+                - cyl(x, y, z["pcb_top"] - 1, z["pcb_top"] + s.NUT_T + 1, self.c.SCREW_D)
+                for x, y in self.key_mounts()]
+
+    def screw_up(self, x, y, head_z):
+        """下から入れる皿ネジ（頭の面 = head_z、先へ +z）。"""
+        s, c = self.s, self.c
+        return fuse([cone(x, y, head_z, head_z + s.SCREW_HEAD_H, c.SCREW_HEAD_D, c.SCREW_D),
+                     cyl(x, y, head_z + s.SCREW_HEAD_H - 0.01, head_z + s.SCREW_L, c.SCREW_D)])
+
+    def screws(self):
+        return [self.screw_up(x, y, self.s.SCREW_SINK) for x, y in self.i.mounts()]
+
+    def screw_lid(self):
+        s, c = self.s, self.c
+        (x, y), _ = self.i.lid_pillar()
+        top = self.z["rim"]
+        return fuse([cone(x, y, top - s.SCREW_HEAD_H, top, c.SCREW_D, c.SCREW_HEAD_D),
+                     cyl(x, y, top - s.SCREW_L, top - s.SCREW_HEAD_H + 0.01, c.SCREW_D)])
+
+    def inserts(self):
+        c, z = self.c, self.z
+        (px, py), _ = self.i.lid_pillar()
+        top = self.case.pillar_top()
+        mx, my = self.case.left_lid_mount()
+        tube = lambda x, y, z0: (cyl(x, y, z0, z0 + c.INSERT_L, c.INSERT_OD)  # noqa: E731
+                                 - cyl(x, y, z0 - 1, z0 + c.INSERT_L + 1, c.SCREW_D))
+        return [tube(px, py, top - c.INSERT_L), tube(mx, my, z["pcb_top"])]
+
+    def pads(self):
+        s = self.s
+        z0 = s.ANTISLIP_RECESS - s.ANTISLIP_SHEET_T
+        return [rbox(r, z0, s.ANTISLIP_RECESS) for r in self.case.antislip_pads()]
+
+    def desk(self):
+        s = self.s
+        o = self.i.case_outer
+        z0 = s.ANTISLIP_RECESS - s.ANTISLIP_SHEET_T
+        return box(o[0] - 60, o[1] - 60, z0 - 5, o[2] + 60, o[3] + 60, z0)
+
+    # --- 全部 -----------------------------------------------------------------
+    def groups(self, pressed=False, printed=None):
+        """名前 → 立体（多数の同じ物は Compound）。"""
+        g = dict(printed or self.printed())
+        g.update(self.plates())
+        g["pcb"] = self.pcb()
+        g["switches"] = Compound(self.switch_solids(pressed))
+        g["stabs"] = Compound(self.stab_solids())
+        g["bottom_parts"] = Compound(self.bottom_parts())
+        g["xiao"] = self.xiao()
+        g["holder"] = self.holder()
+        g["cell"] = self.cell()
+        g["psw"] = self.psw()
+        g["nuts"] = Compound(self.nuts())
+        g["screws"] = Compound(self.screws())
+        g["screw_lid"] = self.screw_lid()
+        g["inserts"] = Compound(self.inserts())
+        g["keycaps"] = Compound(self.keycap_solids(pressed))
+        g["pads"] = Compound(self.pads())
+        g["usb_plug"] = self.usb_plug()
+        g["desk"] = self.desk()
+        return g
+
+
+# 基板と一緒に上から落とす物（はんだ付け・ナットを置いた状態。キャップはまだ）
+BOARD_SET = ("pcb", "plate_L", "plate_R", "switches", "stabs", "bottom_parts", "xiao", "holder",
+             "cell", "psw", "nuts")
+
+# どうやって入れるか（据わった位置から外への平行移動）。検査は sweep でたどる
+INSERT_PATH = {
+    "board": (0, 0, 30),              # 基板＋プレート＋部品は上から落とす（トレイだけ置いた状態）
+    "lid_L": (0, 0, 30),              # H3 を下へ抜いてから真上へ
+    "lid_R": (0, 0, 30),              # ネジごと真上へ（ネジはふたに捕まっている）
+    "cell": (0, 0, 30),               # 右のふたを外して真上へ（実物は＋のクリップの下から斜めに）
+    "usb_plug": (-30, 0, 0),          # 左へ抜く
+    "screws": (0, 0, -30),            # 下へ抜く（ドライバーも下から）
+    "keycaps": (0, 0, 30),
+}
+
+
+def path_problems(asm, g):
+    """入れる経路（INSERT_PATH）を sweep でたどり、ぶつかる相手を返す {経路: {相手: 体積}}。"""
+    out = {}
+
+    def check(name, moving, others):
+        sw = {name: Compound([sweep(m, INSERT_PATH[name.split("+")[0]]) for m in moving])}
+        bad = interference(sw, {k: g[k] for k in others})
+        if bad:
+            out[name] = {b: v for (_, b), v in bad.items()}
+
+    board = [s for k in BOARD_SET for s in solids_of(g[k])]
+    check("board", board, ["tray_L", "tray_R"])
+    everything = [k for k in g if k != "desk"]
+    rest = lambda *ex: [k for k in everything if k not in ex]  # noqa: E731
+    check("lid_L", solids_of(g["lid_L"]) + [solids_of(g["inserts"])[1]],
+          rest("lid_L", "inserts", "screws", "usb_plug"))
+    check("lid_R", solids_of(g["lid_R"]) + solids_of(g["screw_lid"]),
+          rest("lid_R", "screw_lid", "inserts") + ["desk"])
+    check("cell", solids_of(g["cell"]), rest("cell", "lid_R", "screw_lid"))
+    check("usb_plug", solids_of(g["usb_plug"]), rest("usb_plug") + ["desk"])
+    # 下からのネジ: ネジと、その下のドライバーの軸
+    drv = [cyl(x, y, asm.s.SCREW_SINK - 40, asm.s.SCREW_SINK, asm.c.DRIVER_D) for x, y in asm.i.mounts()]
+    check("screws", solids_of(g["screws"]) + drv, rest("screws", "nuts", "inserts"))
+    check("keycaps", solids_of(g["keycaps"]), rest("keycaps", "switches"))
+    return out
+
+
+def expected_overlaps_ok(asm, g):
+    """EXPECTED の組の重なりが、**理由どおりの量だけ**か（見ない組の代わりの検査）。"""
+    c = asm.c
+    bad = []
+    ring = lambda d0, d1, h: math.pi / 4 * (d0 * d0 - d1 * d1) * h  # noqa: E731
+    lim = {("inserts", "tray_R"): ring(c.INSERT_OD, c.INSERT_HOLE_D, c.INSERT_L),
+           ("inserts", "lid_L"): ring(c.INSERT_OD, c.INSERT_HOLE_D, c.INSERT_L),
+           ("screw_lid", "lid_R"): ring(c.SCREW_D, c.CAPTIVE_HOLE_D, c.CAPTIVE_WEB_T)}
+    for pair in EXPECTED:
+        v = interference({pair[0]: g[pair[0]]}, {pair[1]: g[pair[1]]}).get(pair, 0.0)
+        if not 0 < v <= lim[pair] * 1.02 + 1e-3:
+            bad.append(f"{pair}: 重なり {v:.3f} mm3（理由の量 {lim[pair]:.3f}）")
+    return bad
+
+
+# ---------------------------------------------------------------------------
+# 断面の絵・分解図
+# ---------------------------------------------------------------------------
+
+COLORS = {"tray_L": "#9fb6d4", "tray_R": "#88a6cc", "lid_L": "#f0b27a", "lid_R": "#eb984e",
+          "plate_L": "#bbbbbb", "plate_R": "#a9a9a9", "pcb": "#27ae60", "switches": "#555555",
+          "stabs": "#8e44ad", "bottom_parts": "#1e8449", "xiao": "#2c3e50", "holder": "#7f8c8d",
+          "cell": "#d4ac0d", "psw": "#c0392b", "nuts": "#34495e", "screws": "#17202a",
+          "screw_lid": "#17202a", "inserts": "#b7950b", "keycaps": "#f4f6f7", "pads": "#e74c3c",
+          "usb_plug": "#5d6d7e", "desk": "#eeeeee"}
+
+
+def section_faces(part, plane):
+    """B-rep の断面（平面との共通部分の面）を三角形 [(横, z) × 3] で返す。"""
+    from build123d import Face, Plane
+
+    axis, val = plane
+    if axis == "x":
+        pl = Plane(origin=(val, 0, 0), x_dir=(0, 1, 0), z_dir=(1, 0, 0))
+    else:
+        pl = Plane(origin=(0, val, 0), x_dir=(1, 0, 0), z_dir=(0, -1, 0))
+    big = pl * Face.make_rect(1000, 1000)
+    h = 1 if axis == "x" else 0
+    tris = []
+    for s in solids_of(part):
+        c = s & big
+        if c is None:
+            continue
+        for f in c.faces():
+            verts, idx = f.tessellate(0.01, 0.1)
+            for t in idx:
+                tris.append([(tuple(verts[k])[h], verts[k].Z) for k in t])
+    return tris
+
+
+def section_png(groups, out, plane, span, title):
+    """断面の絵（B-rep を平面で切った面を塗る）。plane = ("x"|"y", 値)。span = (横の最小, 最大, z の最小, 最大)。"""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.collections import PolyCollection
+
+    plt.rcParams["font.family"] = ["Hiragino Sans", "Hiragino Kaku Gothic ProN", "sans-serif"]
+    from matplotlib.patches import Patch
+
+    axis, val = plane
+    fig, ax = plt.subplots(figsize=(12, 5), dpi=170)
+    seen = []
+    for name, part in groups.items():
+        tris = section_faces(part, plane)
+        tris = [t for t in tris if any(span[0] - 5 <= p[0] <= span[1] + 5 for p in t)]
+        if not tris:
+            continue
+        ax.add_collection(PolyCollection(tris, facecolors=COLORS.get(name, "#cccccc"),
+                                         edgecolors=COLORS.get(name, "#cccccc"), linewidths=0.2))
+        seen.append(name)
+    ax.set_xlim(span[0], span[1])
+    ax.set_ylim(span[2], span[3])
+    ax.set_aspect("equal")
+    ax.grid(True, linewidth=0.3, alpha=0.4)
+    ax.set_xlabel(("y" if axis == "x" else "x") + " [mm]")
+    ax.set_ylabel("z [mm]")
+    ax.set_title(f"{title}   ({axis} = {val:.2f})", fontsize=9)
+    ax.legend(handles=[Patch(color=COLORS.get(n, "#ccc"), label=n) for n in seen],
+              fontsize=6, loc="upper left", bbox_to_anchor=(1.0, 1.0))
+    fig.savefig(out, bbox_inches="tight")
+    plt.close(fig)
+    return Path(out)
+
+
+def exploded_png(meshes, out, lift):
+    """分解図（部品ごとに z を持ち上げて、画家のアルゴリズムで描く）。"""
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import numpy as np
+    import trimesh
+    from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+
+    fig = plt.figure(figsize=(16, 10), dpi=150)
+    ax = fig.add_subplot(111, projection="3d")
+    elev, azim = 24, -62
+    e, a = np.radians(elev), np.radians(azim)
+    view = np.array([np.cos(e) * np.cos(a), np.cos(e) * np.sin(a), np.sin(e)])
+    tris, cols = [], []
+    for name, m in meshes.items():
+        v, f = trimesh.remesh.subdivide_to_size(m.vertices, m.faces, max_edge=4.0)
+        t = v[f].copy()
+        t[:, :, 2] += lift.get(name, 0.0)
+        tris.append(t)
+        cols += [COLORS.get(name, "#cccccc")] * len(t)
+    tris = np.concatenate(tris)
+    order = np.argsort(tris.mean(axis=1) @ view)
+    ax.add_collection3d(Poly3DCollection(tris[order], facecolors=np.array(cols)[order],
+                                         edgecolor="#333333", linewidths=0.02))
+    lo, hi = tris.reshape(-1, 3).min(0), tris.reshape(-1, 3).max(0)
+    ax.set_xlim(lo[0], hi[0])
+    ax.set_ylim(lo[1], hi[1])
+    ax.set_zlim(lo[2], hi[2])
+    ax.set_box_aspect(hi - lo)
+    ax.view_init(elev=elev, azim=azim)
+    ax.set_axis_off()
+    fig.savefig(out, bbox_inches="tight")
+    plt.close(fig)
+    return Path(out)
+
+
+# ---------------------------------------------------------------------------
+# 印刷する部品の検査（大きさ・肉厚・継ぎ目・留め方・指）
+# ---------------------------------------------------------------------------
+
+def print_sizes(parts, limit):
+    """印刷の向きの平面の大きさ {名前: (x, y, 入るか)}。"""
+    from case import print_pose
+
+    out = {}
+    for name, part in parts.items():
+        bb = print_pose(name, part).bounding_box()
+        out[name] = (bb.size.X, bb.size.Y, max(bb.size.X, bb.size.Y) <= limit + 1e-9)
+    return out
+
+
+def wall_probes(asm):
+    """名前を付けた肉厚の測り所 [(名前, 部品, 起点, 向き, 下限, 理由)]。最初に通る材料の長さを測る。"""
+    s, c, z, i, cs = asm.s, asm.c, asm.z, asm.i, asm.case
+    o, w = i.case_outer, i.wall_inner
+    m0 = i.mounts()[0]
+    rb = s.MOUNT_BOSS_D / 2
+    (px, py), _ = i.lid_pillar()
+    mx, my = cs.left_lid_mount()
+    usb = cs.usb_opening()
+    pad = cs.antislip_pads()[0]
+    need = 1.2
+    wall = s.CASE_WALL
+    ky = s.PSW_AT[1]
+    return [
+        ("床", "tray_L", (-60.3, 30.3, -5), (0, 0, 1), need, "0.4×3"),
+        ("床（滑り止めのくぼみ）", "tray_L", ((pad[0] + pad[2]) / 2, (pad[1] + pad[3]) / 2, -5), (0, 0, 1),
+         need, "O6: くぼみ 0.4 を引いて 1.2"),
+        ("左の壁", "tray_L", (o[0] - 5, 10.3, 6.0), (1, 0, 0), need, "0.4×3"),
+        ("奥の壁", "tray_L", (-60.3, o[3] + 5, 6.0), (0, -1, 0), need, ""),
+        ("手前の壁", "tray_L", (-60.3, o[1] - 5, 6.0), (0, 1, 0), need, ""),
+        ("USB の口の横の壁", "tray_L", (o[0] - 5, usb[0] - 1.0, 8.0), (1, 0, 0), need, ""),
+        ("USB の口の下の壁", "tray_L", (o[0] - 5, s.XIAO_AT[1], usb[2] - 1.0), (1, 0, 0), need, ""),
+        ("取付のボスの肉", "tray_L", (m0[0] - rb - 0.5, m0[1], (z["floor_top"] + z["pcb_bottom"]) / 2),
+         (1, 0, 0), need, "穴 2.4・ボス 5.6"),
+        ("右の壁", "tray_R", (o[2] + 5, 10.3, 6.0), (-1, 0, 0), need, ""),
+        ("指の窪みの奥の壁", "tray_R", (o[2] + 5, ky + 2.5, 3.0), (-1, 0, 0), wall - s.PSW_SCOOP,
+         "**1.2 未満**: 壁 1.6 − 窪み PSW_SCOOP（[暫定]）。構造ではない（つまみの横の目隠し）"),
+        ("ふたの柱の肉（インサート）", "tray_R", (px - 4, py, cs.pillar_top() - 1.0), (1, 0, 0),
+         (s.LID_PILLAR_D - c.INSERT_HOLE_D) / 2, "spec.LID_PILLAR_D（インサート 3.2＋肉 1.0）の決め方"),
+        ("左のふたの天板", "lid_L", (-130.3, -40.3, 20), (0, 0, -1), need, "LID_T"),
+        ("左のふたの垂れ壁", "lid_L", (-110, -40.3, 7.0), (-1, 0, 0), need, "LID_T"),
+        ("左のふたのボスの肉（奥）", "lid_L", (mx, -20, 7.0), (0, -1, 0), need, "LID_BOSS_WEB"),
+        ("左のふたのボスの肉（左）", "lid_L", (-126, my, 7.0), (1, 0, 0), need, "LID_BOSS_WEB"),
+        ("USB の舌", "lid_L", (o[0] - 5, s.XIAO_AT[1], (usb[3] + z["lid_bottom"]) / 2), (1, 0, 0), need, ""),
+        ("右のふたの天板", "lid_R", (120.3, -40.3, 20), (0, 0, -1), need, "LID_T"),
+        ("右のふたの垂れ壁（左）", "lid_R", (90, -40.3, 7.0), (1, 0, 0), need, "LID_T"),
+        ("右のふたの垂れ壁（奥）", "lid_R", (110.3, -20, 7.0), (0, -1, 0), need, "LID_T"),
+        ("つまみのひれ（厚さ）", "lid_R", (o[2] + 5, ky, 7.0), (-1, 0, 0), need, ""),
+        ("つまみのひれ（幅）", "lid_R", (w[2] + 0.4, ky - 10, 7.0), (0, 1, 0), need, ""),
+        ("ふたのボスの肉", "lid_R", (px - 4, py, cs.pillar_top() + 0.8), (1, 0, 0), need, ""),
+        ("ネジを捕まえる膜", "lid_R", (px + (c.CAPTIVE_HOLE_D / 2 + 0.2), py, 20), (0, 0, -1),
+         c.CAPTIVE_WEB_T, "**わざと薄い**（ネジがねじ切って通る膜・0.2 層 × 2）"),
+    ]
+
+
+def measure_probes(asm, meshes):
+    """wall_probes を測る → [(名前, 部品, 測った厚さ, 下限, 理由)]。材料に当たらなければ 0。"""
+    out = []
+    for name, part, org, d, need, why in wall_probes(asm):
+        runs = material_runs(meshes[part], org, d)
+        t = runs[0][1] - runs[0][0] if runs else 0.0
+        out.append((name, part, t, need, why))
+    return out
+
+
+def keycap_probes(asm):
+    """キーキャップ（1u・局所座標）の肉: 天板・スカート・脚。"""
+    c, s = asm.c, asm.s
+    m = mesh_of(KC.keycap(1.0, s, asm.i.sw, c))
+    d = UNIT / 2 - s.KEYCAP_GAP
+    px = c.STEM_PITCH / 2
+    res = [("キャップの天板", material_runs(m, (3.3, 3.3, 10), (0, 0, -1)), s.KEYCAP_TOP_T),
+           ("キャップのスカート", material_runs(m, (d + 3, 0.3, -0.5), (-1, 0, 0)), c.KEYCAP_SKIRT_T),
+           ("キャップの脚（幅）", material_runs(m, (px + 3, 0.0, -1.0), (-1, 0, 0)),
+            c.STEM_SLOT[0] - max(c.STEM_FIT_STEPS))]
+    return [(n, "keycap_1u", r[0][1] - r[0][0] if r else 0.0, need, "") for n, r, need in res]
+
+
+def z_scan(mesh, need, step=0.7, skip=()):
+    """上から縦に刺した線の材料の長さが need 未満の所 [(x, y, 長さ)]。skip: [(x0,y0,x1,y1)] は見ない。"""
+    import numpy as np
+
+    lo, hi = mesh.bounds
+    xs = np.arange(lo[0] + 0.137, hi[0], step)
+    ys = np.arange(lo[1] + 0.113, hi[1], step)
+    pts = [(x, y) for x in xs for y in ys
+           if not any(r[0] <= x <= r[2] and r[1] <= y <= r[3] for r in skip)]
+    if not pts:
+        return []
+    o = np.array([(x, y, hi[2] + 5) for x, y in pts])
+    d = np.tile([0.0, 0.0, -1.0], (len(o), 1))
+    locs, idx, _ = mesh.ray.intersects_location(o, d, multiple_hits=True)
+    hits = {}
+    for p, k in zip(locs, idx):
+        hits.setdefault(int(k), []).append(round(float(o[k][2] - p[2]), 5))
+    thin = []
+    for k, ts in hits.items():
+        ts = sorted(set(ts))
+        for a in range(0, len(ts) - 1, 2):
+            if ts[a + 1] - ts[a] < need - 1e-6:
+                thin.append((pts[k][0], pts[k][1], ts[a + 1] - ts[a]))
+    return thin
+
+
+def z_scan_skips(asm, name):
+    """縦の走査で**わざと薄い所**（名前つき）。ここに無い薄い所は検査が落とす。"""
+    c = asm.c
+    (px, py), _ = asm.i.lid_pillar()
+    r = c.SCREW_HEAD_D / 2 + c.SEAT_CLEAR + 0.2
+    return {"lid_R": [(px - r, py - r, px + r, py + r)]}.get(name, [])    # 捕まえる膜
+
+
+def seam_problems(asm, halves):
+    """継ぎ目が柱・ボスを切っていないか: 各柱の円柱が**どちらか片方に丸ごと**入っているか。"""
+    s, z = asm.s, asm.z
+    posts = [(p, s.MOUNT_BOSS_D) for p in asm.i.mounts()] + [(p, s.SUPPORT_D) for p in s.SUPPORTS]
+    posts.append((s.LID_PILLAR_AT, s.LID_PILLAR_D))
+    bad = []
+    for (x, y), d in posts:
+        probe = cyl(x, y, z["floor_top"] + 0.2, z["pcb_bottom"] - 0.2, d - 0.1)
+        vs = [common_volume(probe, h) for h in halves.values()]
+        if sum(v > 1e-6 for v in vs) != 1:
+            bad.append(((x, y), [round(v, 3) for v in vs]))
+    return bad
+
+
+def retention_problems(asm, g):
+    """留まるか（外れる向きに少し動かすと、留める物に当たるか・ネジがかかっているか）。"""
+    s, c, z = asm.s, asm.c, asm.z
+    bad = []
+    cell_up = moved(g["cell"], (0, 0, s.CELL_T / 2))
+    if common_volume(cell_up, g["lid_R"]) <= 1e-3:
+        bad.append("電池が半分（CELL_T/2）浮いてもふたに当たらない")
+    if common_volume(moved(g["lid_R"], (0, 0, 0.5)), g["screw_lid"]) <= 1e-3:
+        bad.append("右のふたを 0.5 持ち上げてもネジの頭に当たらない")
+    # ねじ込みの長さ（M2 のピッチ 0.4 で 3 山 = 1.2 以上）
+    tip = s.SCREW_SINK + s.SCREW_L
+    if tip < z["pcb_top"] + s.NUT_T:
+        bad.append(f"キーの下のネジの先 {tip:.2f} がナットの上面に届かない")
+    if tip - z["pcb_top"] < 1.2:
+        bad.append("H3 のネジがインサートに 1.2 かからない")
+    lid_tip = z["rim"] - s.SCREW_L
+    if asm.case.pillar_top() - max(lid_tip, asm.case.pillar_top() - c.INSERT_L) < 1.2:
+        bad.append("右のふたのネジがインサートに 1.2 かからない")
+    return bad
+
+
+def nail_problems(asm, g):
+    """電源スイッチのつまみに爪がかかるか: 先が窪みの底から PSW_NAIL_REACH 以上出て、
+    つまみの両脇に爪（NAIL_T の箱）が入る。"""
+    s, c, z = asm.s, asm.c, asm.z
+    k = asm.i.psw_knob()
+    floor_x = asm.i.case_outer[2] - s.PSW_SCOOP
+    bad = []
+    if k[2] - floor_x < c.PSW_NAIL_REACH - 1e-9:
+        bad.append(f"つまみの先が窪みの底から {k[2] - floor_x:.2f} しか出ない")
+    for y0, y1 in ((k[3], k[3] + c.NAIL_T), (k[1] - c.NAIL_T, k[1])):
+        nail = box(floor_x + 0.05, y0, z["psw_bottom"], k[2] + 5, y1, z["pcb_bottom"])
+        for name in ("tray_R", "lid_R"):
+            v = common_volume(nail, g[name])
+            if v > 1e-3:
+                bad.append(f"爪が {name} に当たる（{v:.2f} mm3）")
+    return bad
+
+
+def pad_problems(asm):
+    """滑り止めのくぼみとネジの座ぐりの**面の取り合い**（体積では見えない。矩形と円で数える）。"""
+    s, c = asm.s, asm.c
+    r = c.SCREW_HEAD_D / 2 + c.SEAT_CLEAR
+    return [(p, m) for p in asm.case.antislip_pads() for m in asm.i.mounts()
+            if I.circle_rect_gap(m, r, p) < c.ANTISLIP_INSET]
+
+
+def weights(asm, printed, plates):
+    """重さの見積もり（g）。印刷物は体積 × PLA、基板は体積 × FR4。"""
+    counts = KC.print_counts(asm.i.keys)
+    caps = {w: KC.keycap(w, asm.s, asm.i.sw, asm.c).volume for w in counts}
+    out = {n: p.volume / 1000 * PLA_DENSITY for n, p in {**printed, **plates}.items()}
+    out["keycaps(62)"] = sum(caps[w] * n for w, n in counts.items()) / 1000 * PLA_DENSITY
+    out["pcb"] = asm.pcb().volume / 1000 * FR4_DENSITY
+    return out
+
+
+def render_all(asm, g, out):
+    """断面と分解図を out/ に書く。返り値は書いた絵のパス。"""
+    s, z = asm.s, asm.z
+    mx, my = asm.case.left_lid_mount()
+    (px, py), _ = asm.i.lid_pillar()
+    back, front = s.CASE_SEAM
+    m0 = asm.i.mounts()[0]
+    zs = (-1.5, 16.0)
+    shots = [
+        ("section_left_corner_usb", ("y", s.XIAO_AT[1]), (-152, -108), "左の角: XIAO・USB-C のメスとプラグ・左のふた（舌）"),
+        ("section_left_corner_h3", ("x", mx), (-53, -18), "左の角: H3 のネジ・インサート・ふたのボス"),
+        ("section_right_corner_cell", ("y", py), (92, 150), "右の角: 電池・ホルダ・柱・捕まえたネジ"),
+        ("section_right_corner_psw", ("x", s.PSW_AT[0] + 2.4), (-53, -25), "右の角: 電源スイッチのつまみ・ひれ・指の窪み"),
+        ("section_psw_side", ("y", s.PSW_AT[1]), (125, 152), "右の側面: つまみ・切り欠き・窪み"),
+        ("section_seam_back", ("y", 30.3), (back - 20, back + 20), "継ぎ目（奥）: 床の段・支え"),
+        ("section_seam_front", ("y", -30.3), (front - 20, front + 20), "継ぎ目（手前）"),
+        ("section_seam_wall", ("x", (back + front) / 2), (-52, 52), "継ぎ目の段（y=0）を横から"),
+        ("section_stab_space", ("y", -38.1), (-65, -25), "スタビのキー（左のスペース）: ハウジング・逃げ穴・床"),
+        ("section_mount_h0", ("y", m0[1]), (m0[0] - 12, m0[0] + 12), "取付 H0: 皿ネジ・ボス・基板・ナット・プレートの六角の穴"),
+    ]
+    paths_ = []
+    for name, plane, span, title in shots:
+        sec = {k: v for k, v in g.items() if k != "desk"}
+        paths_.append(section_png(sec, out / f"{name}.png", plane, (span[0], span[1], *zs), title))
+    lift = {"tray_L": 0, "tray_R": 0, "pads": -10, "screws": -22, "pcb": 22, "bottom_parts": 22,
+            "psw": 22, "xiao": 22, "holder": 22, "cell": 50, "switches": 36, "stabs": 36, "nuts": 36,
+            "plate_L": 36, "plate_R": 36, "inserts": 70, "lid_L": 70, "lid_R": 70, "screw_lid": 86,
+            "keycaps": 56, "usb_plug": 22}
+    ex = {k: mesh_of(v) for k, v in g.items() if k in lift}
+    paths_.append(exploded_png(ex, out / "assembly_exploded.png", lift))
+    return paths_
+
+
+def main():
+    import time
+
+    t0 = time.time()
+    geo = board_geometry()
+    asm = Assembly(geo)
+    g = asm.groups()
+    out = asm.i.p.build
+    out.mkdir(parents=True, exist_ok=True)
+    print(f"組み立て {len(g)} 群・立体 {sum(len(solids_of(v)) for v in g.values())}  ({time.time() - t0:.0f}s)")
+    sl = []
+    bad = interference(g, skip=set(EXPECTED) | {("pads", "desk")}, slivers=sl)
+    print("干渉:", bad or "0", f"（丸めの削りかす {len(sl)} 件・計 {sum(sl):.4f} mm3 は 0 に数えた）")
+    print("経路:", path_problems(asm, g) or "0")
+    print("設計どおりの重なり:", expected_overlaps_ok(asm, g) or "OK")
+    for p in render_all(asm, g, out):
+        print("   ", p)
+    return asm, g
+
+
+if __name__ == "__main__":
+    main()
