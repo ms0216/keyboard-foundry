@@ -8,12 +8,18 @@
 | | 値 |
 |---|---|
 | DRC | 違反 0・未配線 0・警告 5（シルクが縁に近い 3・電源スイッチの位置決めの穴がホルダの下 2＝理由つき） |
-| 配線 | 表 2.09m・裏 3.40m・信号のビア 30・GND のビア 946 |
+| 配線 | 線 684 本・ビア 1030（GND の縫いのビア: リング 14・フェンス 259・格子 702・離島 4・1 本の島の 2 本目 11） |
 | 遠回り（自動配線のネット） | 直線の最短に対して 1.03〜1.15 倍（3 を超えたら疑う目安） |
-| GND ベタ | 表 22,600mm²・裏 21,746mm²（基板 27,447mm² の 82%・79%）。繋げなかった浮き島 18 個 14.6mm² は消した |
+| GND ベタ | 表 22,392mm²・裏 21,695mm²。繋げなかった浮き島 20 個 65.6mm² は消した。ビア 1 本だけの島は 4 個（長さ 11.3mm 以下） |
 | 電源の線 | V3V3・VBAT_SW・VBAT_IN は全部 0.3mm |
-| 発注道具（Fabrication Toolkit） | BOM 6 行すべて LCSC 番号・CPL 70 行すべて裏・ガーバーは 2 層だけ |
-| 検査 | `tests/test_cckb_pcb.py` 41 本。検査ごとに、事実の写しか板の写しを壊して落ちることを確かめる検査が付く（禁止域の銅 0 は、ずらした対照で銅が数えられることを見る） |
+| 発注道具（Fabrication Toolkit） | BOM 5 行すべて LCSC 番号・CPL 69 行すべて裏（**電源スイッチは手はんだ**・2026-09-24）・ガーバーは 2 層だけ |
+| 検査 | `tests/test_cckb_pcb.py` 56 本。検査ごとに、事実の写しか板の写しを壊して落ちることを確かめる検査が付く |
+
+**2026-09-24 の独立監査の直し**（決定記録 `decisions/2026-09-24-audit-fixes.md`）: パッドの中のビア（縫いのビアの
+当たり判定が同じネットのパッドを飛ばしていた）・XIAO の裏の露出パッド 8 個（前は 6 個）の下の表の銅・H3 の
+インサートの下の表の銅・電源スイッチを手はんだに・XIAO のパッドを縁から内 2.2 に・パッド内ビアを φ0.7・
+0805 と手はんだの GND パッドをサーマルに・ビア 1 本の長い GND の島に 2 本目。Freerouting は余裕 40µm で未配線 0
+（30・35・25 では 1。`pcb/route.json` に記録）。
 
 絵: `tools/kb cckb render` → `build/pcb_view/cckb.pcb.cckb_main.png`（表裏重ね）。
 
@@ -25,8 +31,10 @@
     tools/kb cckb drc                                               # 記録 pcb/cckb_main.drc.json
     REQUIRE_KICAD=1 .venv/bin/pytest tests -q
 
-**配置（spec.py・pcb_extra.py）を変えたら、この 4 つを全部やり直す。**やり直していないと
-`test_the_routed_board_was_made_from_the_current_placement` が落ちる。
+**配置（spec.py・pcb_extra.py・lib のフットプリント）を変えたら、この 4 つを全部やり直す。**やり直していないと
+`test_the_committed_unrouted_board_is_what_the_generator_makes_now`（パッドの形・ルール領域まで比べる）と
+`test_the_routed_board_was_made_from_the_current_placement`（配線した元のファイルの sha256 まで比べる）が落ちる。
+**boardhash の指紋は配置・結線・外形だけ**で、パッドの大きさや禁止域の変更では変わらない（2026-09-24 に気づいた）。
 
 ## だれが何を引いているか
 
@@ -68,10 +76,11 @@
 
 ## 決まっていないこと・承知して進めたこと
 
-- **アンテナの禁止域のまわりの GND ビアは 4 辺そろわない**（右 10/11・手前 4/7・奥 2/7・左 0/11）。
+- **アンテナの禁止域のまわりの GND ビアは 4 辺そろわない**（右 9/11・手前 4/7・奥 1/7・左 0/11）。
   左は XIAO 自身の下、奥と手前は XIAO のパッドの列（open-gaps P7）。試作で RSSI を測る
 - **XIAO の手前の列はパッド内ビア**（段階 1 の「穴なし」から変更。open-gaps P6）
-- **電源スイッチの入の向きは図の読み**（つまみを手前へ寄せると入。open-gaps P5）
+- **電源スイッチの入の向きは図の読み**（つまみを手前へ寄せると入。open-gaps P5）。**利用者が手はんだ**（付ける前にテスターで確かめられる）
+- **USB を挿す前に電源スイッチを OFF**（B5819W の逆漏れ。open-gaps 受け入れた差 A1）
 - 電源スイッチの位置決めの穴がホルダの下に来る DRC（npth_inside_courtyard 2 件）は警告に下げた
   （spec.DRC_SEVERITY。穴はホルダの＋の端子の下で銅は無く、突起は基板を抜けない）。検査が「この 2 件だけ」を見る
 - XIAO の 3D モデルの高さ（表面実装での Z）は確かめていない（組み立てモデルの段で）
@@ -89,6 +98,11 @@
 | `test_the_xiao_pads_cover_the_castellations_of_the_official_step` | 公式 STEP のパッドが板のパッドの中・張り出し 0.6 |
 | `test_the_power_switch_pads_hold_the_terminals_of_the_drawing` | 図面の端子・耳の金具・穴がパッドの中、ランドの外形が spec と一致 |
 | `test_the_routed_board_was_made_from_the_current_placement` | 配置を変えて配線し直していない状態を捕まえる |
+| `test_no_via_inside_any_pad` | 全部の銅のパッドにビアが掛からない（XIAO の D0〜D6 の 7 個だけ名指しで例外） |
+| `test_nothing_on_top_under_the_xiao`・`test_the_xiao_bottom_pads_are_the_official_ones` | XIAO の裏の露出パッド 8 個（STEP を毎回数える・Seeed 公式のランドと名前）の下の表の銅 0 |
+| `test_nothing_on_top_under_the_h3_insert` | H3 のインサート（外径 3.2 ＋ 0.3）の下の表の銅・線・ビア 0 |
+| `test_jlc_places_every_part_of_the_cpl_on_its_pads` | Fabrication Toolkit の CPL を JLC の部品データで置き直すと板のパッドに乗る（69 個） |
+| `test_the_thermal_pads_are_exactly_the_declared_ones`・`test_no_long_gnd_island_hangs_on_a_single_via` | サーマルは spec.THERMAL_PADS だけ・ビア 1 本の島は 12mm 未満 |
 
 ## やってはいけないこと
 

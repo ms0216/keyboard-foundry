@@ -49,6 +49,9 @@
 			>;
 		};
 
+		/* Fn+Ctrl+6 の &bootloader・Fn+Ctrl+7 の &sys_reset は、HHKB 分割機で左右どちら側でも
+		 * 効くかを確かめるために置いた重複（Esc・5 と同じ動き）。CCKB は 1 枚の板なので要らないが、
+		 * 害は無く、分割機の keymap と同じ並びを保つために残す（監査 F-4・open-gaps F3）。 */
 		sys {
 			bindings = <
 			&bootloader &bt BT_SEL 0 &bt BT_SEL 1 &bt BT_SEL 2 &bt BT_SEL 3 &sys_reset &bootloader &sys_reset &none &none &out OUT_USB &none &none &none &bt BT_CLR

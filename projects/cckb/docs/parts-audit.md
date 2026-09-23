@@ -9,10 +9,12 @@ HHKB で確かめた部品と理由がある——**理由の前提が自分の�
 
 ## 結論（2026-09-24・基板の段）
 
-JLC が裏に実装するのは 5 種 70 個（BAT46W 62・74LVC595 2・0.1µF 2・1MΩ 2・B5819W 1・電源スイッチ 1）。
-**Extended は 3 種（74LVC595・BAT46W・MK-12C02）で段取り費 $9。**表の XIAO とホルダ、スイッチ 62 個は
-利用者が手はんだ（BOM・CPL から外してある。`tools/kb cckb fab-fields` が焼き、
-tests/test_cckb_pcb.py::test_jlc_parts_are_all_on_the_bottom が見る）。
+JLC が裏に実装するのは 5 種 69 個（BAT46W 62・74LVC595 2・0.1µF 2・1MΩ 2・B5819W 1）。
+**Extended は 2 種（74LVC595・BAT46W）で段取り費 $6。**表の XIAO とホルダ、スイッチ 62 個、
+**裏の電源スイッチ（2026-09-24 の監査で JLC の実装から外した・§4）**は利用者が手はんだ（BOM・CPL から外してある。
+`tools/kb cckb fab-fields` が焼き、tests/test_cckb_pcb.py::test_jlc_parts_are_all_on_the_bottom が見る）。
+CPL の座標と回転は、JLC の部品データ（EasyEDA の原点とパッド）で置き直して板のパッドと比べる
+（`test_jlc_places_every_part_of_the_cpl_on_its_pads`・69 個とも 0.09mm 以内）。
 
 在庫と単価（JLCPCB API・`tools/kb cckb parts`・2026-09-24 00:5x 取得）:
 
@@ -20,7 +22,7 @@ tests/test_cckb_pcb.py::test_jlc_parts_are_all_on_the_bottom が見る）。
 |---|---|---|---|---|---|
 | SN74LVC595APWR | C52287685 | Extended | 1,446 | $0.1967 | 10 |
 | BAT46W | C54110 | Extended | 45,963 | $0.0292 | 310 |
-| MK-12C02-G025 | C778186 | Extended | 3,260 | $0.1068 | 5 |
+| MK-12C02-G025（**手はんだ・利用者が買う**） | C778186 | Extended | 3,260 | $0.1068 | 1〜5 |
 | B5819W | C8598 | Basic | 470,299 | $0.028 | 5 |
 | 0.1µF 0805 X7R | C49678 | Basic | 18,425,015 | $0.0192 | 10 |
 | 1MΩ 0805 1% | C17514 | Basic | 2,518,356 | $0.0043 | 10 |
@@ -56,12 +58,16 @@ $0.4165・同じ TSSOP-16・同じピン配置〔74LVC595A 系の共通〕）。
 
 | 効く条件 | 確かめたか | 値 |
 |---|---|---|
-| 逆流ゼロ（USB 給電中に一次電池を充電しない） | 外（ショットキーの構造・HHKB 実測 +0.8µA は放電向き） | 理想ダイオード（LM66100 等）は電位差ほぼ 0 で逆流を止められない（power.md） |
+| 逆流ゼロ（USB 給電中に一次電池を充電しない） | 外（ショットキーの構造・HHKB 実測 +0.8µA は放電向き・**アルカリ新品**） | 理想ダイオード（LM66100 等）は電位差ほぼ 0 で逆流を止められない（power.md）。**消耗した CR1632 ＋ USB ＋ スイッチ ON では逆電圧 1.4V で典型 約 5µA（25℃）が電池へ向かいうる**（監査 A-1）。JLC の 8 品番を比べて、IR（最悪 1µA 未満・25/40℃）と Vf（B5819W 以下）を両方満たす品は無かった → 部品は替えず「USB を挿す前に OFF」（決定記録 2026-09-24-audit-fixes §R4・open-gaps 受け入れた差 A1） |
 | Vf（打ち止めを決める） | 未（低電流の Vf は無規定。保守値 0.4） | 起動試験 task-10a で実測 |
 | 区分 | 外（API） | Basic（段取り費 0） |
 | 極性 | 外（KiCad D_SOD-123: パッド 1 = カソード）↔ 板 | tests/test_cckb_pcb.py::test_the_power_path_has_the_right_polarity（カソード = XIAO の 3V3、壊すと落ちる） |
 
 ## 4. 電源スイッチ MK-12C02-G025（C778186）
+
+> **2026-09-24: JLC の実装から外し、利用者の手はんだにした**（監査 C 重要 2・E 重要 1・B-1、裁定 R2）。
+> つまみが外形から 1.95 出るので、JLC の Economic の「部品は板端から 0.3 以上」（PCBA FAQ Part 2）と
+> 「はみ出す SMT 部品はキャリア」（PCB Assembly Fixtures）に合わない。決定記録 2026-09-24-audit-fixes §R2。
 
 選定は決定記録 2026-09-24 §2-1（5 品比較）。基板の段で**フットプリントを LCSC（EasyEDA）から取り込み、
 図面と突き合わせた**:
@@ -84,11 +90,17 @@ $0.4165・同じ TSSOP-16・同じピン配置〔74LVC595A 系の共通〕）。
 
 公式 STEP（lib/xiao.3dshapes・無改変）を測った: 裏のパッド 14 個は幅 1.524・縁から内へ 2.03＋半円 0.762、
 キャステレーション φ0.635 は縁の上、ピン中心は長手で基板の中心から USB 側へ −0.064（spec.XIAO_PIN_SHIFT）。
-裏にはほかに露出パッドが 6 つ（縁から 3.39 より内）→ **XIAO の下は表の銅を禁止**（ルール領域 XIAO_UNDERSIDE）。
-フットプリント lib/xiao.pretty/XIAO_nRF52840_SMD はパッドを縁から内 2.85・外 0.6。検査
-`test_the_xiao_pads_cover_the_castellations_of_the_official_step`（STEP を毎回測る）。
-**手前の列 D0〜D6 はパッドの外寄りに φ0.6/0.3 のパッド内ビア**（段階 1 の「穴なし」から変えた。
-手前は基板の縁で、XIAO の下は表の銅が禁止なので、表では外へ出る道が無い）。はんだが少しビアへ吸われる。
+裏にはほかに**露出パッドが 8 つ**（SWDIO・SWCLK・EN・GND・VBAT・GND・NFC1・NFC2。名前と位置は Seeed 公式の
+KiCad ライブラリ XIAO-nRF52840-SMD のパッド 15〜22 と記号のピン名、形は STEP の下面の面。`spec.XIAO_BOTTOM_PADS`）。
+**前は 6 つと数えていて**、アンテナ側の NFC の 2 つが抜け、NFC2 の真下に D7 のパッド・GND のビア・GND ベタがあった
+（監査 D 重要 1）→ **8 つそれぞれ＋0.3 の下は表の銅を禁止**（ルール領域 XIAO_UNDERSIDE）。
+フットプリント lib/xiao.pretty/XIAO_nRF52840_SMD はパッドを縁から内 **2.2**（Seeed 公式のランド 2.18 に揃えた。
+前は 2.85）・外 0.6。検査 `test_the_xiao_pads_cover_the_castellations_of_the_official_step`（STEP を毎回測る）・
+`test_the_xiao_bottom_pads_are_the_official_ones`（STEP の面を毎回数えて 8・Seeed のパッドと 1 対 1）・
+`test_nothing_on_top_under_the_xiao`（8 つを名指し）。
+**手前の列 D0〜D6 はパッドの外寄りに φ0.7/0.3 のパッド内ビア**（段階 1 の「穴なし」から変えた。2026-09-24 に
+φ0.6 → 0.7: アニュラ 0.15 は JLC の部品の穴の下限 0.18 を割る・監査 C 軽微 3。手前は基板の縁で、XIAO の下は
+表の銅が禁止なので、表では外へ出る道が無い）。はんだが少しビアへ吸われる（付け方は printing-and-assembly.md §5-1）。
 
 ## 7. 0.1µF（C49678）・1MΩ（C17514）
 
