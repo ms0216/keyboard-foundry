@@ -16,8 +16,8 @@ from __future__ import annotations
 import sys
 
 from build123d import (BuildLine, BuildPart, BuildSketch, Circle, Kind, Locations,
-                       Mode, Polyline, Rectangle, RectangleRounded, add, extrude,
-                       make_face, offset)
+                       Mode, Polyline, Rectangle, RectangleRounded, RegularPolygon, add,
+                       extrude, make_face, offset)
 
 from .layout import centered
 from .mech import CHOC_STAB_OUTLINE, STAB_KERF, stab_flipped, switch_of
@@ -113,11 +113,48 @@ def build_plate(spec, keys, piece):
                 with Locations((cx, cy)):
                     Rectangle(ow, oh, mode=Mode.SUBTRACT)
             mounts = spec.MOUNTS[piece]
+            # MOUNT_POCKET_AF があれば、ネジのバカ穴ではなく**ナットの回り止めの六角の穴**
+            # （基板の上面に置いた M2 ナットがプレートの中に収まる。CCKB）。二面を ±x に向ける
+            af = getattr(spec, "MOUNT_POCKET_AF", None)
             if mounts:
                 with Locations(*mounts):
-                    Circle(M2_CLEAR_D / 2, mode=Mode.SUBTRACT)
+                    if af:
+                        RegularPolygon(af / 3 ** 0.5, 6, rotation=30, mode=Mode.SUBTRACT)
+                    else:
+                        Circle(M2_CLEAR_D / 2, mode=Mode.SUBTRACT)
         extrude(amount=sw.plate_t)
     return plate.part, (w, h), positions
+
+
+def split_plate(spec, part, piece):
+    """PLATE_SPLIT があればプレートを左右に分ける。無ければ [(piece, part)]。
+
+    PLATE_SPLIT[piece] は段ごと（上の段から）の分ける x。段の中は縦に切り、段の境目で
+    横に渡る。**x はキーの境目に置く**（スイッチ・スタビの開口を切らない。機種の検査が見る）。
+    """
+    xs = getattr(spec, "PLATE_SPLIT", {}).get(piece)
+    if not xs:
+        return [(piece, part)]
+    from build123d import Polygon
+
+    bb = part.bounding_box()
+    pad = 10.0
+    top, bottom = bb.max.Y + pad, bb.min.Y - pad
+    n = len(xs)
+    step = (bb.max.Y - bb.min.Y - 2 * spec.PLATE_MARGIN_Y) / n     # 段の高さ（1u）
+    y0 = bb.max.Y - spec.PLATE_MARGIN_Y
+    ys = [top] + [y0 - i * step for i in range(1, n)] + [bottom]
+    seam = []
+    for i, x in enumerate(xs):
+        seam += [(x, ys[i]), (x, ys[i + 1])]
+    left_pts = [(bb.min.X - pad, top)] + seam + [(bb.min.X - pad, bottom)]
+    with BuildPart() as cutter:
+        with BuildSketch():
+            Polygon(*left_pts, align=None)
+        extrude(amount=bb.max.Z + pad, both=True)
+    left = part & cutter.part
+    right = part - cutter.part
+    return [(f"{piece}_L", left), (f"{piece}_R", right)]
 
 
 def main(argv):
@@ -127,14 +164,17 @@ def main(argv):
     p = load(argv[0])
     p.build.mkdir(parents=True, exist_ok=True)
     for piece, keys in p.pieces().items():
-        part, (w, h), _ = build_plate(p.spec, keys, piece)
-        mesh, stl = to_mesh(part, p.build / f"plate_{piece}.stl")
-        png = render_outline_2d(part, p.build / f"plate_{piece}.png",
-                                title=f"{p.name} plate {piece}  {w:.2f} x {h:.2f} mm")
-        # **出力を読んでから報告する。**水密でなければ刷れない
-        print(f"{'OK' if mesh.is_watertight else 'NG'} {piece:6s} {len(keys):3d} keys "
-              f"{w:7.2f} x {h:6.2f} x {switch_of(p.spec).plate_t}mm 水密={mesh.is_watertight}")
-        print(f"   {stl}\n   {png}")
+        whole, _, _ = build_plate(p.spec, keys, piece)
+        for name, part in split_plate(p.spec, whole, piece):
+            size = part.bounding_box().size
+            w, h = size.X, size.Y
+            mesh, stl = to_mesh(part, p.build / f"plate_{name}.stl")
+            png = render_outline_2d(part, p.build / f"plate_{name}.png",
+                                    title=f"{p.name} plate {name}  {w:.2f} x {h:.2f} mm")
+            # **出力を読んでから報告する。**水密でなければ刷れない
+            print(f"{'OK' if mesh.is_watertight else 'NG'} {name:6s} "
+                  f"{w:7.2f} x {h:6.2f} x {switch_of(p.spec).plate_t}mm 水密={mesh.is_watertight}")
+            print(f"   {stl}\n   {png}")
     return 0
 
 

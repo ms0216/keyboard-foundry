@@ -19,8 +19,10 @@ from conftest import ROOT
 from foundry import paths, tags
 
 REQ = ROOT / "requirements-dev.txt"
-PY_FILES = sorted(p for d in ("foundry", "tests", "tools") for p in (ROOT / d).rglob("*.py")
-                  if "fixtures" not in p.parts)
+# 機種の中のコード（projects/<機種>/interface.py・tools/）も数える。spec.py の定数を
+# 読むのはそこで、数えないと「読まれていない」と誤る（CCKB 2026-09-24）
+PY_FILES = sorted(p for d in ("foundry", "tests", "tools", "projects") for p in (ROOT / d).rglob("*.py")
+                  if "fixtures" not in p.parts and p.name != "spec.py")
 
 # import 名 → 配布名（一致しないものだけ）
 DIST = {"PIL": "pillow", "yaml": "PyYAML", "mpl_toolkits": "matplotlib"}
