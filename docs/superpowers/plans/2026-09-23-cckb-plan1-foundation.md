@@ -1,7 +1,7 @@
 # CCKB 実装計画 1/3 — 土台（核の Choc 対応・機種・プレート・未配線基板・ファーム・発注前の起動試験）
 
 > **完了（2026-09-23）。計画 2・3 は書かれず、以後の作業は自走の段階で進めた。いまの正本は projects/cckb/docs/ の決定記録（decisions/）と台帳（open-gaps.md・status.md）。**
-> 下の起動試験の給電（B5819W だけ）は古い: いまは BAT46W と B5819W の両方で測る（task-10a-coin-cell-startup.md）。
+> 下の起動試験（電池 → 抵抗 → B5819W、常温と冷蔵で各 10 回）は古い。2026-09-24 に「BAT46W と B5819W の両方で」に変え、**2026-09-25 に置き換えた**: 可変電源＋直列抵抗で XIAO の起動に要る電圧を測り、電池とダイオードはデータシートで（task-10a-coin-cell-startup.md）。
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
