@@ -32,7 +32,7 @@
 
 | 順 | やること | 所要・費用 | 文書 |
 |---|---|---|---|
-| 1 | **LCSC・秋月・遊舎工房に部品を頼む**（起動試験のダイオード 2 種〔LCSC〕・電源スイッチ SS-12D00G3 ×3〔秋月〕・スタビ・スイッチ）。XIAO・ホルダ・電池・1MΩ も | 部品 約 ¥8,000＋LCSC の送料（ネジ類は別） | [shopping-list.md](shopping-list.md) §1〜§4 |
+| 1 | **部品を買う**: Amazon の 1 カート（XIAO・電池・ネジ類・滑り止め）・日本橋の店頭（電源スイッチ SS12D00G3 ×3・電池ホルダ〔シリコンハウス〕・1MΩ〔千石〕）・遊舎工房（スタビ・スイッチ）・LCSC（起動試験のダイオード 2 種） | 国内 約 ¥13,900（送料込み）＋LCSC の部品 $1.16 と送料 | [shopping-list.md](shopping-list.md) のまとめ |
 | 2 | **小片を 5 つ刷る**（届く前でもよい） | 約 1 時間・7g | [printing-and-assembly.md](printing-and-assembly.md) §1 |
 | 3 | **起動試験（#1）** をブレッドボードで。**BAT46W と B5819W の両方で** | 約 2 時間 | [task-10a-coin-cell-startup.md](task-10a-coin-cell-startup.md) |
 | 4 | **決める: O12（D_PWR の品番）・O11（595 の末端を戻すか）**。見る: 電源スイッチの入の向きと高さ（P5・O13）・スタビのワイヤ（P11）・アルミ箔で電波（P7・¥0） | 各 数分〜30 分 | [order-steps.md](order-steps.md) §1 |
