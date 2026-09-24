@@ -519,3 +519,55 @@ def test_the_project_rules_refuse_to_hide_a_violation(tmp_path, sev, msg):
 
     with pytest.raises(ValueError, match=msg):
         sync_project_rules(_pro(tmp_path), sev)
+
+
+# ---- 組み立て手順書のゴーストの試験の組が、行列で四角になっているか ----
+
+GUIDE = paths.ROOT / "projects" / "cckb" / "docs" / "assembly-guide.md"
+GHOST = re.compile(r"（例 (\w+)・(\w+)・(\w+)）を同時に押して、4 つ目の角（(\w+)）が出ないか")
+
+
+def ghost_trio_problems(guide_text, dtsi_text, keymap_text):
+    """手順書の「3 つを押して 4 つ目が出ないか」の組が、**行列の**四角の 3 つの角と 4 つ目か。
+
+    4 つ目の角にキーが無ければ、ダイオードが逆でも何も出ず試験にならない（4 回目の文書の監査 重要 1:
+    A・S・W → Q）。キーの名前は base_mac の &kp の名前、位置は transform の RC（キーマップの並び）。
+    """
+    m = GHOST.search(guide_text)
+    if not m:
+        return ["手順書にゴーストの試験の組が見つからない"]
+    text = re.sub(r"/\*.*?\*/|//[^\n]*", " ", keymap_text, flags=re.S)
+    body = re.search(r"base_mac\s*\{\s*bindings\s*=\s*<(.*?)>;", text, re.S).group(1)
+    binds = re.findall(r"&\w+(?:\s+[A-Z_0-9]+(?:\s+\d+)?)?", body)
+    rcs = _transform_rcs(dtsi_text)
+    assert len(binds) == len(rcs) == 62, (len(binds), len(rcs))
+    where = {b.split()[-1]: rc for b, rc in zip(binds, rcs) if b.startswith("&kp ")}
+    names = m.groups()
+    missing = [n for n in names if n not in where]
+    if missing:
+        return [f"キーマップに無いキー: {missing}"]
+    three = [where[n] for n in names[:3]]
+    rows, cols = {r for r, _ in three}, {c for _, c in three}
+    if len(set(three)) != 3 or len(rows) != 2 or len(cols) != 2:
+        return [f"3 つのキー {names[:3]} = {three} は行列の四角の 3 つの角ではない"]
+    fourth = next((r, c) for r in rows for c in cols if (r, c) not in three)
+    at = [n for n, rc in where.items() if rc == fourth]
+    if not at:
+        return [f"4 つ目の角 {fourth} にキーが無い（ダイオードが逆でも何も出ない）"]
+    if names[3] not in at:
+        return [f"4 つ目の角 {fourth} のキーは {at}。手順書は {names[3]}"]
+    return []
+
+
+def test_the_ghost_test_in_the_guide_is_a_matrix_rectangle():
+    assert ghost_trio_problems(GUIDE.read_text(), TRANSFORM.read_text(),
+                               (SHIELD / "cckb.keymap").read_text()) == []
+
+
+def test_the_ghost_check_notices_the_old_trio():
+    """**壊して落ちることを示す。**前の組（A・S・W → Q）は 4 つ目の角 (1,2) にキーが無い。"""
+    old = "（例 A・S・W）を同時に押して、4 つ目の角（Q）が出ないか"
+    bad = ghost_trio_problems(old, TRANSFORM.read_text(), (SHIELD / "cckb.keymap").read_text())
+    assert bad and "(1, 2)" in bad[0], bad
+    wrong = "（例 W・E・S）を同時に押して、4 つ目の角（F）が出ないか"
+    assert ghost_trio_problems(wrong, TRANSFORM.read_text(), (SHIELD / "cckb.keymap").read_text())
