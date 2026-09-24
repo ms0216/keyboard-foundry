@@ -239,8 +239,10 @@ class Case:
         z, i, c = self.z, self.i, self.c
         cov = i.cover(side)
         top = rounded(i.case_outer, self.r_out, z["lid_bottom"], z["rim"]) & rbox(cov, -1, 30)
-        inner = (max(cov[0], i.wall_inner[0]), max(cov[1], i.wall_inner[1]),
-                 min(cov[2], i.wall_inner[2]), min(cov[3], i.wall_inner[3]))
+        # 垂れ壁の端は壁の内面から FIT/2 離す（天板の縁と壁の段の FIT/2 と合わせて両側で FIT。
+        # 前は壁の内面ちょうどで隙 0 だった・4 回目の監査 E 重要 1。assembly.lid_fit_problems が見る）
+        w = I.grow(i.wall_inner, -c.FIT / 2)
+        inner = (max(cov[0], w[0]), max(cov[1], w[1]), min(cov[2], w[2]), min(cov[3], w[3]))
         drop = rbox(inner, z["pcb_top"] + c.LID_DROP_GAP, z["lid_bottom"] + 0.01) \
             - rbox(i.cover_cavity(side), 0, 30)
         return top.fuse(drop)

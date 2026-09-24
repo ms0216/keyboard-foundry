@@ -342,6 +342,20 @@ def test_the_retention_check_notices_a_loose_part(geo, over):
     assert A.retention_problems(a, slim(a, ["cell", "lid_R", "screw_lid"]))
 
 
+def test_the_lids_keep_the_fit_gap_to_the_trays(asm, g):
+    """ふたとトレイの接する面に、水平の 4 方向とも片側 FIT/2 の隙がある（嵌め合いは両側で FIT 0.2。
+    docs/knowledge/case-and-print.md）。干渉の検査は隙 0 の接触を数えない（4 回目の監査 E 重要 1）。"""
+    assert A.lid_fit_problems(asm, g) == []
+
+
+def test_the_fit_check_notices_lids_touching_the_trays(geo):
+    """**壊して落ちることを示す。**FIT を 0 にしたケース（垂れ壁の端も天板の縁も壁に隙 0）を、
+    規定の隙（CS.FIT/2）で測る。"""
+    a = A.Assembly(geo, cs=cs_with(FIT=0.0))
+    bad = A.lid_fit_problems(a, slim(a, ["tray_L", "tray_R", "lid_L", "lid_R"]), need=CS.FIT / 2)
+    assert {(lid, d) for lid, d, _, _ in bad} >= {("lid_L", "-y"), ("lid_R", "+x"), ("lid_R", "-y")}, bad
+
+
 def test_the_power_switch_takes_a_fingernail(asm, g):
     assert A.nail_problems(asm, g) == []
     # 公差を積んだレバーの先とふたの上面の差（正なら下）。**最高では出る**（open-gaps O13 で利用者が決める）

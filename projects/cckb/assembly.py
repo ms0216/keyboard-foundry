@@ -874,6 +874,28 @@ def nail_problems(asm, g):
     return bad
 
 
+# ふたとトレイの隙を測るときに、規定の隙から引く量（面どうしが隙 0 で接するのと、隙が規定どおりあるのを分ける）
+FIT_EPS = 0.01
+
+
+def lid_fit_problems(asm, g, need=None):
+    """ふたとトレイの**接する面の隙**が、水平の 4 方向とも need（既定 FIT/2 = 片側）以上か。
+
+    ふたを ±x・±y へ need − FIT_EPS 動かして、トレイと重なる向きを返す [(ふた, 向き, 相手, 体積)]。
+    干渉の検査（interference）は重なりだけを数えるので、面が隙 0 で接していても 0 になる
+    （4 回目の監査 E 重要 1: 垂れ壁の端がトレイの壁の内面に隙 0）。これは**残っている隙**を見る。
+    """
+    need = asm.c.FIT / 2 if need is None else need
+    d = need - FIT_EPS
+    trays = {k: g[k] for k in ("tray_L", "tray_R")}
+    bad = []
+    for lid in ("lid_L", "lid_R"):
+        for name, v in (("+x", (d, 0, 0)), ("-x", (-d, 0, 0)), ("+y", (0, d, 0)), ("-y", (0, -d, 0))):
+            hit = interference({lid: moved(g[lid], v)}, trays)
+            bad += [(lid, name, b, round(vol, 3)) for (_, b), vol in hit.items()]
+    return bad
+
+
 def psw_tip_margin(asm):
     """レバーの先とふたの上面の差 (公差の最高で, 名目で, 最低で)。正ならふたの上面より下。"""
     lo, tip, hi = asm.r.psw_tip_range()
@@ -1012,7 +1034,9 @@ def main():
     print("設計どおりの重なり:", overlaps_bad or "OK")
     islands_bad = island_problems(asm)
     print("滑り止めの島の上:", islands_bad or "0")
-    ng = bool(bad or failed or paths_bad or overlaps_bad or islands_bad)
+    fit_bad = lid_fit_problems(asm, g)
+    print("ふたとトレイの隙（片側 FIT/2）:", fit_bad or "OK")
+    ng = bool(bad or failed or paths_bad or overlaps_bad or islands_bad or fit_bad)
     for p in render_all(asm, g, out):
         print("   ", p)
     b = export_blend(g, out)
