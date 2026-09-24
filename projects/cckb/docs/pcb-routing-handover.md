@@ -8,16 +8,16 @@
 | | 値 |
 |---|---|
 | DRC | 違反 0・未配線 0・警告 3（シルクが縁に近い 3＝理由つき。2026-09-24 に電源スイッチを SS-12D00G3〔表・スルーホール〕に替えて、位置決めの穴の警告 2 は無くなった） |
-| 配線 | 線 684 本・ビア 1030（GND の縫いのビア: リング 14・フェンス 259・格子 702・離島 4・1 本の島の 2 本目 11） |
+| 配線 | 線 682 本・ビア 1031（2026-09-25 に pcbnew で数えた。電源スイッチの置き換え 5c32779 の後。GND の縫いのビアの内訳〔リング 14・フェンス 259・格子 702・離島 4・1 本の島の 2 本目 11〕は 1 回目の直し c80711a のときの数で、その後の直しで変わった） |
 | 遠回り（自動配線のネット） | 直線の最短に対して 1.03〜1.15 倍（3 を超えたら疑う目安） |
-| GND ベタ | 表 22,392mm²・裏 21,695mm²。繋げなかった浮き島 20 個 65.6mm² は消した。ビア 1 本だけの島は 4 個（長さ 11.3mm 以下） |
+| GND ベタ | 表 22,201mm²・裏 21,706mm²（塗った後の面積。4 回目の監査 C・D が pcbnew で読んだ値）。繋げなかった浮き島 20 個 65.6mm² は消した。ビア 1 本だけの島は 4 個（長さ 11.3mm 以下） |
 | 電源の線 | V3V3・VBAT_SW・VBAT_IN は全部 0.3mm |
 | 発注道具（Fabrication Toolkit） | BOM 4 行すべて LCSC 番号・CPL 69 行すべて裏（**電源スイッチは手はんだ**・秋月の SS-12D00G3）・ガーバーは 2 層だけ |
-| 検査 | `tests/test_cckb_pcb.py` 56 本。検査ごとに、事実の写しか板の写しを壊して落ちることを確かめる検査が付く |
+| 検査 | `tests/test_cckb_pcb.py` 54 関数・72 件（2026-09-25 に collect で数えた）。検査ごとに、事実の写しか板の写しを壊して落ちることを確かめる検査が付く |
 
 **2026-09-24 の独立監査の直し**（決定記録 `decisions/2026-09-24-audit-fixes.md`）: パッドの中のビア（縫いのビアの
 当たり判定が同じネットのパッドを飛ばしていた）・XIAO の裏の露出パッド 8 個（前は 6 個）の下の表の銅・H3 の
-インサートの下の表の銅・電源スイッチを手はんだに・XIAO のパッドを縁から内 2.2 に・パッド内ビアを φ0.7・
+インサートの下の表の銅・電源スイッチを手はんだに・XIAO のパッドを縁から内 2.2 に・パッド内ビアを φ0.7（2 回目の直しで φ0.8）・
 0805 と手はんだの GND パッドをサーマルに・ビア 1 本の長い GND の島に 2 本目。Freerouting は余裕 40µm で未配線 0
 （30・35・25 では 1。`pcb/route.json` に記録）。
 
@@ -98,14 +98,14 @@ D_PWR の値を BAT46W に（板の銅は変わらない）。
 
 | 検査 | 守るもの |
 |---|---|
-| `test_every_pad_carries_the_declared_net` | 回路の宣言（circuit.py）→ パッド → 板のネット。部品 145・銅のパッド 320・ネットの無いパッドは宣言した NC の 11 個だけ |
+| `test_every_pad_carries_the_declared_net` | 回路の宣言（circuit.py）→ パッド → 板のネット。部品 145・銅のパッド 316・ネットの無いパッドは宣言した NC の 7 個だけ（前の電源スイッチの耳 4 つが無くなった） |
 | `test_the_routed_board_has_no_drc_violation_and_nothing_unrouted` | DRC 違反 0・未配線 0・知っている警告だけ |
-| `test_jlc_parts_are_all_on_the_bottom` | JLC が実装する 70 個はパッドが全部裏。手で付ける物は BOM/CPL に無い |
+| `test_jlc_parts_are_all_on_the_bottom` | JLC が実装する 69 個はパッドが全部裏。手で付ける物は BOM/CPL に無い |
 | `test_the_board_matches_the_firmware_pin_map` | overlay の行のピン・&shifter の番号・CS・SPI・ADC が板のネットと一致 |
 | `test_the_antenna_keepout_has_no_copper_after_the_fill` | 塗った後の禁止域の銅 0（ずらした対照では銅が数えられる） |
-| `test_the_power_path_has_the_right_polarity` | ホルダ＋→スイッチ②、③→VBAT_SW→分圧・D_PWR→3V3、XIAO の BAT に何も無い |
+| `test_the_power_path_has_the_right_polarity` | ホルダ＋→SW_PWR.2（真ん中）、1（奥）→VBAT_SW→分圧・D_PWR→3V3、XIAO の BAT に何も無い |
 | `test_the_xiao_pads_cover_the_castellations_of_the_official_step` | 公式 STEP のパッドが板のパッドの中・張り出し 0.6 |
-| `test_the_power_switch_pads_hold_the_terminals_of_the_drawing` | 図面の端子・耳の金具・穴がパッドの中、ランドの外形が spec と一致 |
+| `test_the_power_switch_pads_hold_the_terminals_of_the_drawing` | 図面の足 3 本（SS-12D00G3。耳の金具は無い）が穴の中、ランドの外形が spec と一致 |
 | `test_the_routed_board_was_made_from_the_current_placement` | 配置を変えて配線し直していない状態を捕まえる |
 | `test_nothing_under_the_metal_on_the_board` | 取付の穴 11 を板から数え、金属が当たる 10 か所の円の中の線・ビア・塗った後の銅が 0（2 回目の監査） |
 | `test_only_the_jlc_parts_get_solder_paste` | ペーストは JLC が実装するパッドだけ（166）。手はんだの部品に無い |
