@@ -364,6 +364,39 @@ def test_the_power_switch_takes_a_fingernail(asm, g):
     assert nominal > 0
 
 
+DOCS = ROOT / "projects" / "cckb" / "docs"
+
+
+def lever_number_problems(docs, asm):
+    """文書に書いたレバーの先の数字（公差の範囲「11.04〜11.96」・ふたの上面からの「−0.56〜+0.36」・
+    「最悪 … 0.36 出」）が、interface.psw_tip_range から計算した値と同じか（4 回目の文書の監査 重要 2・3:
+    直した後も 11.2〜11.8・0.2 が残っていた）。[(ファイル:行, 書いてある, 正しい)]。"""
+    lo, _, hi = asm.r.psw_tip_range()
+    worst, _, lowest = A.psw_tip_margin(asm)
+    want = {"範囲": f"{lo:.2f}〜{hi:.2f}", "上面から": f"−{lowest:.2f}〜+{-worst:.2f}", "出": f"{-worst:.2f}"}
+    pats = {"範囲": r"1[01]\.\d+〜1[01]\.\d+", "上面から": r"−\d\.\d+〜\+\d\.\d+",
+            "出": r"最悪[^。|]{0,25}?(\d\.\d+) ?出"}
+    bad = []
+    for p in sorted(docs.rglob("*.md")):
+        for n, line in enumerate(p.read_text().splitlines(), 1):
+            for k, pat in pats.items():
+                for m in re.finditer(pat, line):
+                    got = m.group(m.lastindex or 0)
+                    if got != want[k]:
+                        bad.append((f"{p.name}:{n}", got, want[k]))
+    return bad
+
+
+def test_the_lever_numbers_in_the_docs_are_the_interface_values(asm):
+    assert lever_number_problems(DOCS, asm) == []
+
+
+def test_the_lever_number_check_notices_the_old_numbers(asm, tmp_path):
+    """**壊して落ちることを示す。**直す前の parts-audit・power-switch.md の書き方。"""
+    (tmp_path / "old.md").write_text("公差で 11.2〜11.8\n| O13 | 最悪でふたの上面から 0.2 出うる |\n−0.5〜+0.3\n")
+    assert [b[1] for b in lever_number_problems(tmp_path, asm)] == ["11.2〜11.8", "0.2", "−0.5〜+0.3"]
+
+
 @pytest.mark.parametrize("cs_over, ifc_over", [
     ({"PSW_SLOT_NAIL": 0.3}, {}),                 # 穴の端に爪の場所が無い
     ({}, {"PSW_TAB": 0.7}),                       # 爪で浮く量が大きい → 先がふたの上面を越える
