@@ -20,7 +20,16 @@ JLC = {
     # **根拠のない厳しさは本当の問題を隠す**（#50）
     "hole_to_hole": 0.45,
     "edge_clearance": 0.30,   # 銅から外形まで
-    "silk_width": 0.15,       # シルク最小線幅。KiCad 標準の 0.12 はかすれる
+    # シルクの最小線幅（pcb.py が文字の太さの下限に使う）。KiCad 標準の 0.12 はかすれる。
+    # `.kicad_pro` では min_silk_clearance（シルクと外形・パッドの**距離**）に流用している——線幅の規則ではない
+    "silk_width": 0.15,
+    # シルクの文字の高さ・太さの下限（JLC の PCB Capabilities: 文字の高さ 1.0 以上・線 0.15 以上）。
+    # 前は KiCad の既定（0.8・0.08）のままで、1 段小さい字を置いても DRC が黙った（CCKB 4 回目の監査 C 軽微 3）
+    "text_height_min": 1.0,
+    "text_thickness_min": 0.15,
+    # 穴と銅の距離（min_hole_clearance）は KiCad の既定 0.25 のまま。JLC は PTH と線 0.28・NPTH と銅 0.2 と分けて
+    # いるが、KiCad の規則は 1 つの値で両方を見る。0.28 にすると NPTH のまわりのベタ（CCKB で 0.25）まで違反に
+    # なり、塗り直すと銅が変わる。CCKB の PTH と線の最小は 0.742（4 回目の監査 C）
     "annular_ring": 0.13,     # KiCad 既定 0.1 では足りない
 }
 
@@ -64,6 +73,8 @@ def sync_project_rules(pcb_path, severities=None):
         "min_hole_to_hole": JLC["hole_to_hole"],
         "min_copper_edge_clearance": JLC["edge_clearance"],
         "min_silk_clearance": JLC["silk_width"],
+        "min_text_height": JLC["text_height_min"],
+        "min_text_thickness": JLC["text_thickness_min"],
         "min_via_annular_width": JLC["annular_ring"],
     })
     for kind, sev in (severities or {}).items():

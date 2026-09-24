@@ -265,6 +265,25 @@ def test_the_warning_count_notices_a_label_on_the_edge(tmp_path):
     assert r["warning_kinds"].get("silk_edge_clearance", 0) > 3, r["warning_kinds"]
 
 
+def test_the_drc_notices_silk_text_below_the_jlc_minimum(tmp_path):
+    """**壊して落ちることを示す。**板の写しに JLC の下限（文字の高さ 1.0・線 0.15）より小さい 0.9/0.1 の文字を
+    置くと、DRC が text_height・text_thickness を出す（前は KiCad の既定 0.8・0.08 のままで黙った・
+    4 回目の監査 C 軽微 3。規則は foundry.pcb_rules.JLC が .kicad_pro に書く）。"""
+    from foundry import drc
+
+    require(paths.KICAD_CLI, "DRC")
+    for suf in (".kicad_pcb", ".kicad_pro"):
+        shutil.copy(BOARD.with_suffix(suf), tmp_path / ("x" + suf))
+    t = (tmp_path / "x.kicad_pcb").read_text()
+    label = ('(gr_text "SMALL" (at 150 100 0) (layer "F.SilkS") '
+             '(effects (font (size 0.9 0.9) (thickness 0.1))))\n')
+    i = t.rindex(")")
+    (tmp_path / "x.kicad_pcb").write_text(t[:i] + label + t[i:])
+    r = drc.run(tmp_path / "x.kicad_pcb")
+    kinds = set(r["warning_kinds"]) | set(r["violation_kinds"])
+    assert {"text_height", "text_thickness"} <= kinds, r
+
+
 def test_the_project_downgrades_no_drc_rule():
     """前は電源スイッチ（裏）の位置決めの穴がホルダのコートヤードの下に来るので npth_inside_courtyard を
     警告に下げていた。2026-09-24 に表のスルーホールの SS-12D00G3 に替えて穴が無くなったので、下げない
@@ -520,8 +539,10 @@ def firmware_problems(facts, overlay_text):
             out.append(f"{chip} の SH_CP が XIAO の SCK でない")
         if net.get((chip, pinmap.resolve("74LVC595", "ST_CP"))) != net.get(("U_MCU", f"D{cs}")):
             out.append(f"{chip} の ST_CP が overlay の CS（D{cs}）でない")
-    # 電池の電圧: adc 0 = AIN0 = P0.02 = D0（zmk-and-xiao.md「ADC は D0〜D5 だけ（P0.02/03/28/29/04/05）」）
-    ain = {0: "D0", 1: "D1", 4: "D2", 5: "D3", 7: "D4", 2: "D5"}.get(adc)
+    # 電池の電圧: adc 0 = AIN0 = P0.02 = D0（zmk-and-xiao.md「ADC は D0〜D5 だけ（P0.02/03/28/29/04/05）」）。
+    # nRF52840: P0.02 = AIN0・P0.03 = AIN1・P0.28 = AIN4・P0.29 = AIN5・P0.04 = AIN2・P0.05 = AIN3
+    # （AIN7 = P0.31 は XIAO の中の分圧。前は D4・D5 を 7・2 と書いていた・4 回目の監査 F 軽微 1）
+    ain = {0: "D0", 1: "D1", 4: "D2", 5: "D3", 2: "D4", 3: "D5"}.get(adc)
     if adc != 0 or net.get(("U_MCU", ain)) != "VBAT_SENSE":
         out.append(f"電池の電圧 adc {adc} → {ain} が VBAT_SENSE でない")
     return out
