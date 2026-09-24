@@ -329,11 +329,17 @@ class Interface:
         return (min(a[0], b[0]), min(a[1], b[1]), max(a[2], b[2]), max(a[3], b[3]))
 
     def psw_tip_range(self):
-        """レバーの先の高さ (最低, 名目, 最高)。本体の高さ ±PSW_H_TOL と X ±PSW_LEVER_H_TOL を積む
-        （爪の出 PSW_TAB は [暫定] の 1 つの値。届いたら測る）。"""
+        """レバーの先の高さ (最低, 名目, 最高)。本体の高さ ±PSW_H_TOL と X ±PSW_LEVER_H_TOL に加え、
+        基板の厚さの公差 ±PCB_T_TOL_ABS を積む（爪の出 PSW_TAB は [暫定] の 1 つの値。届いたら測る）。
+
+        **なぜ基板の厚さが効くか**: ケース（トレイの床の柱・ふたの縁）は名目の積み上げ（z()）どおりに
+        刷った 1 つの立体で、基板の実物の厚さでは動かない。基板は床のボスに**下面**で載る（pcb_bottom は
+        床から固定）ので、基板が厚いほど上面（スイッチが載る面）が名目より高くなり、レバーの先は
+        刷ったふたに対して相対的に上がる（ふたの縁 rim は名目の PCB_T で計算した位置のまま動かない）。
+        """
         s = self.s
         tip = self.z()["psw_tip"]
-        d = s.PSW_H_TOL + s.PSW_LEVER_H_TOL
+        d = s.PSW_H_TOL + s.PSW_LEVER_H_TOL + s.PCB_T_TOL_ABS
         return (tip - d, tip, tip + d)
 
     def lid_pillar(self):

@@ -7,6 +7,7 @@ HHKB で状態 LED は「ソースがある・CMake が足す・.conf で =y」�
 import re
 import subprocess
 
+import pytest
 import yaml
 
 from conftest import ROOT
@@ -44,7 +45,16 @@ def test_the_module_is_registered():
 
 
 def test_no_hhkb_identifier_is_left_after_the_rename():
-    """**置き換えたら、置き換えられた方の名前で grep する**（HHKB で 4 回踏んだ）。"""
+    """**置き換えたら、置き換えられた方の名前で grep する**（HHKB で 4 回踏んだ）。
+
+    `git ls-files` で追跡ファイルだけを見る（.DS_Store のような未追跡ファイルは除外）。
+    `.git` の無いチェックアウト（`git archive` で書き出した監査用の作業ツリーなど）では
+    `git ls-files` 自体が使えないので、その場合はこの検査だけ skip する
+    （tracked files を全部スキャンする、という前提が成り立たないと分かった上で飛ばす。
+    監査 audit-psw.md「git archive で /tmp に出したら git ls-files が失敗した」への対応）。
+    """
+    if not (ROOT / ".git").exists():
+        pytest.skip(".git が無いチェックアウト（git archive など）。git ls-files が使えない")
     # git が追跡するファイルだけをスキャン（.DS_Store のような未追跡ファイルは除外）
     result = subprocess.run(
         ["git", "ls-files", "firmware"],

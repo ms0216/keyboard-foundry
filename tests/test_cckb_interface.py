@@ -245,6 +245,29 @@ def test_the_corner_check_notices_a_break(over, expect):
     assert any(expect in b for b in bad), bad
 
 
+def test_the_psw_tip_worst_case_includes_pcb_thickness_tolerance(ifc):
+    """重要 1（監査 audit-psw.md）: 基板は床のボスに**下面**で載り、ふた（rim）は名目の積み上げで
+    刷った固定の立体。基板が厚いほど、その分だけレバーの先はふたに対して相対的に上がる。
+    最悪値は本体 ±PSW_H_TOL・レバー ±PSW_LEVER_H_TOL に基板の厚さ ±PCB_T_TOL_ABS（JLC 1.6mm ±10% = 0.16）
+    を足した +0.36（ふたの上面から出る）。"""
+    s = ifc.s
+    z = ifc.z()
+    lo, nom, hi = ifc.psw_tip_range()
+    assert hi == pytest.approx(z["rim"] + 0.36, abs=1e-9)
+    assert s.PCB_T_TOL_ABS == pytest.approx(0.16, abs=1e-9)
+
+
+def test_the_psw_tip_worst_case_check_notices_a_missing_pcb_term():
+    """基板の厚さの項を抜くと、最悪値が小さくなりすぎる（重要 1 の直しが効いていることの確認）。"""
+    ifc = ifc_with()
+    z = ifc.z()
+    lo, nom, hi = ifc.psw_tip_range()
+    d_without_pcb = ifc.s.PSW_H_TOL + ifc.s.PSW_LEVER_H_TOL
+    hi_without_pcb = z["psw_tip"] + d_without_pcb
+    assert hi > hi_without_pcb  # 直した版は必ずより出っ張る側に出る
+    assert hi - hi_without_pcb == pytest.approx(ifc.s.PCB_T_TOL_ABS, abs=1e-9)
+
+
 def test_the_left_cover_screw_keeps_5mm_from_the_antenna(ifc):
     """H3（左のふたのネジ）の鋼のネジとアンテナのチップの間（HHKB の要件 5mm・rf-antenna.md）。"""
     chip = ifc.antenna_chip()
