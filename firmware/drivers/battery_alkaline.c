@@ -110,10 +110,14 @@ static int alk_sample_fetch(const struct device *dev, enum sensor_channel chan) 
  * なりうる**（電圧は新しく、% は古い、など）。ロックは置いていない。
  *
  * いま成立している理由は 2 つだけ:
- *   - 読み手は zmk_battery_state_changed の listener で、ZMK が測った
- *     直後に呼ばれる（firmware/src/low_battery_off.c の冒頭のコメント）
- *   - その listener は**電圧しか読まない**ので、そもそも 2 値の
+ *   - 読み手は 2 つで、どちらも**自分で fetch した直後に**読む: ZMK の
+ *     app/src/battery.c（% を読む）と firmware/src/low_battery_off.c（電圧を
+ *     読む）。どちらも ZMK の低優先の work queue で回るので、fetch と
+ *     channel_get の間にもう一方の fetch は挟まらない
+ *   - low_battery_off.c は**電圧しか読まない**ので、そもそも 2 値の
  *     整合を必要としていない
+ *   （2026-09-25 まで low_battery_off.c は fetch せずキャッシュを読んでいた。
+ *   アイドル中は ZMK が測らないので古い 1 回を数えた。その冒頭のコメント）
  *
  * ⚠️ **電圧と % を一緒に使う読み手を足すときは、ここを見直すこと。**
  * その時点でこの前提は崩れる（2 値を 1 回のクリティカルセクションで

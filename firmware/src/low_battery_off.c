@@ -12,9 +12,21 @@
  *
  * どう止めるか:
  *   ZMK が電池を測る周期（ZMK_BATTERY_REPORT_INTERVAL・既定 60 秒）と
- *   同じ周期の自前タイマーで、**driver がキャッシュしている電圧**を読む
- *   （ADC を余分に回さない）。打ち止め（devicetree の empty-millivolts）を
- *   下回った状態が規定回数続いたら zmk_pm_soft_off() に入る。
+ *   同じ周期の自前タイマーで、**毎回自分で測ってから**電圧を読む。
+ *   打ち止め（devicetree の empty-millivolts）を下回った状態が規定回数
+ *   続いたら zmk_pm_soft_off() に入る。
+ *
+ *   ⚠️ 2026-09-25 まで driver のキャッシュを読むだけだった（「ZMK が同じ周期で
+ *   fetch 済み」）。ZMK はアイドル（キーを 30 秒押さない）とスリープで測定の
+ *   タイマーを止める（ZMK app/src/battery.c の battery_event_listener:
+ *   ZMK_ACTIVITY_IDLE・SLEEP で k_timer_stop(&battery_timer)。main af96766 で確認）。
+ *   そのためアイドル中は**最後の 1 回の測定**を何度も数え、送信中の一時的な
+ *   降下 1 回で止まりえた（CCKB 4 回目の監査 F 重要 1）。起動直後にキーを
+ *   押さなければ、起動の瞬間の 1 回を 2 回と数えていた。
+ *   測る費用は 60 秒に 1 回の SAADC の変換（40µs × 4 の平均）。ZMK の測定と
+ *   同じ低優先の work queue で回すので、fetch と channel_get の間に ZMK の
+ *   fetch が割り込まない（battery_alkaline.c の alk_channel_get の注記）。
+ *   検査: tests/test_firmware.py（ホストの代役の上でこのファイルを回す）。
  *
  *   ⚠️ 2026-09-03 まで zmk_battery_state_changed を待ち受けていたが、
  *   ZMK 本体（app/src/battery.c）はその事象を **% が変わったときしか
@@ -27,7 +39,7 @@
  *   soft off し、浮けば残量の表示が狂うだけ。どちらにしても USB 給電中は数えない。
  *
  * 復帰:
- *   電池を替えれば、背面の電源スイッチが電池を機械的に切り離しているので
+ *   電池を替えれば、電源スイッチが電池を機械的に切り離しているので
  *   入れ直しで起動する。soft off の wake ピンには依存しない。
  *
  * ⚠️ **これはビルドが通っているだけで、実機では一度も動かしていない。**
@@ -72,10 +84,15 @@ static void low_battery_check(struct k_work *work) {
     }
 #endif
 
-    /* **測り直さない。**ZMK が同じ周期で fetch 済みなので、driver の
-     * キャッシュを読むだけでよい。ADC をもう一度回すと電池を余分に使う。 */
+    /* **毎回測り直す。**キャッシュは ZMK がアイドルに入る前の古い測定のことがある
+     * （冒頭のコメント）。数えるのは、いま測った値だけ。 */
+    int rc = sensor_sample_fetch_chan(battery, SENSOR_CHAN_GAUGE_VOLTAGE);
+    if (rc != 0) {
+        LOG_WRN("電池電圧を測れない (%d)。判定を飛ばす", rc);
+        return;
+    }
     struct sensor_value voltage;
-    int rc = sensor_channel_get(battery, SENSOR_CHAN_GAUGE_VOLTAGE, &voltage);
+    rc = sensor_channel_get(battery, SENSOR_CHAN_GAUGE_VOLTAGE, &voltage);
     if (rc != 0) {
         LOG_WRN("電池電圧が読めない (%d)。判定を飛ばす", rc);
         return;
@@ -109,7 +126,7 @@ static void low_battery_tick(struct k_timer *timer) {
 K_TIMER_DEFINE(low_battery_timer, low_battery_tick, NULL);
 
 static int low_battery_init(void) {
-    /* 最初の 1 周は待つ。ZMK がまだ一度も測っていないと、キャッシュは 0mV。 */
+    /* 最初の 1 周は待つ（起動の瞬間は BLE の立ち上げと重なる。判定は起動の 65 秒後から）。 */
     k_timer_start(&low_battery_timer, K_SECONDS(CONFIG_ZMK_BATTERY_REPORT_INTERVAL + 5),
                   K_SECONDS(CONFIG_ZMK_BATTERY_REPORT_INTERVAL));
     return 0;
