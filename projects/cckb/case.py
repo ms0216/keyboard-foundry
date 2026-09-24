@@ -7,7 +7,7 @@
   - 床から立つもの: 取付のボス φ5.6（10）、支えの柱 φ3.0（38）、右の角のふたの柱 φ5.2（インサート）
   - 左の壁: XIAO の USB-C の口（上に開いた切り欠き。上は左のふたの舌が塞ぐ）
   - 右の壁: 電源スイッチのつまみの切り欠き（同上。右のふたのひれが塞ぐ）＋外面の指の窪み
-  - 床の裏の四隅: 滑り止めのくぼみ
+  - 床の裏の四隅: 滑り止めのくぼみ（その上だけ床を厚くした島。裏に出る物の下を避けて置く）
   - 左のふた: 天板＋キー側の垂れ壁＋USB の舌＋H3 のボス（インサート。下からのネジで基板に締める）
   - 右のふた（電池のふた）: 天板＋キー側の垂れ壁 2 辺＋つまみのひれ＋柱に当たるボス。
     上からの M2 皿ネジ 1 本で柱のインサートへ。**ネジはふたの膜に捕まって落ちない**
@@ -139,8 +139,8 @@ class Case:
         o = self.i.case_outer
         y = self.s.PSW_AT[1]
         w = self.c.PSW_SCOOP_W / 2
-        z0, z1 = self.c.PSW_SCOOP_Z
-        return (o[2] - self.s.PSW_SCOOP, y - w, z0, o[2] + 1.0, y + w, z1)
+        z1 = self.z["pcb_bottom"] + self.c.LID_DROP_GAP     # 右のふたのひれの下端に揃える
+        return (o[2] - self.s.PSW_SCOOP, y - w, self.c.PSW_SCOOP_Z0, o[2] + 1.0, y + w, z1)
 
     def pillar_top(self):
         return self.z["lid_bottom"] - self.c.LID_BOSS_H
@@ -149,15 +149,13 @@ class Case:
         return self.z["lid_bottom"] - (self.c.LID_L_WALL_GAP if side == "left" else 0.0)
 
     def antislip_pads(self):
-        """滑り止めのくぼみの矩形 4 つ（左奥・左手前・右奥・右手前）。"""
-        o = self.i.case_outer
+        """滑り止めのくぼみの矩形 4 つ（左奥・左手前・右奥・右手前。case_spec.ANTISLIP_AT）。"""
         w, h = self.c.ANTISLIP_PAD
-        e = self.c.ANTISLIP_INSET
-        out = []
-        for x0 in (o[0] + e, o[2] - e - w):
-            for y0 in (o[3] - e - h, o[1] + e):
-                out.append((x0, y0, x0 + w, y0 + h))
-        return out
+        return [(x - w / 2, y - h / 2, x + w / 2, y + h / 2) for x, y in self.c.ANTISLIP_AT]
+
+    def antislip_islands(self):
+        """くぼみの所だけ床を厚くした島の矩形（くぼみ ＋ ANTISLIP_ISLAND）。上面は z の island_top。"""
+        return [I.grow(r, self.c.ANTISLIP_ISLAND) for r in self.antislip_pads()]
 
     def seam_regions(self):
         """継ぎ目の左右の領域（SEAM_GAP の半分ずつ引いた多角形）。"""
@@ -191,6 +189,8 @@ class Case:
         s, c, z, i = self.s, self.c, self.z, self.i
         o, w = i.case_outer, i.wall_inner
         body = rounded(o, self.r_out, 0.0, z["rim"]) - rounded(w, self.r_in, z["floor_top"], z["rim"] + 1)
+        # 滑り止めのくぼみの所の島（くぼみの下にも床 CASE_FLOOR を残す）
+        body = body.fuse(*[rbox(r, z["floor_top"] - 0.1, z["island_top"]) for r in self.antislip_islands()])
         cut = []
         # 角: ふたが載る所の壁を下げる（ふたの縁の内側 2 辺に FIT/2 の隙）
         for side in ("left", "right"):
@@ -214,7 +214,7 @@ class Case:
         px, py = s.LID_PILLAR_AT
         posts.append(cyl(px, py, z["floor_top"] - 0.1, self.pillar_top(), s.LID_PILLAR_D))
         body = body.fuse(*posts)
-        holes = [self.screw_seat(x, y, s.SCREW_SINK) for x, y in i.mounts()]
+        holes = [self.screw_seat(x, y, z["screw_head"]) for x, y in i.mounts()]
         top = self.pillar_top()
         holes.append(cyl(px, py, top - c.INSERT_L - c.INSERT_HOLE_EXTRA, top + 1, c.INSERT_HOLE_D))
         return (body - fuse(holes)).clean()

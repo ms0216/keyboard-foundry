@@ -94,7 +94,7 @@ def nut_coupon(cs=CS, sw=CHOC_V1):
 
 
 def insert_coupon(spec, cs=CS):
-    """床 1.6 の上に、柱（下穴を比べる）と、膜のボス（ネジを捕まえる穴を比べる）。"""
+    """床（spec.CASE_FLOOR）の上に、柱（下穴を比べる）と、膜のボス（ネジを捕まえる穴を比べる）。"""
     base_t = spec.CASE_FLOOR
     pitch = 9.0
     n = len(cs.COUPON_INSERT_HOLES) + len(cs.COUPON_CAPTIVE_HOLES)

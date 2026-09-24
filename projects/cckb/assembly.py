@@ -467,7 +467,7 @@ class Assembly:
                      cyl(x, y, head_z + s.SCREW_HEAD_H - 0.01, head_z + s.SCREW_L, c.SCREW_D)])
 
     def screws(self):
-        return [self.screw_up(x, y, self.s.SCREW_SINK) for x, y in self.i.mounts()]
+        return [self.screw_up(x, y, self.z["screw_head"]) for x, y in self.i.mounts()]
 
     def screw_lid(self):
         s, c = self.s, self.c
@@ -557,7 +557,8 @@ def path_problems(asm, g):
     check("cell", solids_of(g["cell"]), rest("cell", "lid_R", "screw_lid"))
     check("usb_plug", solids_of(g["usb_plug"]), rest("usb_plug") + ["desk"])
     # 下からのネジ: ネジと、その下のドライバーの軸
-    drv = [cyl(x, y, asm.s.SCREW_SINK - 40, asm.s.SCREW_SINK, asm.c.DRIVER_D) for x, y in asm.i.mounts()]
+    head = asm.z["screw_head"]
+    drv = [cyl(x, y, head - 40, head, asm.c.DRIVER_D) for x, y in asm.i.mounts()]
     check("screws", solids_of(g["screws"]) + drv, rest("screws", "nuts", "inserts"))
     check("keycaps", solids_of(g["keycaps"]), rest("keycaps", "switches"))
     return out
@@ -828,7 +829,7 @@ def retention_problems(asm, g):
     if common_volume(moved(g["lid_R"], (0, 0, 0.5)), g["screw_lid"]) <= 1e-3:
         bad.append("右のふたを 0.5 持ち上げてもネジの頭に当たらない")
     # ねじ込みの長さ（M2 のピッチ 0.4 で 3 山 = 1.2 以上）
-    tip = s.SCREW_SINK + s.SCREW_L
+    tip = z["screw_head"] + s.SCREW_L
     if tip < z["pcb_top"] + s.NUT_T:
         bad.append(f"キーの下のネジの先 {tip:.2f} がナットの上面に届かない")
     if tip - z["pcb_top"] < 1.2:
@@ -865,6 +866,40 @@ def pad_problems(asm):
             if I.circle_rect_gap(m, r, p) < c.ANTISLIP_INSET]
 
 
+# 滑り止めの島（上面 island_top 1.6）と、基板の裏に出る物の平面の隙の下限。島の上面は足の先の最悪
+# （1.34）・電源スイッチの下面（1.55）・裏の部品の包絡の下面（1.55）より高いので、上に来てはいけない
+ISLAND_CLEAR = 0.5
+
+
+def island_problems(asm):
+    """滑り止めの島（case.antislip_islands）の上に、基板の裏に出る物が無いか（平面で ISLAND_CLEAR 未満）。
+
+    裏に出る物: スイッチの穴（足・突起。SW\\d+）と電源スイッチ（SW_PWR）のパッド、裏の表面実装のパッド、
+    裏のコートヤード（取付の穴 H\\d+ は除く）、スタビのハウジング。**板の形（発注する板）から読む**。
+    組み立ての干渉の検査は隙 0 で当たるかを見る。これは余裕を見る。
+    """
+    obs = []
+    for p in asm.geo["pads"]:
+        if re.fullmatch(r"SW\d+|SW_PWR", p["ref"]) or (p["back"] and p["drill"] == 0):
+            obs.append((f"{p['ref']} のパッド", p["box"]))
+    for f in asm.geo["footprints"]:
+        cy = f["courtyard"].get("back")
+        if cy and not re.fullmatch(r"H\d+", f["ref"]):
+            obs.append((f"{f['ref']} の裏のコートヤード", cy))
+    for k, h in enumerate(asm.i.stab_housings()):
+        xs, ys = [q[0] for q in h], [q[1] for q in h]
+        obs.append((f"スタビ {k}", (min(xs), min(ys), max(xs), max(ys))))
+    bad = []
+    for k, r in enumerate(asm.case.antislip_islands()):
+        for name, b in obs:
+            dx = max(b[0] - r[2], r[0] - b[2], 0.0)
+            dy = max(b[1] - r[3], r[1] - b[3], 0.0)
+            gap = math.hypot(dx, dy) if (dx > 0 or dy > 0) else -1.0
+            if gap < ISLAND_CLEAR:
+                bad.append((k, name, round(gap, 3)))
+    return bad
+
+
 def render_all(asm, g, out):
     """断面と分解図を out/ に書く。返り値は書いた絵のパス。"""
     s, z = asm.s, asm.z
@@ -872,6 +907,9 @@ def render_all(asm, g, out):
     (px, py), _ = asm.i.lid_pillar()
     back, front = s.CASE_SEAM
     m0 = asm.i.mounts()[0]
+    pads = asm.case.antislip_pads()
+    pad_x = (pads[0][0] + pads[0][2]) / 2
+    pad_fr_y = (pads[3][1] + pads[3][3]) / 2
     zs = (-1.5, 16.0)
     shots = [
         ("section_left_corner_usb", ("y", s.XIAO_AT[1]), (-152, -108), "左の角: XIAO・USB-C のメスとプラグ・左のふた（舌）"),
@@ -884,6 +922,10 @@ def render_all(asm, g, out):
         ("section_seam_wall", ("x", (back + front) / 2), (-52, 52), "継ぎ目の段（y=0）を横から"),
         ("section_stab_space", ("y", -38.1), (-65, -25), "スタビのキー（左のスペース）: ハウジング・逃げ穴・床"),
         ("section_mount_h0", ("y", m0[1]), (m0[0] - 12, m0[0] + 12), "取付 H0: 皿ネジ・ボス・基板・ナット・プレートの六角の穴"),
+        ("section_antislip_island", ("x", pad_x), (18, 52),
+         "左奥の滑り止め: 床 1.2・くぼみの所だけ島（上面 1.6）・上下の段のスイッチの足"),
+        ("section_antislip_island_front_right", ("y", pad_fr_y), (112, 150),
+         "右手前の滑り止め: 島と電源スイッチ（島は電源スイッチの手前で止める）"),
     ]
     paths_ = []
     for name, plane, span, title in shots:
@@ -945,7 +987,9 @@ def main():
     print("経路:", paths_bad or "0")
     overlaps_bad = expected_overlaps_ok(asm, g)
     print("設計どおりの重なり:", overlaps_bad or "OK")
-    ng = bool(bad or failed or paths_bad or overlaps_bad)
+    islands_bad = island_problems(asm)
+    print("滑り止めの島の上:", islands_bad or "0")
+    ng = bool(bad or failed or paths_bad or overlaps_bad or islands_bad)
     for p in render_all(asm, g, out):
         print("   ", p)
     b = export_blend(g, out)

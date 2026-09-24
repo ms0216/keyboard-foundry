@@ -260,14 +260,19 @@ def z_problems(ifc):
     if z["rim"] < z["keycap_bottomed"]:
         out.append("縁が押し切ったキャップより低い")
     # 下からのネジ: 先端がナットを抜け、プレートの上面を越えない
-    tip = s.SCREW_SINK + s.SCREW_L
-    if not (z["pcb_top"] + s.NUT_T <= tip <= z["plate_top"] - 0.1):
+    tip = z["screw_head"] + s.SCREW_L
+    if not (z["pcb_top"] + s.NUT_T <= tip + 1e-9 and tip <= z["plate_top"] - 0.1 + 1e-9):
         out.append(f"ネジの先 {tip:.2f}（ナット上面 {z['pcb_top'] + s.NUT_T:.2f}〜"
                    f"プレート上面 {z['plate_top']:.2f}）")
-    if s.SCREW_SINK < 0.5 or s.SCREW_SINK + s.SCREW_HEAD_H > z["pcb_bottom"] - 1.2:
+    # 皿の頭: 机から 0.5 以上沈み、頭の上（ボスの中）に 1.2 残る。頭の座は床 1.2 より上まで来るが、
+    # 取付のボス φ5.6（床から基板の下面まで中身が詰まった柱）の中に入る（断面 section_mount_h0）
+    if z["screw_head"] < 0.5 - 1e-9 or z["screw_head"] + s.SCREW_HEAD_H > z["pcb_bottom"] - 1.2 + 1e-9:
         out.append("皿の座ぐりの深さ")
-    if s.CASE_FLOOR - s.ANTISLIP_RECESS < 1.2 or s.ANTISLIP_SHEET_T <= s.ANTISLIP_RECESS:
-        out.append("滑り止め（床の残りか、シートが接地しない）")
+    if s.CASE_FLOOR < 1.2 - 1e-9 or z["island_top"] - s.ANTISLIP_RECESS < 1.2 - 1e-9 \
+            or s.ANTISLIP_SHEET_T <= s.ANTISLIP_RECESS:
+        out.append("滑り止め（床・島の残りか、シートが接地しない）")
+    if z["keycap_top"] > 13.8 + 1e-9:
+        out.append(f"全体の厚さ {z['keycap_top']:.2f} が利用者の決めた 13.8 を超える（O10）")
     return out
 
 
@@ -279,8 +284,13 @@ def test_the_z_stack_holds(ifc):
     (dict(UNDER_PCB=1.5), "足の先"),
     (dict(PSW_H=1.7), "電源スイッチ"),
     (dict(STAB_HOUSING_H=5.9), "スタビ"),
-    (dict(SCREW_L=8), "ネジの先"),
-    (dict(SCREW_SINK=0.2), "ネジの先"),
+    (dict(SCREW_L=8), "皿の座ぐり"),          # 頭の沈めは先から導くので、長いネジは頭が机の下へ出る
+    (dict(SCREW_L=5), "皿の座ぐり"),          # 短いネジは頭がボスの上の肉を食う
+    (dict(SCREW_PAST_NUT=-0.2), "ネジの先"),
+    (dict(SCREW_PAST_NUT=0.8), "ネジの先"),
+    (dict(SCREW_PAST_NUT=0.2), "皿の座ぐり"),
+    (dict(CASE_FLOOR=1.0), "滑り止め"),
+    (dict(CASE_FLOOR=1.6), "全体の厚さ"),
     (dict(ANTISLIP_SHEET_T=0.4), "滑り止め"),
     (dict(RIM_ABOVE_PCB=5.5), "縁"),
 ])

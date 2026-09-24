@@ -168,7 +168,9 @@ class Interface:
         plate_top = top + s.PLATE_TOP_ABOVE_PCB
         rim = top + s.RIM_ABOVE_PCB
         return dict(
-            floor_top=s.CASE_FLOOR, pcb_bottom=pcb_bot, pcb_top=top,
+            floor_top=s.CASE_FLOOR, island_top=s.CASE_FLOOR + s.ANTISLIP_RECESS,
+            screw_head=top + s.NUT_T + s.SCREW_PAST_NUT - s.SCREW_L,
+            pcb_bottom=pcb_bot, pcb_top=top,
             plate_bottom=plate_top - self.sw.plate_t, plate_top=plate_top,
             switch_top=top + s.SWITCH_TOP_ABOVE_PCB, stem_top=top + s.SWITCH_STEM_ABOVE_PCB,
             keycap_top=top + s.SWITCH_STEM_ABOVE_PCB + s.KEYCAP_TOP_T,
@@ -370,7 +372,7 @@ class Interface:
         # ナットはネジに噛んで回る（外接円）。ネジは穴の中で (HOLE_D − SCREW_D)/2 ずれうる。
         # プレートの六角の穴の外接円も越えられない。大きい方
         r_nut = max(hex_r(s.NUT_AF) + (HOLE_D - c.SCREW_D) / 2, hex_r(s.MOUNT_POCKET_AF))
-        head = (s.SCREW_SINK, s.SCREW_SINK + s.SCREW_HEAD_H)      # 下からの皿ネジの頭（トレイの中）
+        head = (z["screw_head"], z["screw_head"] + s.SCREW_HEAD_H)  # 下からの皿ネジの頭（トレイの中）
         out = []
         for i, m in enumerate(self.mounts()):
             ref = f"H{i}"

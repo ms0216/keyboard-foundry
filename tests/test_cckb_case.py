@@ -398,6 +398,64 @@ def test_the_pad_check_notices_a_pad_over_a_screw(geo):
     assert A.pad_problems(a)
 
 
+# ---------------------------------------------------------------------------
+# 床 1.2 と滑り止めの島（2026-09-24 利用者の決定・O10。決定記録 2026-09-24-interface.md §2-5）
+# ---------------------------------------------------------------------------
+
+OLD_CORNER_PADS = ((-133.975, 41.725), (-133.975, -41.725), (133.975, 41.725), (133.975, -41.725))
+
+
+def floor_runs(asm, tray_l):
+    """左のトレイの床を下から刺して測る {所: 材料の厚さ}（最初の材料）。"""
+    m = A.mesh_of(tray_l)
+    isl = I.grow(asm.case.antislip_pads()[0], asm.c.ANTISLIP_ISLAND)     # 島を消した形でも同じ所を刺す
+    pad = asm.case.antislip_pads()[0]
+    pts = {"床": (-60.3, 30.3), "くぼみ": ((pad[0] + pad[2]) / 2, (pad[1] + pad[3]) / 2),
+           "島の縁": ((pad[0] + isl[0]) / 2, (pad[1] + pad[3]) / 2)}
+    out = {}
+    for k, (x, y) in pts.items():
+        r = A.material_runs(m, (x, y, -5), (0, 0, 1))
+        out[k] = round(r[0][1] - r[0][0], 4) if r else 0.0
+    return out
+
+
+def test_the_floor_is_1_2_with_1_6_islands_at_the_pads(asm):
+    """床 1.2・島の縁 1.6（島の上面）・くぼみの下 1.2。**生成した立体を刺して**測る。"""
+    z = asm.z
+    got = floor_runs(asm, asm.printed()["tray_L"])
+    assert abs(z["floor_top"] - 1.2) < 1e-9 and abs(z["island_top"] - 1.6) < 1e-9
+    assert got == {"床": 1.2, "くぼみ": 1.2, "島の縁": 1.6}, got
+    assert len(asm.case.antislip_islands()) == 4
+
+
+def test_the_floor_check_notices_missing_islands(geo):
+    """島を消すと、くぼみの下が 1.2 − 0.4 = 0.8 になって落ちる。"""
+    a = A.Assembly(geo)
+    a.case.antislip_islands = lambda: []
+    got = floor_runs(a, a.printed()["tray_L"])
+    assert abs(got["くぼみ"] - 0.8) < 1e-3 and got["島の縁"] < 1.6 - 1e-3, got
+
+
+def test_the_antislip_islands_keep_clear_of_the_back_of_the_board(asm):
+    """島（上面 1.6）の上に、基板の裏に出る物（足の先の最悪 1.34・電源スイッチ 1.55）が来ない。平面で 0.5 以上。"""
+    assert A.island_problems(asm) == []
+
+
+def test_the_island_check_notices_the_old_corner_pads(geo):
+    """前の四隅（外面から 3.0・16 × 10）に戻すと、Esc / BS の足と電源スイッチの下に島が入る。"""
+    a = A.Assembly(geo, cs=cs_with(ANTISLIP_AT=OLD_CORNER_PADS, ANTISLIP_PAD=(16.0, 10.0)))
+    names = {n for _, n, _ in A.island_problems(a)}
+    assert {"SW1 のパッド", "SW15 のパッド", "SW_PWR の裏のコートヤード"} <= names, names
+
+
+@pytest.mark.slow
+def test_the_interference_check_notices_an_island_under_the_pins(geo):
+    """同じ壊し方で、組み立ての干渉（隙 0）も島とスイッチの足・電源スイッチを捕まえる。"""
+    a = A.Assembly(geo, cs=cs_with(ANTISLIP_AT=OLD_CORNER_PADS, ANTISLIP_PAD=(16.0, 10.0)))
+    bad = A.interference(slim(a, ["tray_L", "tray_R", "switches", "psw"]))
+    assert ("tray_L", "switches") in bad and ("tray_R", "switches") in bad and ("tray_R", "psw") in bad, bad
+
+
 def test_the_stab_housing_stays_off_the_floor(asm):
     """O2: スタビのハウジングの下端は床の上に空きがある → 床に穴は要らない（厚くもしない）。"""
     z = asm.z

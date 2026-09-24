@@ -141,7 +141,7 @@ def left_corner(ifc):
         ((c[2], alt_x + 12, z["plate_bottom"], z["plate_top"]), dict(fc="#ddb", ec="k", lw=0.4)),
     ]
     section_rects(a2, items)
-    a2.plot([s.MOUNTS["main"][3][0]] * 2, [0.9, z["pcb_top"] + 1.9], color="k", lw=2)
+    a2.plot([s.MOUNTS["main"][3][0]] * 2, [z["screw_head"], z["screw_head"] + s.SCREW_L], color="k", lw=2)
     a2.axhline(0, color="k", lw=1)
     for name in ("pcb_top", "plate_top", "rim", "keycap_top"):
         a2.axhline(z[name], color="0.6", lw=0.3, ls=":")
@@ -255,6 +255,8 @@ def zstack(ifc):
     kx = px - sd * 12.0
     items = [
         ((kx - 20, px + 12, 0, s.CASE_FLOOR), dict(fc="0.85", ec="k", lw=0.5)),
+        # 参考: 滑り止めの島（四隅だけ。この断面には無い）の上面。破線
+        ((px + 4, px + 12, s.CASE_FLOOR, z["island_top"]), dict(fill=False, ec="b", lw=0.6, ls="--")),
         ((kx - 20, px + 12, z["pcb_bottom"], z["pcb_top"]), dict(fc="#6b6", ec="k", lw=0.5)),
         ((kx - 20, px + 12, z["plate_bottom"], z["plate_top"]), dict(fc="#ddb", ec="k", lw=0.5)),
         ((kx - 6.9, kx + 6.9, z["pcb_top"], z["plate_top"]), dict(fc="0.7", ec="k", lw=0.4)),
@@ -270,7 +272,7 @@ def zstack(ifc):
     ]
     section_rects(ax, items)
     for name, v in sorted(z.items(), key=lambda kv: kv[1]):
-        if name in ("xiao_top", "holder_top", "usb_center", "lid_bottom", "psw_bottom"):
+        if name in ("xiao_top", "holder_top", "usb_center", "lid_bottom", "psw_bottom", "island_top"):
             continue
         ax.axhline(v, color="0.6", lw=0.3, ls=":")
         ax.text(px + 12.5, v, f"{name} {v:.2f}", fontsize=7, va="center")
@@ -278,6 +280,8 @@ def zstack(ifc):
     worst = z["pcb_bottom"] + s.PCB_T * (1 - s.PCB_T_TOL) - (s.SWITCH_PIN_L + s.SWITCH_PIN_TOL)
     ax.text(kx - 19, z["pin_tip"] - 0.9, f"足の先 {z['pin_tip']:.2f}（最悪 {worst:.2f}・"
             f"床の上面 {s.CASE_FLOOR}）", fontsize=7)
+    ax.text(px + 4, z["island_top"] + 0.2, f"滑り止めの島 {z['island_top']:.2f}（四隅だけ・裏に出る物の下を避ける）",
+            fontsize=6, color="b")
     ax.text(px - 3, z["stab_bottom"] - 0.9, f"スタビの下端（最低）{z['stab_bottom']:.2f}", fontsize=7,
             color="m")
     ax.set_xlim(kx - 20, px + 26)
