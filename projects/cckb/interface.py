@@ -180,7 +180,11 @@ class Interface:
             stab_bottom=plate_top - s.STAB_HOUSING_H,
             xiao_top=top + s.XIAO_H, holder_top=top + s.HOLDER_H,
             usb_center=top + s.XIAO_USB_Z,
-            psw_bottom=pcb_bot - s.PSW_H)
+            # 電源スイッチ（表）: 爪で基板に立ち、台座の下面は PSW_TAB 上。レバーの先は名目の値
+            # （公差の幅は psw_tip_range）。足は付けたあと基板の下面から PSW_PIN_TRIM に切る
+            psw_seat=top + s.PSW_TAB, psw_top=top + s.PSW_TAB + s.PSW_H,
+            psw_tip=top + s.PSW_TAB + s.PSW_H + s.PSW_LEVER_H,
+            psw_pin_end=pcb_bot - s.PSW_PIN_TRIM)
 
     # --- キー ---------------------------------------------------------------
     def rows(self):
@@ -296,27 +300,41 @@ class Interface:
         return (self.s.HOLDER_AT, self.s.CELL_D / 2)
 
     def psw_body(self):
+        """電源スイッチの本体の平面。**公差の最大**（図の一般公差 PSW_BODY_TOL を足す・包絡）。"""
         x, y = self.s.PSW_AT
-        return rect(x, y, self.s.PSW_BODY[1], self.s.PSW_BODY[0])
+        w, h = self.s.PSW_BODY
+        d = self.s.PSW_BODY_TOL
+        return rect(x, y, w + d, h + d)
 
-    def psw_land(self):
-        """ランド（縁に沿って PSW_LAND_L・端子は内側へ PSW_TERM_EXT、耳は外へ PSW_PAD_OUT）。"""
-        b = self.psw_body()
-        y = self.s.PSW_AT[1]
-        return (b[0] - self.s.PSW_TERM_EXT, y - self.s.PSW_LAND_L / 2,
-                b[2] + self.s.PSW_PAD_OUT, y + self.s.PSW_LAND_L / 2)
-
-    def psw_knob(self):
-        b = self.psw_body()
-        y = self.s.PSW_AT[1]
-        k = self.s.PSW_KNOB[0]
-        return (b[2], y - k / 2 - self.s.PSW_TRAVEL / 2, b[2] + self.s.PSW_KNOB_L,
-                y + k / 2 + self.s.PSW_TRAVEL / 2)
-
-    def psw_pegs(self):
+    def psw_pins(self):
+        """足（パッド）の中心 [(x, y)]。**奥（+y）から**: [0] = 奥・[1] = 共通（真ん中）・[2] = 手前。"""
         x, y = self.s.PSW_AT
-        h = self.s.PSW_PEG_PITCH / 2
-        return [((x, y - h), self.s.PSW_PEG_HOLE / 2), ((x, y + h), self.s.PSW_PEG_HOLE / 2)]
+        p = self.s.PSW_PIN_PITCH
+        return [(x, y + p), (x, y), (x, y - p)]
+
+    def psw_pads(self):
+        """ランド（φ PSW_PAD_D）の外接矩形 3 つ（psw_pins の順）。"""
+        r = self.s.PSW_PAD_D / 2
+        return [(x - r, y - r, x + r, y + r) for x, y in self.psw_pins()]
+
+    def psw_lever(self, pos):
+        """レバーの平面（公差の最大）。pos = +1 は奥の端・−1 は手前の端（入は spec.PSW_ON の側）。"""
+        x, y = self.s.PSW_AT
+        a = self.s.PSW_LEVER + self.s.PSW_LEVER_TOL
+        return rect(x, y + pos * self.s.PSW_TRAVEL / 2, a, a)
+
+    def psw_lever_range(self):
+        """レバーが動く範囲（両端の和）。"""
+        a, b = self.psw_lever(-1), self.psw_lever(1)
+        return (min(a[0], b[0]), min(a[1], b[1]), max(a[2], b[2]), max(a[3], b[3]))
+
+    def psw_tip_range(self):
+        """レバーの先の高さ (最低, 名目, 最高)。本体の高さ ±PSW_H_TOL と X ±PSW_LEVER_H_TOL を積む
+        （爪の出 PSW_TAB は [暫定] の 1 つの値。届いたら測る）。"""
+        s = self.s
+        tip = self.z()["psw_tip"]
+        d = s.PSW_H_TOL + s.PSW_LEVER_H_TOL
+        return (tip - d, tip, tip + d)
 
     def lid_pillar(self):
         return (self.s.LID_PILLAR_AT, self.s.LID_PILLAR_D / 2)
@@ -518,7 +536,7 @@ def mount_problems(ifc, geo, p, corner_ok=False, cache=None):
         if circle_poly_gap(p, r_boss, poly) < COPPER_GAP:
             out.append("スタビの逃げ穴")
     for name, box in (("XIAO", ifc.xiao_pads_extent()), ("ホルダ", ifc.holder_body()),
-                      ("電源スイッチ", ifc.psw_land())):
+                      ("電源スイッチ", ifc.psw_body())):
         if circle_rect_gap(p, max(r_boss, r_nut), box) < COPPER_GAP:
             out.append(name)
     for pad in ifc.holder_pads():

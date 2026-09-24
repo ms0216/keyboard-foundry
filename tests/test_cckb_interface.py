@@ -184,19 +184,30 @@ def corner_problems(ifc):
         out.append("ふたの柱が電池を取り出す指の場所を塞ぐ（ホルダから 3.0 未満）")
     if not I.inside(cav, (px - pr, py - pr, px + pr, py + pr), 0.2):
         out.append("ふたの柱がふたの下の空間の外")
-    land = ifc.psw_land()
-    if not I.inside(copper, land):
-        out.append("電源スイッチのランドが銅の範囲の外")
-    if s.PSW_H > s.UNDER_PCB - 0.3:
-        out.append("電源スイッチが床に近すぎる")
-    tip = ifc.psw_knob()[2]
-    o = ifc.case_outer[2]
-    if not (o - s.PSW_SCOOP + 0.5 <= tip <= o + 0.5):
-        out.append(f"つまみの先 {tip - o:+.2f}（外面から −{s.PSW_SCOOP - 0.5:.1f}〜+0.5）")
-    for (qx, qy), qr in ifc.psw_pegs():
-        for pad in ifc.holder_pads():
-            if I.circle_rect_gap((qx, qy), qr, pad) < 0.5:
-                out.append("スイッチの位置決めの穴がホルダのパッドに近い")
+    # 電源スイッチ（表・スルーホール・レバーが上。spec.PSW_*）
+    body = ifc.psw_body()                          # 公差の最大
+    for pad in ifc.psw_pads():
+        if not I.inside(copper, pad):
+            out.append("電源スイッチのランドが銅の範囲の外")
+    if not I.inside(ifc.pcb, body):
+        out.append("電源スイッチの本体が基板の外へ出る（基板を上から落とすときの壁との隙を食う）")
+    if not I.inside(cav, body, 0.2):
+        out.append("電源スイッチがふたの下の空間に入らない")
+    for pad in ifc.holder_pads():
+        if I.rect_gap(body, pad) < s.PSW_HOLDER_CLEAR - 1e-9:
+            out.append(f"電源スイッチとホルダのパッドの間 {I.rect_gap(body, pad):.2f}"
+                       f"（コートヤードが重ならない {s.PSW_HOLDER_CLEAR}）")
+    if z["psw_top"] + s.PSW_H_TOL > z["lid_bottom"] - 0.3:
+        out.append("電源スイッチの本体がふたに当たる")
+    tip = ifc.psw_tip_range()
+    if not (z["lid_bottom"] < tip[1] < z["rim"]):
+        out.append(f"レバーの先（名目 {tip[1]:.2f}）がふたの穴の中（{z['lid_bottom']:.2f}〜{z['rim']:.2f}）にない"
+                   "（上なら鞄の中で出る・下なら爪が届かない）")
+    if s.PSW_PIN_TRIM > s.UNDER_PCB - 0.3:
+        out.append("電源スイッチの切った足が床に 0.3 未満")
+    pins = ifc.psw_pins()
+    if abs(pins[0][1] - pins[1][1] - s.PSW_PIN_PITCH) > 1e-9 or pins[1] != tuple(s.PSW_AT):
+        out.append("電源スイッチの足の並び")
     # --- 角のふたと隣のキャップ ---
     for side in ("left", "right"):
         cov = ifc.cover(side)
@@ -219,8 +230,12 @@ def test_the_corner_parts_fit_their_corners(ifc):
     (dict(XIAO_AT=(-132.67, -37.5)), "プレートの開口"),
     (dict(HOLDER_AT=(129.5, -38.6)), "ホルダのパッドが銅"),
     (dict(HOLDER_H=6.2), "ホルダの頭"),
-    (dict(PSW_KNOB_L=1.5), "つまみの先"),
-    (dict(PSW_AT=(141.275, -42.4)), "位置決めの穴"),
+    (dict(PSW_AT=(141.625, -38.6)), "本体が基板の外"),          # 右へ 0.4（縁に揃えた位置から）
+    (dict(HOLDER_AT=(125.2, -38.6)), "ホルダのパッドの間"),       # ホルダを 0.5 戻す（コートヤードが重なる）
+    (dict(PSW_AT=(141.225, -45.0)), "ふたの下の空間"),            # 手前へ（本体が壁の内面を越える）
+    (dict(PSW_TAB=0.6), "レバーの先"),                           # 爪が 0.2 長い → 先がふたの上面を越える
+    (dict(PSW_LEVER_H=1.5), "レバーの先"),                       # 短いレバー → 爪が届かない
+    (dict(PSW_PIN_TRIM=1.7), "切った足"),
     (dict(LID_PILLAR_AT=(111.0, -38.6)), "指の場所"),
     (dict(CASE_KEY_GAP=0.2), "キャップ"),
     (dict(RIM_ABOVE_PCB=6.5), "ホルダの頭"),
@@ -249,7 +264,8 @@ def z_problems(ifc):
     worst_tip = z["pcb_bottom"] + s.PCB_T * (1 - s.PCB_T_TOL) - (s.SWITCH_PIN_L + s.SWITCH_PIN_TOL)
     if worst_tip < s.CASE_FLOOR + 0.1:
         out.append(f"足の先（最悪 {worst_tip:.2f}）が床 {s.CASE_FLOOR} に 0.1 未満")
-    for name, h in (("BAT46W", 1.25), ("TSSOP-16", 1.2), ("電源スイッチ", s.PSW_H)):
+    for name, h in (("BAT46W", 1.25), ("TSSOP-16", 1.2), ("裏の部品の包絡", s.BOTTOM_PART_H),
+                    ("電源スイッチの切った足", s.PSW_PIN_TRIM)):
         if h > s.UNDER_PCB - 0.3:
             out.append(f"{name} が床に 0.3 未満")
     if z["stab_bottom"] < s.CASE_FLOOR + 0.5:
@@ -282,7 +298,8 @@ def test_the_z_stack_holds(ifc):
 
 @pytest.mark.parametrize("over, expect", [
     (dict(UNDER_PCB=1.5), "足の先"),
-    (dict(PSW_H=1.7), "電源スイッチ"),
+    (dict(BOTTOM_PART_H=1.7), "裏の部品の包絡"),
+    (dict(PSW_PIN_TRIM=1.7), "電源スイッチの切った足"),
     (dict(STAB_HOUSING_H=5.9), "スタビ"),
     (dict(SCREW_L=8), "皿の座ぐり"),          # 頭の沈めは先から導くので、長いネジは頭が机の下へ出る
     (dict(SCREW_L=5), "皿の座ぐり"),          # 短いネジは頭がボスの上の肉を食う

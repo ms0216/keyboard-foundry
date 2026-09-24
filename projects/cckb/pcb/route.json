@@ -1,12 +1,17 @@
 {
   "board": "cckb_main.kicad_pcb",
   "unrouted": "cckb_main.kicad_pcb",
-  "unrouted_fingerprint": "8443bb2c6c6e62accc2e11a662af34bd93c90fadb5c8deadd67b967eb38bdb11",
-  "unrouted_sha256": "8b310943f830e9c39878a7b14398c9e6c93b75a5ae1b7fff8c7e01f32d5b622c",
+  "unrouted_fingerprint": "a4ba06639110f710103431e5f9ba59baa36d4d251da34c18a393749b0a20a6e5",
+  "unrouted_sha256": "5965db1a8dff539872d4fb355fa9c1673a3d272d19644626ddf87283c9b972c7",
   "freerouting": "freerouting-2.3.0.jar",
   "passes": 100,
-  "margin_um": null,
-  "margins_tried": [],
+  "margin_um": 30,
+  "margins_tried": [
+    [
+      30,
+      0
+    ]
+  ],
   "matrix_segments": 404,
   "gnd_fanout": 9,
   "ring": {
@@ -28,7 +33,7 @@
     ]
   },
   "fence": 266,
-  "grid": 699,
+  "grid": 697,
   "island_vias": 4,
   "second_island_vias": 11,
   "single_via_islands": [
@@ -54,14 +59,23 @@
     }
   ],
   "rerouted_nets": [
-    "CS"
+    "VBAT_IN",
+    "VBAT_SW"
   ],
-  "kept_from_sha256": "a55c8be8d5ee4f4ac863c10ac161d62b212262e2a51052681e249ed0c7f8f4ac",
-  "islands_removed": 20,
-  "islands_removed_mm2": 65.49,
+  "cleared_box": [
+    95.25,
+    -47.925,
+    143.175,
+    -28.575
+  ],
+  "cleared": 8,
+  "pruned_dangling": 0,
+  "kept_from_sha256": "05c75c25af8e99af34bad8d422e182f3c669e02e3404dc916ba69ed5eb0a9d20",
+  "islands_removed": 23,
+  "islands_removed_mm2": 70.58,
   "gnd_area_mm2": {
-    "F": 22231.3,
-    "B": 21693.8
+    "F": 22200.9,
+    "B": 21705.8
   },
   "unconnected": 0
 }

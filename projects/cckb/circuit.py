@@ -10,7 +10,7 @@
 
 回路（設計書 §4・docs/knowledge/power.md）:
 
-    CR1632 ＋ → 電源スイッチ（② 共通 → ③）→ VBAT_SW ┬ 1MΩ → VBAT_SENSE（D0）→ 1MΩ → GND
+    CR1632 ＋ → 電源スイッチ（2 共通 → 1）→ VBAT_SW ┬ 1MΩ → VBAT_SENSE（D0）→ 1MΩ → GND
                                                    └ D_PWR（既定 BAT46W・spec.PARTS["schottky"]）A→K → V3V3（XIAO の 3V3 ピン）
     CR1632 − → GND。**XIAO の BAT には何も繋がない**（LiPo の充電回路に直結。USB を挿すと
     一次電池を充電する）
@@ -66,10 +66,10 @@ def electronics():
         ("C_U1", "cap_100n", {"1": "V3V3", "2": "GND"}),
         ("C_U2", "cap_100n", {"1": "V3V3", "2": "GND"}),
         ("BT1", "coin_holder_bs16", {"+": "VBAT_IN", "-": "GND"}),
-        # ② 共通・③ が入。① は空き。図面の上面図はつまみを ① の側に描き、回路図は ①② を
-        # 繋いで描く → つまみを ③ の側へ寄せると入（**図の読み。実物をテスターで確かめる**）
-        ("SW_PWR", "slide_mk12c02", {"1": NC, "2": "VBAT_IN", "3": "VBAT_SW",
-                                     "EAR1": NC, "EAR2": NC, "EAR3": NC, "EAR4": NC}),
+        # 2 が共通（真ん中の足）。1 は奥（+y）の足で入、3（手前）は空き。レバーの側の足が共通と
+        # 繋がる（図面の側面図と回路図）ので、レバーを奥へ押すと入（spec.PSW_ON・ふたの刻印。
+        # **図の読み。部品が届いたらテスターで確かめる**）
+        ("SW_PWR", "slide_ss12d00", {"1": "VBAT_SW", "2": "VBAT_IN", "3": NC}),
         ("R_HI", "res_1M", {"1": "VBAT_SW", "2": "VBAT_SENSE"}),
         ("R_LO", "res_1M", {"1": "VBAT_SENSE", "2": "GND"}),
         ("D_PWR", "schottky", {"A": "VBAT_SW", "K": "V3V3"}),

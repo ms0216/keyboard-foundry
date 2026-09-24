@@ -237,7 +237,7 @@ HELD_BY = {
     "xiao": "基板の表にはんだ付け（キャステレーション）",
     "holder": "基板の表にはんだ付け",
     "cell": "ホルダの＋のクリップが上から押さえ、右のふたが上を塞ぐ",
-    "psw": "基板の裏に利用者がはんだ付け（2026-09-24 に JLC の実装から外した）＋位置決めの突起 2",
+    "psw": "基板の表に差し、裏から利用者がはんだ付け（スルーホールの足 3 本）。足は切る（spec.PSW_PIN_TRIM）",
     "nuts": "下からのネジが締める。回り止めはプレートの六角の穴",
     "screws": "ナット（キーの下 9）とインサート（H3）へねじ込み",
     "screw_lid": "柱のインサートへねじ込み。ふたの膜が抜け落ちを止める",
@@ -259,7 +259,7 @@ EXPECTED = {
 # 板の上の部品で、**図面の外形で別に置く物**（ref → 群・板の上の向き〔度〕・裏か）。
 # 位置と向きは板のフットプリントから読み、形は spec（データシート）から。向きが違えば落とす
 # （形の向きを決め打ちしているので、板で回っていたら形が嘘になる）
-PLACED = {"U_MCU": ("xiao", 90.0, False), "BT1": ("holder", 0.0, False), "SW_PWR": ("psw", -90.0, True)}
+PLACED = {"U_MCU": ("xiao", 90.0, False), "BT1": ("holder", 0.0, False), "SW_PWR": ("psw", 0.0, False)}
 
 
 def placed_interface(ifc, geo):
@@ -393,13 +393,11 @@ class Assembly:
         return sorted(f["ref"] for f in self.geo["footprints"] if f["back"] and f["ref"] not in PLACED)
 
     def bottom_parts(self):
-        """裏の部品（ダイオード 62・595 ×2・パスコン 2・分圧 2・D_PWR）: コートヤード × 背の上限 PSW_H。
-
-        背の上限: SOD-123 1.35・TSSOP-16 1.2・0805 の C 1.35（データシートの最大）はどれも PSW_H 1.45 以下。
-        """
+        """裏の部品（ダイオード 62・595 ×2・パスコン 2・分圧 2・D_PWR）: コートヤード × 背の上限
+        spec.BOTTOM_PART_H（データシートの最大の最大）。"""
         z = self.z
         fps = {f["ref"]: f for f in self.geo["footprints"]}
-        return [rbox(fps[r]["courtyard"]["back"], z["pcb_bottom"] - self.s.PSW_H, z["pcb_bottom"])
+        return [rbox(fps[r]["courtyard"]["back"], z["pcb_bottom"] - self.s.BOTTOM_PART_H, z["pcb_bottom"])
                 for r in self.bottom_refs()]
 
     def xiao(self):
@@ -441,15 +439,24 @@ class Assembly:
         z0 = self.z["pcb_top"] + self.c.CELL_Z_IN_HOLDER
         return cyl(cx, cy, z0, z0 + self.s.CELL_T, self.c.CELL_REAL_D)
 
-    def psw(self):
-        """電源スイッチ（板の SW_PWR の位置）: 本体＋つまみ（動く範囲）は図面の外形、端子と耳の金具は
-        **板のパッドの範囲** × 本体の高さ（金具は実際には薄い板。上に大きく取る）。"""
-        z = self.z
-        legs = [rbox(p["box"], z["psw_bottom"], z["pcb_bottom"]) for p in self.geo["pads"]
-                if p["ref"] == "SW_PWR" and p["drill"] == 0]
-        assert len(legs) == 7, len(legs)                    # 端子 3・耳 4（lib/cckb.pretty/SW_MK-12C02-G025）
-        return fuse([rbox(self.r.psw_body(), z["psw_bottom"], z["pcb_bottom"]),
-                     rbox(self.r.psw_knob(), z["psw_bottom"], z["pcb_bottom"])] + legs)
+    def psw(self, trimmed=True, lever=None, envelope=True):
+        """電源スイッチ SS-12D00G3（板の SW_PWR の位置・表）を**1 つの立体**で: 本体（公差の最大。
+        基板の上面から。爪の出 PSW_TAB の隙間も詰めて包む）＋ レバー（動く範囲・先は公差の最高）＋
+        足 3 本（**板のパッドの穴の位置**に、断面 PSW_PIN＋公差。先は切った長さ PSW_PIN_TRIM、
+        trimmed=False なら切らない長さ〔図の最長〕）。lever = +1 / −1 ならレバーをその端だけに置く（絵用）。
+        envelope=False なら高さを名目の値で（絵用。検査は包絡）。"""
+        s, z = self.s, self.z
+        top = z["psw_top"] + (s.PSW_H_TOL if envelope else 0.0)
+        tip = self.r.psw_tip_range()[2 if envelope else 1]
+        holes = [p for p in self.geo["pads"] if p["ref"] == "SW_PWR" and p["drill"] > 0]
+        assert len(holes) == 3, len(holes)                 # lib/cckb.pretty/SW_SS-12D00G3
+        end = z["psw_pin_end"] if trimmed else z["psw_seat"] - (s.PSW_PIN_L + s.PSW_PIN_TOL)
+        px, py = (v + s.PSW_LEVER_TOL for v in s.PSW_PIN)
+        pins = [box(p["x"] - px / 2, p["y"] - py / 2, end, p["x"] + px / 2, p["y"] + py / 2,
+                    z["pcb_top"] + 0.01) for p in holes]
+        return fuse([rbox(self.r.psw_body(), z["pcb_top"], top),
+                     rbox(self.r.psw_lever_range() if lever is None else self.r.psw_lever(lever),
+                          top - 0.01, tip)] + pins)
 
     def key_mounts(self):
         return [m for m in self.i.mounts() if not self.i.in_corner(m)]
@@ -706,7 +713,7 @@ def print_sizes(parts, limit):
 def wall_probes(asm):
     """名前を付けた肉厚の測り所 [(名前, 部品, 起点, 向き, 下限, 理由)]。最初に通る材料の長さを測る。"""
     s, c, z, i, cs = asm.s, asm.c, asm.z, asm.i, asm.case
-    o, w = i.case_outer, i.wall_inner
+    o = i.case_outer
     m0 = i.mounts()[0]
     rb = s.MOUNT_BOSS_D / 2
     (px, py), _ = i.lid_pillar()
@@ -714,8 +721,8 @@ def wall_probes(asm):
     usb = cs.usb_opening()
     pad = cs.antislip_pads()[0]
     need = 1.2
-    wall = s.CASE_WALL
-    ky = s.PSW_AT[1]
+    slot = cs.psw_slot()
+    mark = cs.psw_mark().bounding_box()
     return [
         ("床", "tray_L", (-60.3, 30.3, -5), (0, 0, 1), need, "0.4×3"),
         ("床（滑り止めのくぼみ）", "tray_L", ((pad[0] + pad[2]) / 2, (pad[1] + pad[3]) / 2, -5), (0, 0, 1),
@@ -728,8 +735,6 @@ def wall_probes(asm):
         ("取付のボスの肉", "tray_L", (m0[0] - rb - 0.5, m0[1], (z["floor_top"] + z["pcb_bottom"]) / 2),
          (1, 0, 0), need, "穴 2.4・ボス 5.6"),
         ("右の壁", "tray_R", (o[2] + 5, 10.3, 6.0), (-1, 0, 0), need, ""),
-        ("指の窪みの奥の壁", "tray_R", (o[2] + 5, ky + 2.5, 3.0), (-1, 0, 0), wall - s.PSW_SCOOP,
-         "**1.2 未満**: 壁 CASE_WALL 1.3 − 窪み PSW_SCOOP 0.9（[暫定]）= 0.4。構造ではない（つまみの横の目隠し）"),
         ("ふたの柱の肉（インサート）", "tray_R", (px - 4, py, cs.pillar_top() - 1.0), (1, 0, 0),
          (s.LID_PILLAR_D - c.INSERT_HOLE_D) / 2, "spec.LID_PILLAR_D（インサート 3.2＋肉 1.0）の決め方"),
         ("左のふたの天板", "lid_L", (-130.3, -40.3, 20), (0, 0, -1), need, "LID_T"),
@@ -740,8 +745,10 @@ def wall_probes(asm):
         ("右のふたの天板", "lid_R", (120.3, -40.3, 20), (0, 0, -1), need, "LID_T"),
         ("右のふたの垂れ壁（左）", "lid_R", (90, -40.3, 7.0), (1, 0, 0), need, "LID_T"),
         ("右のふたの垂れ壁（奥）", "lid_R", (110.3, -20, 7.0), (0, -1, 0), need, "LID_T"),
-        ("つまみのひれ（厚さ）", "lid_R", (o[2] + 5, ky, 7.0), (-1, 0, 0), need, ""),
-        ("つまみのひれ（幅）", "lid_R", (w[2] + 0.4, ky - 10, 7.0), (0, 1, 0), need, ""),
+        ("レバーの穴と外面の間", "lid_R", (o[2] + 5, (slot[1] + slot[3]) / 2, (z["lid_bottom"] + z["rim"]) / 2),
+         (-1, 0, 0), need, "穴を右の縁から離す（spec.PSW_AT）"),
+        ("入の刻印の下", "lid_R", (mark.center().X, (slot[1] + slot[3]) / 2 + 1.0, 20), (0, 0, -1),
+         s.LID_T - asm.c.PSW_MARK_DEPTH, "**わざと薄い**（天板 1.2 − 刻印 0.4。天板の上の面の飾り）"),
         ("ふたのボスの肉", "lid_R", (px - 4, py, cs.pillar_top() + 0.8), (1, 0, 0), need, ""),
         ("ネジを捕まえる膜", "lid_R", (px + (c.CAPTIVE_HOLE_D / 2 + 0.2), py, 20), (0, 0, -1),
          c.CAPTIVE_WEB_T, "**わざと薄い**（ネジがねじ切って通る膜・0.2 層 × 2）"),
@@ -802,7 +809,10 @@ def z_scan_skips(asm, name):
     c = asm.c
     (px, py), _ = asm.i.lid_pillar()
     r = c.SCREW_HEAD_D / 2 + c.SEAT_CLEAR + 0.2
-    return {"lid_R": [(px - r, py - r, px + r, py + r)]}.get(name, [])    # 捕まえる膜
+    m = asm.case.psw_mark().bounding_box()
+    return {"lid_R": [(px - r, py - r, px + r, py + r),                   # 捕まえる膜
+                      (m.min.X - 0.2, m.min.Y - 0.2, m.max.X + 0.2, m.max.Y + 0.2)]    # 入の刻印
+            }.get(name, [])
 
 
 def seam_problems(asm, halves):
@@ -841,21 +851,34 @@ def retention_problems(asm, g):
 
 
 def nail_problems(asm, g):
-    """電源スイッチのつまみに爪がかかるか: 先が窪みの底から PSW_NAIL_REACH 以上出て、
-    つまみの両脇に爪（NAIL_T の箱）が入る。"""
-    s, c, z = asm.s, asm.c, asm.z
-    k = asm.r.psw_knob()
-    floor_x = asm.i.case_outer[2] - s.PSW_SCOOP
+    """電源スイッチのレバーに上から爪がかかるか・鞄の中で出ないか。
+
+    - レバーの先（名目）がふたの上面より下（出ない）
+    - レバーが両端のどちらにあっても、押し戻す側（端の外）のふたの穴に爪（厚さ NAIL_T の箱・幅はレバー）が
+      上から入り、レバーの先から PSW_NAIL_REACH 下まで届く（ふた・トレイ・基板の物に当たらない）
+    返り値は問題の一覧。公差の最高でのレバーの先の出は問題に数えず、呼ぶ側が別に見る（psw_tip_margin）。
+    """
+    c, z = asm.c, asm.z
+    tip = asm.r.psw_tip_range()[1]
     bad = []
-    if k[2] - floor_x < c.PSW_NAIL_REACH - 1e-9:
-        bad.append(f"つまみの先が窪みの底から {k[2] - floor_x:.2f} しか出ない")
-    for y0, y1 in ((k[3], k[3] + c.NAIL_T), (k[1] - c.NAIL_T, k[1])):
-        nail = box(floor_x + 0.05, y0, z["psw_bottom"], k[2] + 5, y1, z["pcb_bottom"])
-        for name in ("tray_R", "lid_R"):
+    if tip >= z["rim"]:
+        bad.append(f"レバーの先（名目 {tip:.2f}）がふたの上面 {z['rim']:.2f} より下にない")
+    for pos in (-1, 1):
+        lv = asm.r.psw_lever(pos)
+        y0, y1 = (lv[3], lv[3] + c.NAIL_T) if pos > 0 else (lv[1] - c.NAIL_T, lv[1])
+        nail = box(lv[0], y0, tip - c.PSW_NAIL_REACH, lv[2], y1, z["rim"] + 5)
+        for name in ("lid_R", "tray_R", "psw"):
             v = common_volume(nail, g[name])
             if v > 1e-3:
-                bad.append(f"爪が {name} に当たる（{v:.2f} mm3）")
+                bad.append(f"レバーが {'奥' if pos > 0 else '手前'} の端のとき、爪が {name} に当たる（{v:.2f} mm3）")
     return bad
+
+
+def psw_tip_margin(asm):
+    """レバーの先とふたの上面の差 (公差の最高で, 名目で, 最低で)。正ならふたの上面より下。"""
+    lo, tip, hi = asm.r.psw_tip_range()
+    rim = asm.z["rim"]
+    return (rim - hi, rim - tip, rim - lo)
 
 
 def pad_problems(asm):
@@ -867,7 +890,7 @@ def pad_problems(asm):
 
 
 # 滑り止めの島（上面 island_top 1.6）と、基板の裏に出る物の平面の隙の下限。島の上面は足の先の最悪
-# （1.34）・電源スイッチの下面（1.55）・裏の部品の包絡の下面（1.55）より高いので、上に来てはいけない
+# （1.34）より高く、裏の部品の包絡の下面（1.65）・電源スイッチの切った足の先（2.0）に近いので、上に来てはいけない
 ISLAND_CLEAR = 0.5
 
 
@@ -915,8 +938,8 @@ def render_all(asm, g, out):
         ("section_left_corner_usb", ("y", s.XIAO_AT[1]), (-152, -108), "左の角: XIAO・USB-C のメスとプラグ・左のふた（舌）"),
         ("section_left_corner_h3", ("x", mx), (-53, -18), "左の角: H3 のネジ・インサート・ふたのボス"),
         ("section_right_corner_cell", ("y", py), (92, 150), "右の角: 電池・ホルダ・柱・捕まえたネジ"),
-        ("section_right_corner_psw", ("x", s.PSW_AT[0] + 2.4), (-53, -25), "右の角: 電源スイッチのつまみ・ひれ・指の窪み"),
-        ("section_psw_side", ("y", s.PSW_AT[1]), (125, 152), "右の側面: つまみ・切り欠き・窪み"),
+        ("section_right_corner_psw", ("x", s.PSW_AT[0]), (-53, -25), "右の角: 電源スイッチ（足・本体・レバー）とふたの穴"),
+        ("section_psw_side", ("y", s.PSW_AT[1]), (110, 152), "右の角: ホルダの＋・電源スイッチ・ふたの穴と刻印"),
         ("section_seam_back", ("y", 30.3), (back - 20, back + 20), "継ぎ目（奥）: 床の段・支え"),
         ("section_seam_front", ("y", -30.3), (front - 20, front + 20), "継ぎ目（手前）"),
         ("section_seam_wall", ("x", (back + front) / 2), (-52, 52), "継ぎ目の段（y=0）を横から"),

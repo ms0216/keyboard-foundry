@@ -78,7 +78,26 @@ def regions(ifc):
     (cx, cy), cr = _d7_control(max(r for _, _, _, r in ks))
     out += [("metal_control", f"c:{cx},{cy},{cr}")]
     out += [(n, ",".join(str(v) for v in r)) for n, r in xiao_slot_rects().items()]
+    out += [(n, ",".join(str(v) for v in r)) for n, r in psw_tab_rects(ifc).items()]
     return {n: (i, a) for i, (n, a) in enumerate(out)}
+
+
+def psw_tab_rects(ifc):
+    """電源スイッチの枠の爪の下（pcb_extra.psw_tab_keepouts と**同じ式を独立に**: 本体の最大＋
+    METAL_COPPER_CLEAR の、真ん中の足から ±ピッチ/2 より外）を、足のランドの列（x ±PSW_PAD_D/2 ＋0.05）
+    の左右に割った 4 つ。ここに表の銅（線・ビア・ベタ）が 0 であること。ランドそのものは数えない。
+    対照: 同じ大きさを 12mm 左（ホルダの上・表のベタのある所）へずらした物。"""
+    s = ifc.s
+    x, y = s.PSW_AT
+    b = I.grow(ifc.psw_body(), s.METAL_COPPER_CLEAR)
+    h, c = s.PSW_PIN_PITCH / 2, s.PSW_PAD_D / 2 + 0.05
+    out = {}
+    for k, (y0, y1) in enumerate(((y + h, b[3]), (b[1], y - h))):
+        out[f"psw_tab{k}L"] = (b[0], y0, x - c, y1)
+        out[f"psw_tab{k}R"] = (x + c, y0, b[2], y1)
+    r = out["psw_tab0L"]
+    out["psw_tab_control"] = (r[0] - 12, r[1], r[2] - 12, r[3])
+    return out
 
 
 def _rect_args(ifc):
@@ -148,13 +167,13 @@ def test_every_pad_carries_the_declared_net(facts):
     assert len(circuit.electronics()) == 10
     copper = [p for p in facts["pads"] if not p["npth"] and p["num"]]
     # スイッチ 2・ダイオード 2・XIAO 14+7（D0〜D6 のパッド内ビア）・595 16×2・C 2×2・R 2×2・
-    # D_PWR 2・ホルダ 2・電源スイッチ 7
-    assert len(copper) == 62 * 4 + 21 + 32 + 4 + 4 + 2 + 2 + 7
+    # D_PWR 2・ホルダ 2・電源スイッチ 3（スルーホール）
+    assert len(copper) == 62 * 4 + 21 + 32 + 4 + 4 + 2 + 2 + 3
     nc = sorted(f"{p['ref']}.{p['num']}" for p in copper if not p["net"])
     # ネットの無いパッドは**宣言した NC だけ**（XIAO 5V・D1×2・D9、595 U2 の QH と QH'、
-    # 電源スイッチの ① と耳 4 つ）
+    # 電源スイッチの手前の足 3）
     assert nc == sorted(["U_MCU.5V", "U_MCU.D1", "U_MCU.D1", "U_MCU.D9", "U2.7", "U2.9",
-                         "SW_PWR.1", "SW_PWR.4", "SW_PWR.5", "SW_PWR.6", "SW_PWR.7"]), nc
+                         "SW_PWR.3"]), nc
 
 
 @pytest.mark.parametrize("ref, num, net", [
@@ -183,7 +202,6 @@ def test_the_netlist_check_notices_an_undeclared_part(facts):
 
 # 知っている警告と、なぜ直さないか（数は記録 projects/cckb/pcb/cckb_main.drc.json）
 KNOWN_WARNINGS = {
-    "npth_inside_courtyard",    # 電源スイッチの位置決めの穴がホルダの下（spec.DRC_SEVERITY の理由）
     "silk_edge_clearance",      # シルクが外形・逃げ穴に近い（刷れずに欠けるだけ）
     "silk_overlap",             # シルクどうしの重なり（読みにくいだけ）
     "silk_over_copper",
@@ -225,7 +243,6 @@ def test_the_routed_board_has_no_drc_violation_and_nothing_unrouted(drc_record, 
     assert set(r["warning_kinds"]) <= KNOWN_WARNINGS, r["warning_kinds"]
     # 数を固定する（監査 C 2 回目 軽微 3: 種類の集合だけでは名札がずれて増えても緑のままだった）。
     # silk_edge_clearance 3 は D15・D55 の名札が外形に、H9 の名札が逃げ穴に近い（刷ると欠けるだけ）
-    assert r["warning_kinds"].get("npth_inside_courtyard", 0) == 2
     assert r["warning_kinds"].get("silk_edge_clearance", 0) == 3, r["warning_kinds"]
     assert r["warning_kinds"].get("silk_overlap", 0) == 0 and r["warning_kinds"].get("silk_over_copper", 0) == 0
 
@@ -248,20 +265,14 @@ def test_the_warning_count_notices_a_label_on_the_edge(tmp_path):
     assert r["warning_kinds"].get("silk_edge_clearance", 0) > 3, r["warning_kinds"]
 
 
-def test_the_npth_warning_is_only_the_switch_pegs_under_the_holder(tmp_path):
-    """下げた重大度（npth_inside_courtyard）に**ほかの物が紛れていない**こと。"""
-    require(paths.KICAD_CLI, "DRC")
-    board = board_copy(tmp_path / "b")
-    out = tmp_path / "_npth.json"
-    r = subprocess.run([paths.KICAD_CLI, "pcb", "drc", "--format", "json", "--severity-all",
-                        "-o", str(out), str(board)], capture_output=True, text=True)
-    assert out.exists(), r.stdout + r.stderr
-    d = json.loads(out.read_text())
-    items = [v for v in d["violations"] if v["type"] == "npth_inside_courtyard"]
-    assert len(items) == 2
-    for v in items:
-        desc = " ".join(i["description"] for i in v["items"])
-        assert "SW_PWR" in desc and "BT1" in desc, desc
+def test_the_project_downgrades_no_drc_rule():
+    """前は電源スイッチ（裏）の位置決めの穴がホルダのコートヤードの下に来るので npth_inside_courtyard を
+    警告に下げていた。2026-09-24 に表のスルーホールの SS-12D00G3 に替えて穴が無くなったので、下げない
+    （spec.DRC_SEVERITY を消した）。発注する板の .kicad_pro でも KiCad の既定（error）に戻っていること。"""
+    assert not hasattr(SPEC, "DRC_SEVERITY")
+    for pro in (BOARD.with_suffix(".kicad_pro"), UNROUTED.with_suffix(".kicad_pro")):
+        sev = json.loads(pro.read_text())["board"]["design_settings"]["rule_severities"]
+        assert sev["npth_inside_courtyard"] == "error", pro
 
 
 def test_the_drc_check_notices_a_short(tmp_path):
@@ -941,11 +952,11 @@ def power_problems(facts):
         out.append("D_PWR（ショットキー）のアノードがスイッチの後ろ（VBAT_SW）でない")
     plus = pinmap.resolve("coin_holder_bs16", "+")
     if net.get(("BT1", plus)) != net.get(("SW_PWR", "2")) or not net.get(("BT1", plus)):
-        out.append("ホルダの＋がスイッチの共通（②）に来ていない")
+        out.append("ホルダの＋がスイッチの共通（2・真ん中の足）に来ていない")
     if net.get(("BT1", pinmap.resolve("coin_holder_bs16", "-"))) != "GND":
         out.append("ホルダの−が GND でない")
-    if net.get(("SW_PWR", "3")) != "VBAT_SW":
-        out.append("スイッチの ③ が VBAT_SW でない")
+    if net.get(("SW_PWR", "1")) != "VBAT_SW" or net.get(("SW_PWR", "3")):
+        out.append("スイッチの 1（奥・入の側）が VBAT_SW でない、か 3 に網がある")
     # 分圧はスイッチの後ろ・ショットキーの手前
     if (net.get(("R_HI", "1")), net.get(("R_HI", "2")), net.get(("R_LO", "1")),
             net.get(("R_LO", "2"))) != ("VBAT_SW", "VBAT_SENSE", "VBAT_SENSE", "GND"):
@@ -980,41 +991,59 @@ def _pads_of(facts, ref):
 
 
 def test_the_power_switch_pads_hold_the_terminals_of_the_drawing(facts, ifc):
-    """MK-12C02-G025 の図面（上面図）: 端子 ①②③ は本体の縁から 1.0 出て、間隔 3.0・1.5
-    （② は中心から 0.75）。耳は本体の四隅から幅 0.4 の金具が 3.3〜3.925。これらが板の上の
-    パッドの中にあり、パッドの外形が interface の psw_land と一致すること。"""
+    """SS-12D00G3 の図面（秋月の PDF 5 ページ目）の PCB LAYOUT: 3-φ0.8 を 2.5 間隔、足 0.5×0.3。
+    板の上の SW_PWR（表・スルーホール）のパッドが 3 個・穴 φ0.8・中心が 2.5 間隔で y に並び、
+    真ん中（2・共通）が spec.PSW_AT、並びが interface.psw_pins と同じで、足の対角が穴に入ること。"""
     s = SPEC
     ps = _pads_of(facts, "SW_PWR")
-    x, y = s.PSW_AT
-    body_in = x - s.PSW_BODY[1] / 2                        # 本体の内側の縁（端子の出る側）
-    # 端子（足）: 縁から 1.0、幅 0.4。**板の向き**で: 縁に沿う y、奥行 x
-    tips = {}
-    for n, p in (("1", ps["1"]), ("2", ps["2"]), ("3", ps["3"])):
+    assert sorted(ps) == ["1", "2", "3"], sorted(ps)
+    assert not any(p["ref"] == "SW_PWR" and p["npth"] for p in facts["pads"])
+    for n, (x, y) in zip("123", ifc.psw_pins()):
+        p = ps[n]
+        assert abs(p["drill"] - 0.8) < 1e-3 and p["front"] and p["back"] and not p["smd"], (n, p)
+        assert math.dist(p["pos"], (x, y)) < 1e-3, (n, p["pos"], (x, y))
         b = p["box"]
-        assert b[0] <= body_in - 1.0 and b[2] >= body_in, (n, b)
-        tips[n] = (b[1] + b[3]) / 2 - y
-    d = sorted(tips.values())
-    assert abs((d[1] - d[0]) - 1.5) < 0.01 and abs((d[2] - d[1]) - 3.0) < 0.01 or \
-        abs((d[1] - d[0]) - 3.0) < 0.01 and abs((d[2] - d[1]) - 1.5) < 0.01, tips
-    assert abs(abs(tips["2"]) - 0.75) < 0.01
-    # 耳: 金具（縁に沿って 3.3〜3.925・奥行 ±(0.9〜1.3)）がパッドの中
-    for n in "4567":
-        b = ps[n]["box"]
-        dy = (b[1] + b[3]) / 2 - y
-        tab_y = (y + math.copysign(3.3, dy), y + math.copysign(3.925, dy))
-        dx = (b[0] + b[2]) / 2 - x
-        tab_x = (x + math.copysign(0.9, dx), x + math.copysign(1.3, dx))
-        assert b[1] <= min(tab_y) and b[3] >= max(tab_y), (n, b, tab_y)
-        assert b[0] <= min(tab_x) and b[2] >= max(tab_x), (n, b, tab_x)
-    # パッドの外形 = interface の psw_land（spec の PSW_* から作る。2 つの出どころが一致）
-    allb = [p["box"] for p in ps.values()]
-    ext = (min(b[0] for b in allb), min(b[1] for b in allb), max(b[2] for b in allb),
-           max(b[3] for b in allb))
-    assert all(abs(a - b) < 0.02 for a, b in zip(ext, ifc.psw_land())), (ext, ifc.psw_land())
-    # 穴: φ0.9 を間隔 3.0（図面 2-Ø0.9・3±0.1）
-    holes = [p for p in facts["pads"] if p["ref"] == "SW_PWR" and p["npth"]]
-    assert len(holes) == 2 and all(abs(h["drill"] - 0.9) < 1e-3 for h in holes)
-    assert abs(abs(holes[0]["pos"][1] - holes[1]["pos"][1]) - 3.0) < 1e-3
+        assert abs((b[2] - b[0]) - s.PSW_PAD_D) < 1e-3 and abs((b[3] - b[1]) - s.PSW_PAD_D) < 1e-3, (n, b)
+    assert abs(ps["1"]["pos"][1] - ps["2"]["pos"][1] - 2.5) < 1e-3
+    assert abs(ps["2"]["pos"][1] - ps["3"]["pos"][1] - 2.5) < 1e-3
+    assert math.dist(ps["2"]["pos"], s.PSW_AT) < 1e-3
+    assert math.hypot(*s.PSW_PIN) < 0.8 and s.PSW_DRILL == 0.8
+
+
+def on_side_problems(facts):
+    """入の向き: VBAT_SW（入で電池が繋がる側）の足は、共通の足から spec.PSW_ON の向き（レバーを押す側）に
+    ある（レバーの側の足が共通と繋がる・図面の側面図と回路図）。ふたの刻印も PSW_ON を指す。"""
+    ps = _pads_of(facts, "SW_PWR")
+    com = ps["2"]["pos"]
+    on = [p for p in ps.values() if p["net"] == "VBAT_SW"]
+    if len(on) != 1:
+        return [f"VBAT_SW の足が {len(on)} 本"]
+    dy = on[0]["pos"][1] - com[1]
+    return [] if dy * SPEC.PSW_ON > 0 else [f"VBAT_SW の足が入の向き（{SPEC.PSW_ON:+d}）の反対（{dy:+.2f}）"]
+
+
+def test_the_on_side_of_the_power_switch_is_the_marked_side(facts):
+    assert on_side_problems(facts) == []
+
+
+def test_the_on_side_check_notices_swapped_throws(facts):
+    f = copy.deepcopy(facts)
+    for p in f["pads"]:
+        if p["ref"] == "SW_PWR" and p["num"] in "13":
+            p["net"] = {"VBAT_SW": "", "": "VBAT_SW"}[p["net"]]
+    assert on_side_problems(f)
+
+
+def test_nothing_on_top_under_the_power_switch_frame_tabs(facts, ifc):
+    """電源スイッチの枠（金属）の爪 4 つが立つ所（本体の両端）の表の銅が 0（ランドの列の左右）。
+    ルール領域 PSW_TAB_KEEPOUT（表・線/ビア/ベタ禁止）が 2 つある。対照はベタのある所で 0 でない。"""
+    zs = [z for z in facts["zones"] if z["name"] == "PSW_TAB_KEEPOUT"]
+    assert len(zs) == 2 and all(z["layers"] == ["F.Cu"] and z["no_tracks"] and z["no_vias"]
+                                and z["no_fill"] for z in zs), zs
+    for n in ("psw_tab0L", "psw_tab0R", "psw_tab1L", "psw_tab1R"):
+        cu = copper_in(facts, ifc, n)
+        assert cu["area"]["F.Cu"] == 0.0, (n, cu)
+    assert copper_in(facts, ifc, "psw_tab_control")["area"]["F.Cu"] > 1.0
 
 
 def test_the_holder_pads_are_the_drawing_land(facts, ifc):
@@ -1218,6 +1247,13 @@ def _break_holder(f):
 def _break_switch(f):
     p = next(p for p in f["pads"] if p["ref"] == "SW_PWR" and p["num"] == "2")
     p["box"] = [p["box"][0], p["box"][1] + 0.5, p["box"][2], p["box"][3] + 0.5]
+    p["pos"] = [p["pos"][0], p["pos"][1] + 0.5]
+
+
+def _break_psw_tab(f):
+    """爪の下にベタが 0.5mm² 残った（ルール領域が効いていない）ことにする。"""
+    i = regions(I.Interface())["psw_tab1R"][0]
+    f["copper_in"][i]["area"]["F.Cu"] = 0.5
 
 
 def _break_under_xiao(f):
@@ -1243,6 +1279,7 @@ def _break_pour_area(f):
     ("test_no_copper_under_a_support_post_or_boss_on_the_bottom_parts", _break_support),
     ("test_the_holder_pads_are_the_drawing_land", _break_holder),
     ("test_the_power_switch_pads_hold_the_terminals_of_the_drawing", _break_switch),
+    ("test_nothing_on_top_under_the_power_switch_frame_tabs", _break_psw_tab),
     ("test_nothing_on_top_under_the_xiao", _break_under_xiao),
     ("test_the_keepout_rule_area_is_where_the_antenna_is", _break_keepout_place),
 ])
@@ -1320,3 +1357,41 @@ def test_the_easyeda_fixture_holds_only_coordinates():
         for n, pad in part["pads"].items():
             assert re.fullmatch(r"\d+", n) and len(pad) == 4, (c, n, pad)
             assert all(isinstance(v, (int, float)) for v in pad), (c, n, pad)
+
+
+_PRUNE = r"""
+import sys, types
+path, board = sys.argv[1], sys.argv[2]
+m = types.ModuleType("route_pcb")
+m.__file__ = path
+exec(compile(open(path).read(), path, "exec"), m.__dict__)
+pcbnew = m.pcbnew
+b = pcbnew.LoadBoard(board)
+nets = {"VBAT_IN", "VBAT_SW"}
+n0 = sum(1 for t in b.GetTracks() if t.GetNetname() in nets)
+clean = m.prune_dangling(b, nets)
+for a, c in (((141.225, -36.1), (139.0, -34.0)), ((139.0, -34.0), (137.0, -34.0))):
+    t = pcbnew.PCB_TRACK(b)
+    t.SetStart(m.kpt(*a))
+    t.SetEnd(m.kpt(*c))
+    t.SetWidth(m.MM(0.3))
+    t.SetLayer(pcbnew.B_Cu)
+    t.SetNet(b.FindNet("VBAT_SW"))
+    b.Add(t)
+stub = m.prune_dangling(b, nets)
+left = sum(1 for t in b.GetTracks() if t.GetNetname() in nets)
+print(f"OK {clean} {stub} {left} {n0}")
+"""
+
+
+def test_the_routing_tool_prunes_only_dead_ends(tmp_path):
+    """route_pcb.prune_dangling（--reroute で引き直した網の行き止まりを消す）: 発注する板では何も消さず、
+    奥の足から伸ばした 2 本の行き止まりは 2 本とも消し、ほかの線は残す（2026-09-24 に電源スイッチを動かしたとき足した）。"""
+    require(paths.KICAD_PYTHON, "route_pcb.py を KiCad の Python で読む")
+    board = board_copy(tmp_path / "b")
+    r = subprocess.run([paths.KICAD_PYTHON, "-c", _PRUNE, str(ROUTE_PCB), str(board)],
+                       cwd=ROOT, capture_output=True, text=True)
+    last = (r.stdout.strip().splitlines() or [""])[-1]
+    assert last.startswith("OK"), r.stdout[-2000:] + r.stderr[-2000:]
+    clean, stub, left, n0 = map(int, last.split()[1:])
+    assert (clean, stub, left) == (0, 2, n0), last

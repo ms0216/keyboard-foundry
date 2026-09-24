@@ -63,10 +63,12 @@ def plan(ax, ifc, what=("all",)):
         box(ax, p, fc="#fb0", fill=True, ec="k", lw=0.4)
     c, r = ifc.cell()
     ax.add_patch(Circle(c, r, fill=False, ec="k", lw=0.8))
-    box(ax, ifc.psw_land(), fc="#c9f", fill=True, ec="k", lw=0.5, alpha=0.7)
-    box(ax, ifc.psw_knob(), fc="k", fill=True, lw=0)
-    for pc, pr in ifc.psw_pegs():
-        ax.add_patch(Circle(pc, pr, fc="w", ec="k", lw=0.4))
+    box(ax, ifc.psw_body(), fc="#c9f", fill=True, ec="k", lw=0.5, alpha=0.7)
+    for pc in ifc.psw_pins():
+        ax.add_patch(Circle(pc, s.PSW_PAD_D / 2, fc="#fb0", ec="k", lw=0.4))
+    box(ax, ifc.psw_lever_range(), fc="k", fill=True, lw=0, alpha=0.35)
+    box(ax, ifc.psw_lever(s.PSW_ON), fc="k", fill=True, lw=0)
+    box(ax, slot_of(ifc), ec="r", lw=0.8)
     c, r = ifc.lid_pillar()
     ax.add_patch(Circle(c, r, fc="#fc9", ec="k", lw=0.6))
     ax.add_patch(Circle(c, s.LID_PILLAR_HOLE / 2, fill=False, ec="g", lw=0.6, ls="--"))
@@ -80,6 +82,12 @@ def plan(ax, ifc, what=("all",)):
     ax.plot([p[0] for p in seam], [p[1] for p in seam], color="orange", lw=1.6)
     ax.set_aspect("equal")
     ax.grid(alpha=0.2)
+
+
+def slot_of(ifc):
+    """右のふたのレバーの穴（case.Case.psw_slot と同じ物を case から読む）。"""
+    from case import Case
+    return Case(ifc).psw_slot()
 
 
 def section_rects(ax, items):
@@ -167,13 +175,13 @@ def right_corner(ifc):
     c = ifc.corners()["right"]
     a1.set_xlim(c[0] - 12, ifc.case_outer[2] + 4)
     a1.set_ylim(ifc.case_outer[1] - 3, c[3] + 12)
-    hy, sy = s.HOLDER_AT[1], s.PSW_AT[1]
+    hy = s.HOLDER_AT[1]
     a1.axhline(hy, color="k", lw=0.4, ls="-.")
-    a1.axhline(sy, color="k", lw=0.4, ls="-.")
+    a1.axvline(s.PSW_AT[0], color="k", lw=0.4, ls="-.")
     a1.text(c[0] - 11, hy + 0.5, "断面 B", fontsize=8)
-    a1.text(c[0] - 11, sy + 0.5, "断面 C", fontsize=8)
-    a1.set_title("右の角（平面）: ホルダ・CR1632（円）・ふたの柱（橙）・電源スイッチ（紫・裏）"
-                 "とつまみ（黒）", fontsize=9)
+    a1.text(s.PSW_AT[0] + 0.3, c[3] + 8, "断面 C", fontsize=8)
+    a1.set_title("右の角（平面）: ホルダ・CR1632（円）・ふたの柱（橙）・電源スイッチ SS-12D00G3（紫・表）・"
+                 "足（黄）・レバー（黒 = 入の位置・灰 = 動く範囲）・ふたの穴（赤）", fontsize=9)
     o, w, pcb = ifc.case_outer, ifc.wall_inner, ifc.pcb
     cov = ifc.cover("right")
     hb = ifc.holder_body()
@@ -183,7 +191,9 @@ def right_corner(ifc):
         ((o[0] - 2, o[2], 0, s.CASE_FLOOR), dict(fc="0.85", ec="k", lw=0.5)),
         ((w[2], o[2], 0, z["rim"] - s.LID_T), dict(fc="0.85", ec="k", lw=0.5)),
         ((c[0] - 12, pcb[2], z["pcb_bottom"], z["pcb_top"]), dict(fc="#6b6", ec="k", lw=0.5)),
-        ((cov[0], cov[2], z["rim"] - s.LID_T, z["rim"]), dict(fc="#aac", ec="k", lw=0.5)),
+        # ふたの天板（y = ホルダの中心はレバーの穴を通るので、穴の左右に分けて描く）
+        ((cov[0], slot_of(ifc)[0], z["rim"] - s.LID_T, z["rim"]), dict(fc="#aac", ec="k", lw=0.5)),
+        ((slot_of(ifc)[2], cov[2], z["rim"] - s.LID_T, z["rim"]), dict(fc="#aac", ec="k", lw=0.5)),
         ((cov[0], cov[0] + s.LID_T, z["pcb_top"] + 0.2, z["rim"]), dict(fc="#aac", ec="k", lw=0.5)),
     ]
     items = base + [
@@ -192,6 +202,11 @@ def right_corner(ifc):
          dict(fc="0.5", ec="k", lw=0.5)),
         ((px - pr, px + pr, s.CASE_FLOOR, z["lid_bottom"]), dict(fc="#fc9", ec="k", lw=0.5)),
         ((px - 1.6, px + 1.6, z["lid_bottom"] - 4.0, z["lid_bottom"]), dict(fc="#c96", ec="k", lw=0.4)),
+        # 電源スイッチ（この断面は真ん中の足を通る）: 本体・レバー（先は名目）・足
+        ((ifc.psw_body()[0], ifc.psw_body()[2], z["psw_seat"], z["psw_top"]), dict(fc="#c9f", ec="k", lw=0.5)),
+        ((ifc.psw_lever(1)[0], ifc.psw_lever(1)[2], z["psw_top"], z["psw_tip"]), dict(fc="k")),
+        ((s.PSW_AT[0] - s.PSW_PIN[0] / 2, s.PSW_AT[0] + s.PSW_PIN[0] / 2, z["psw_pin_end"], z["psw_seat"]),
+         dict(fc="#c80", ec="k", lw=0.3)),
     ]
     section_rects(a2, items)
     # 電池の出し入れ: 傾けて + 側（右端）のクリップの下へ差し込み、反対側を押し下げる
@@ -215,32 +230,45 @@ def right_corner(ifc):
     a2.set_xlim(c[0] - 12, o[2] + 3)
     a2.set_ylim(-1, z["rim"] + 12)
     a2.set_aspect("equal")
-    a2.set_title("断面 B（y = %.2f）: ホルダ・電池・ふた（天板 %.1f）・ふたの柱とインサート" %
+    a2.set_title("断面 B（y = %.2f）: ホルダ・電池・ふた（天板 %.1f）・ふたの柱とインサート・電源スイッチ（紫）" %
                  (hy, s.LID_T), fontsize=9)
     a2.grid(alpha=0.2)
-    # 断面 C（電源スイッチ）
+    # 断面 C（電源スイッチの足の並び・x = PSW_AT.x の y-z）
+    x0 = s.PSW_AT[0]
     pb = ifc.psw_body()
-    kn = ifc.psw_knob()
-    items = base + [
-        ((pb[0], pb[2], z["psw_bottom"], z["pcb_bottom"]), dict(fc="#c9f", ec="k", lw=0.5)),
-        ((kn[0], kn[2], z["psw_bottom"], z["psw_bottom"] + s.PSW_KNOB[1]), dict(fc="k")),
+    sl = slot_of(ifc)
+    on = ifc.psw_lever(s.PSW_ON)
+    off = ifc.psw_lever(-s.PSW_ON)
+    tip = ifc.psw_tip_range()
+    cy0, cy1 = ifc.cover("right")[1], ifc.cover("right")[3]
+    items = [
+        ((o[1], cy1 + 3, 0, s.CASE_FLOOR), dict(fc="0.85", ec="k", lw=0.5)),
+        ((pcb[1], cy1 + 3, z["pcb_bottom"], z["pcb_top"]), dict(fc="#6b6", ec="k", lw=0.5)),
+        ((cy0, sl[1], z["lid_bottom"], z["rim"]), dict(fc="#aac", ec="k", lw=0.5)),
+        ((sl[3], cy1, z["lid_bottom"], z["rim"]), dict(fc="#aac", ec="k", lw=0.5)),
+        ((pb[1], pb[3], z["psw_seat"], z["psw_top"] + s.PSW_H_TOL), dict(fc="#c9f", ec="k", lw=0.6)),
+        ((on[1], on[3], z["psw_top"], tip[1]), dict(fc="k")),
+        ((off[1], off[3], z["psw_top"], tip[1]), dict(fill=False, ec="k", lw=0.6, ls="--")),
     ]
+    for _, py in ifc.psw_pins():
+        items.append(((py - s.PSW_PIN[1] / 2, py + s.PSW_PIN[1] / 2, z["psw_pin_end"], z["psw_seat"]),
+                      dict(fc="#c80", ec="k", lw=0.3)))
     section_rects(a3, items)
-    a3.add_patch(Rectangle((w[2], s.CASE_FLOOR), o[2] - w[2], z["pcb_top"] - s.CASE_FLOOR,
-                           fc="w", ec="r", lw=0.8, ls="--"))
-    a3.add_patch(Rectangle((o[2] - s.PSW_SCOOP, s.CASE_FLOOR - 0.6), s.PSW_SCOOP,
-                           z["pcb_top"] - s.CASE_FLOOR + 1.2, fc="#fee", ec="r", lw=0.5, ls=":"))
-    a3.text(o[2] - 14, s.CASE_FLOOR + 5.5,
-            f"壁の切り欠き（上から基板を落とすため上に開く。\nふたの舌が上を塞ぐ）。つまみの先は外面から "
-            f"{kn[2] - o[2]:+.2f}。\n外面に深さ {s.PSW_SCOOP} の指の窪み（点線）", fontsize=7, color="r")
-    for name in ("floor_top", "psw_bottom", "pcb_bottom", "pcb_top"):
+    a3.axhspan(tip[0], tip[2], xmin=0, xmax=1, color="r", alpha=0.08)
+    a3.text(o[1] - 7.5, z["rim"] + 0.9,
+            f"ふたの穴 {sl[3] - sl[1]:.1f}（y）× {sl[2] - sl[0]:.1f}（x）。レバーの先は名目 {tip[1]:.2f}"
+            f"（ふたの上面 {z['rim']:.2f} より {z['rim'] - tip[1]:+.2f} 下）、公差で {tip[0]:.2f}〜{tip[2]:.2f}（薄い赤）。\n"
+            f"本体は爪 {s.PSW_TAB} で浮く。足は基板の下面から {s.PSW_PIN_TRIM} に切る（床まで {z['psw_pin_end'] - s.CASE_FLOOR:.1f}）。"
+            f"黒 = 入（{'奥' if s.PSW_ON > 0 else '手前'}）・点線 = 切", fontsize=7, color="r")
+    for name in ("floor_top", "psw_pin_end", "pcb_bottom", "pcb_top", "psw_seat", "psw_top", "lid_bottom", "rim"):
         a3.axhline(z[name], color="0.6", lw=0.3, ls=":")
-        a3.text(c[0] - 11.5, z[name], f"{name} {z[name]:.2f}", fontsize=7, va="center")
+        a3.text(o[1] - 7.5, z[name], f"{name} {z[name]:.2f}", fontsize=7, va="center")
     a3.axhline(0, color="k", lw=1)
-    a3.set_xlim(c[0] - 12, o[2] + 3)
-    a3.set_ylim(-1, z["rim"] + 2)
+    a3.set_xlim(o[1] - 8, cy1 + 3)
+    a3.set_ylim(-1, z["rim"] + 4)
     a3.set_aspect("equal")
-    a3.set_title("断面 C（y = %.2f）: 電源スイッチ MK-12C02-G025（裏面）とつまみ" % sy, fontsize=9)
+    a3.set_xlabel("y [mm]")
+    a3.set_title("断面 C（x = %.3f）: 電源スイッチ SS-12D00G3（表）・足・レバーとふたの穴" % x0, fontsize=9)
     a3.grid(alpha=0.2)
     fig.tight_layout()
     fig.savefig(OUT / "interface_corner_right.png", dpi=130)
@@ -272,7 +300,7 @@ def zstack(ifc):
     ]
     section_rects(ax, items)
     for name, v in sorted(z.items(), key=lambda kv: kv[1]):
-        if name in ("xiao_top", "holder_top", "usb_center", "lid_bottom", "psw_bottom", "island_top"):
+        if name in ("xiao_top", "holder_top", "usb_center", "lid_bottom", "island_top") or name.startswith("psw_"):
             continue
         ax.axhline(v, color="0.6", lw=0.3, ls=":")
         ax.text(px + 12.5, v, f"{name} {v:.2f}", fontsize=7, va="center")

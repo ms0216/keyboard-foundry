@@ -6,10 +6,10 @@
     基板の上面のナット（プレートの六角の穴が回り止め）に留まる。継ぎ目どうしは繋がない（D13）
   - 床から立つもの: 取付のボス φ5.6（10）、支えの柱 φ3.0（38）、右の角のふたの柱 φ5.2（インサート）
   - 左の壁: XIAO の USB-C の口（上に開いた切り欠き。上は左のふたの舌が塞ぐ）
-  - 右の壁: 電源スイッチのつまみの切り欠き（同上。右のふたのひれが塞ぐ）＋外面の指の窪み
   - 床の裏の四隅: 滑り止めのくぼみ（その上だけ床を厚くした島。裏に出る物の下を避けて置く）
   - 左のふた: 天板＋キー側の垂れ壁＋USB の舌＋H3 のボス（インサート。下からのネジで基板に締める）
-  - 右のふた（電池のふた）: 天板＋キー側の垂れ壁 2 辺＋つまみのひれ＋柱に当たるボス。
+  - 右のふた（電池のふた）: 天板＋キー側の垂れ壁 2 辺＋柱に当たるボス。天板に電源スイッチの
+    レバーの穴（レバーの先は天板の上面より下・爪で動かす）と入の向きの刻印（ON と矢印）。
     上からの M2 皿ネジ 1 本で柱のインサートへ。**ネジはふたの膜に捕まって落ちない**
 
 座標は CAD（キー領域の中心が原点・X 右・Y 奥・Z は机 = 0）。印刷の向きは export 時に回す。
@@ -27,8 +27,8 @@ HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
-from build123d import (Align, Box, Compound, Cone, Cylinder, Part, Polygon,  # noqa: E402
-                       Pos, RectangleRounded, RegularPolygon, Rot, extrude)
+from build123d import (Align, Box, Compound, Cone, Cylinder, FontStyle, Part,  # noqa: E402
+                       Polygon, Pos, RectangleRounded, RegularPolygon, Rot, Text, extrude)
 
 import case_spec as CS  # noqa: E402
 import interface as I  # noqa: E402
@@ -129,18 +129,30 @@ class Case:
         return (y - w, y + w, zc - h, zc + h)
 
     def psw_slot(self):
-        """つまみの切り欠き (y0, y1, z0)。つまみの動く範囲＋片側 PSW_SLOT_CLEAR。上へは開く。"""
-        k = self.i.psw_knob()
-        c = self.c.PSW_SLOT_CLEAR
-        return (k[1] - c, k[3] + c, self.z["psw_bottom"] - c)
+        """右のふたの電源スイッチの穴 (x0, y0, x1, y1)。レバーの動く範囲＋片側 PSW_SLOT_CLEAR、
+        動く向き（y）の両端はさらに PSW_SLOT_NAIL（爪を差し込む場所）。"""
+        k = I.grow(self.i.psw_lever_range(), self.c.PSW_SLOT_CLEAR)
+        n = self.c.PSW_SLOT_NAIL
+        return (k[0], k[1] - n, k[2], k[3] + n)
 
-    def psw_scoop(self):
-        """指の窪み (x0, y0, z0, x1, y1, z1)。外面から PSW_SCOOP。"""
-        o = self.i.case_outer
-        y = self.s.PSW_AT[1]
-        w = self.c.PSW_SCOOP_W / 2
-        z1 = self.z["pcb_bottom"] + self.c.LID_DROP_GAP     # 右のふたのひれの下端に揃える
-        return (o[2] - self.s.PSW_SCOOP, y - w, self.c.PSW_SCOOP_Z0, o[2] + 1.0, y + w, z1)
+    def psw_mark(self):
+        """入の向きの刻印（彫る側の立体）: 穴の左に、入の端（spec.PSW_ON）を指す矢印と "ON"。"""
+        c, z = self.c, self.z
+        x0, y0, x1, y1 = self.psw_slot()
+        on = self.s.PSW_ON
+        shaft, head_w, head_l = c.PSW_MARK_ARROW
+        ax = x0 - c.PSW_MARK_GAP - head_w / 2                 # 矢印の軸の x
+        tip, tail = (y1, y0) if on > 0 else (y0, y1)
+        neck = tip - on * head_l
+        z0, z1 = z["rim"] - c.PSW_MARK_DEPTH, z["rim"] + 1.0
+        arrow = [box(ax - shaft / 2, min(tail, neck), z0, ax + shaft / 2, max(tail, neck), z1),
+                 prism([(ax - head_w / 2, neck), (ax + head_w / 2, neck), (ax, tip)], z0, z1)]
+        txt = Text("ON", c.PSW_MARK_SIZE, font_style=FontStyle.BOLD)
+        bb = txt.bounding_box()
+        tx = ax - head_w / 2 - c.PSW_MARK_GAP - bb.max.X      # 右の端を矢印の頭の左へ
+        ty = (y0 + y1) / 2 - (bb.min.Y + bb.max.Y) / 2
+        word = Pos(tx, ty, z0) * extrude(txt, z1 - z0)
+        return fuse(arrow + [word])
 
     def pillar_top(self):
         return self.z["lid_bottom"] - self.c.LID_BOSS_H
@@ -199,11 +211,6 @@ class Case:
         # USB の口（上に開く。上は左のふたの舌）
         y0, y1, z0, _ = self.usb_opening()
         cut.append(box(o[0] - 1, y0, z0, w[0] + 0.5, y1, z["rim"] + 1))
-        # 電源スイッチのつまみ（上に開く。上は右のふたのひれ）
-        y0, y1, z0 = self.psw_slot()
-        cut.append(box(w[2] - 0.5, y0, z0, o[2] + 1, y1, z["rim"] + 1))
-        # 指の窪み
-        cut.append(box(*self.psw_scoop()))
         # 滑り止めのくぼみ
         for r in self.antislip_pads():
             cut.append(rbox(r, -1.0, s.ANTISLIP_RECESS))
@@ -264,19 +271,17 @@ class Case:
     def lid_right(self):
         s, c, z, i = self.s, self.c, self.z, self.i
         lid = self._lid_common("right")
-        o, w = i.case_outer, i.wall_inner
-        # つまみのひれ: 切り欠きの上（基板の下面＋隙から）を塞ぐ
-        y0, y1, _ = self.psw_slot()
-        fin = box(w[2], y0 + c.FIT / 2, z["pcb_bottom"] + c.LID_DROP_GAP, o[2],
-                  y1 - c.FIT / 2, z["lid_bottom"] + 0.01) - box(*self.psw_scoop())
         # 柱に当たるボス
         px, py = s.LID_PILLAR_AT
         boss = cyl(px, py, self.pillar_top(), z["lid_bottom"] + 0.01, s.LID_PILLAR_D)
-        lid = lid.fuse(fin, boss)
+        lid = lid.fuse(boss)
         top = self.pillar_top()
         holes = fuse([self.screw_seat_top(px, py, z["rim"]),
                       cyl(px, py, top + c.CAPTIVE_WEB_T, z["rim"], M2_CLEAR_D),
-                      cyl(px, py, top - 1, top + c.CAPTIVE_WEB_T + 0.01, c.CAPTIVE_HOLE_D)])
+                      cyl(px, py, top - 1, top + c.CAPTIVE_WEB_T + 0.01, c.CAPTIVE_HOLE_D),
+                      # 電源スイッチのレバーの穴（天板を抜ける）と入の刻印
+                      rbox(self.psw_slot(), z["lid_bottom"] - 1.0, z["rim"] + 1.0),
+                      self.psw_mark()])
         return one_solid((lid - holes).clean(), "lid_R")
 
     # --- 全部 -----------------------------------------------------------------

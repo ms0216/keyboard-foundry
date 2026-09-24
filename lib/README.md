@@ -132,7 +132,7 @@ Seeed XIAO nRF52840 のフットプリントと公式 STEP（HHKB で作り、14
 
 | ファイル | 出典 | 照合 |
 |---|---|---|
-| `SW_MK-12C02-G025` | LCSC（EasyEDA）の SW-SMD_MK-12C02-G025（`https://easyeda.com/api/products/C778186/components`）を mm に直した。耳 4 つは外端をデータシート（G-Switch 2023-02-01）の推奨ランド外外 8.3 に詰め、つまみ側の 2 つは角を斜めに落とした（CCKB の基板の角 R1.0 のため） | 図面の端子の間隔・耳の金具・穴 φ0.9（tests/test_cckb_pcb.py） |
+| `SW_SS-12D00G3` | 秋月電子の SS-12D00G3（115707）の図面（<https://akizukidenshi.com/goodsaffix/AKIZUKI-SS-12D00G3.pdf> 5 ページ目・SS12D00GXX-A03）の PCB LAYOUT: 3-φ0.8 を 2.5 間隔（足 0.5×0.3）。ランド φ1.6。パッド 2 = 真ん中（共通）、1 と 3 の番号はこちらで付けた。コートヤードは本体の最大 8.7×3.9 に 0.25。シルクは右の辺を描かない（CCKB では基板の縁に揃える）。2026-09-24 に `SW_MK-12C02-G025`（LCSC・裏）から置き換えて、前のフットプリントは消した | 図面の穴・間隔（tests/test_cckb_pcb.py） |
 | `BAT_BS-16-B4AK003` | 図面 MY-CP-0085 の PCB Layout（3.75×4.5・外外 28.0）。LCSC（EasyEDA）の BAT-SMD_BS-16-B4AK005 と同じ位置・大きさ。パッド 1 = ＋ | 同上 |
 | `Hole_NPTH_6.0mm` | 右のふたの柱の穴（spec.LID_PILLAR_HOLE） | — |
 

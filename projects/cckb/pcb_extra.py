@@ -2,10 +2,10 @@
 
 置くもの（決定記録 decisions/2026-09-24-interface.md §5-5 の凍結した境界）:
   - スタビの逃げ穴 8 つ（Edge.Cuts・interface.stab_reliefs）
-  - XIAO（表・平ら・キャステレーション）・電池ホルダ（表）・電源スイッチ（裏）・右のふたの柱の穴
+  - XIAO（表・平ら・キャステレーション）・電池ホルダ（表）・電源スイッチ（表・スルーホール）・右のふたの柱の穴
   - 裏の電子部品（74LVC595 ×2・パスコン・電源のショットキー D_PWR・分圧）
   - ルール領域: アンテナの銅の禁止域（全層）・XIAO の下の表の銅の禁止（XIAO の裏のパッドと短絡させない）・
-    基板の面に当たる金属（ナット・インサート）の下の銅の禁止
+    基板の面に当たる金属（ナット・インサート・電源スイッチの枠の爪）の下の銅の禁止
   - ネットクラス POWER
 
 **寸法は持たない**（spec.py・interface.py）。持つのは規則に足す余裕（EDGE_BAND の ＋0.02）と、
@@ -37,7 +37,7 @@ CCKB_LIB = paths.LIB / "cckb.pretty"
 FP = {  # 参照名 → (ライブラリ, 名前, 表か)
     "U_MCU": (XIAO_LIB, "XIAO_nRF52840_SMD", True),
     "BT1": (CCKB_LIB, "BAT_BS-16-B4AK003", True),
-    "SW_PWR": (CCKB_LIB, "SW_MK-12C02-G025", False),
+    "SW_PWR": (CCKB_LIB, "SW_SS-12D00G3", True),
     "H_LID": (CCKB_LIB, "Hole_NPTH_6.0mm", True),
     "U1": (paths.KICAD_FOOTPRINTS / "Package_SO.pretty", "TSSOP-16_4.4x5mm_P0.65mm", False),
     "U2": (paths.KICAD_FOOTPRINTS / "Package_SO.pretty", "TSSOP-16_4.4x5mm_P0.65mm", False),
@@ -47,7 +47,7 @@ FP = {  # 参照名 → (ライブラリ, 名前, 表か)
     "R_LO": (paths.KICAD_FOOTPRINTS / "Resistor_SMD.pretty", "R_0805_2012Metric", False),
     "D_PWR": (paths.KICAD_FOOTPRINTS / "Diode_SMD.pretty", "D_SOD-123", False),
 }
-VALUE = {"U_MCU": "XIAO_nRF52840", "BT1": "BS-16-B4AK003", "SW_PWR": "MK-12C02-G025",
+VALUE = {"U_MCU": "XIAO_nRF52840", "BT1": "BS-16-B4AK003", "SW_PWR": "SS-12D00G3",
          "H_LID": "Hole_6.0", "U1": "SN74LVC595APWR", "U2": "SN74LVC595APWR",
          "C_U1": "0.1uF", "C_U2": "0.1uF", "R_HI": "1M", "R_LO": "1M", "D_PWR": "BAT46W"}
 
@@ -154,6 +154,14 @@ def xiao_underside(ifc):
 LAYER = {"F.Cu": pcbnew.F_Cu, "B.Cu": pcbnew.B_Cu}
 
 
+def psw_tab_keepouts(ifc):
+    """電源スイッチの枠の爪の下で表の銅を禁止する矩形 2 つ（奥・手前。CAD）。"""
+    b = interface.grow(ifc.psw_body(), ifc.s.METAL_COPPER_CLEAR)
+    y = ifc.s.PSW_AT[1]
+    h = ifc.s.PSW_PIN_PITCH / 2
+    return [(b[0], y + h, b[2], b[3]), (b[0], b[1], b[2], y - h)]
+
+
 def circle_poly(c, r, n=24):
     """半径 r の円を**外に接する** n 角形で（円を必ず覆う）。"""
     R = r / math.cos(math.pi / n)
@@ -189,11 +197,11 @@ def place(board, ctx):
         raise RuntimeError(f"XIAO の向きが違う: D0 {d0} D6 {d6} 5V {v5}（D0〜D6 は手前・D0 が USB 側）")
     _put(board, ctx, "BT1", s.HOLDER_AT, 0, True)
     _put(board, ctx, "H_LID", s.LID_PILLAR_AT, 0, True)
-    # 電源スイッチ（裏）。つまみ（足で +y）を +x へ。裏返すと x が鏡になるので裏返す前は −x へ
-    sw = _put(board, ctx, "SW_PWR", s.PSW_AT, -90, False)
-    term = [_cad(sw.FindPadByNumber(n).GetPosition(), origin)[0] for n in "123"]
-    if not all(t < s.PSW_AT[0] for t in term):
-        raise RuntimeError(f"電源スイッチの向きが違う: 端子の x {term}（つまみは +x・端子は内側）")
+    # 電源スイッチ（表・スルーホール）。足の並びは y。パッド 1 が奥（interface.psw_pins の順）
+    sw = _put(board, ctx, "SW_PWR", s.PSW_AT, 0, True)
+    got = [_cad(sw.FindPadByNumber(n).GetPosition(), origin) for n in "123"]
+    if any(math.dist(a, b) > 1e-3 for a, b in zip(got, ifc.psw_pins())):
+        raise RuntimeError(f"電源スイッチの足 {got} が interface.psw_pins {ifc.psw_pins()} と違う")
 
     # --- 裏の電子部品 -----------------------------------------------------------
     for ref, (px, py, deg) in s.PART_AT.items():
@@ -234,6 +242,12 @@ def place(board, ctx):
     # （interface.metal_keepouts。監査 E 1 回目 重要 3・2 回目 重要 1）
     for ref, layer, c, r in ifc.metal_keepouts():
         rule_area(board, ctx, circle_poly(c, r), (LAYER[layer],), "METAL_KEEPOUT")
+    # 電源スイッチの枠（金属・どこにも繋がっていない）は台座の下へ折り返した爪 4 つで基板の表に立つ
+    # （spec.PSW_TAB）。爪は外側の足の脇にある（図面の側面図）。爪が表の違う網を 2 本またぐと、
+    # マスクが擦れたときに枠を通して短絡する → 本体（最大）の両端（真ん中の足から ±PSW_PIN_PITCH/2
+    # より外）の下に表の銅を置かない（＋METAL_COPPER_CLEAR）。真ん中の帯は共通の足への線が通る
+    for box in psw_tab_keepouts(ifc):
+        rule_area(board, ctx, box, (pcbnew.F_Cu,), "PSW_TAB_KEEPOUT")
     # 外形とスタビの逃げ穴の縁に、配線・ビアを入れない帯（ベタは入れてよい。ベタは自分の
     # 外形の逃げで離れる）。**Freerouting は外形・逃げ穴をネットクラスの間隔 0.2 でしか避けない**
     # ので、JLC の銅と外形 0.3 を割った（1 回目: 0.237・0.280）。帯は EDGE_BAND 幅

@@ -501,9 +501,11 @@ def _pro(tmp_path):
 
 
 def test_the_project_rules_take_the_spec_severity(tmp_path):
+    """機種が spec.DRC_SEVERITY で下げた重大度が .kicad_pro に書かれる（CCKB は 2026-09-24 から下げて
+    いない。仕組みは残すので、下げる例を直に渡して見る）。"""
     from foundry.pcb_rules import sync_project_rules
 
-    sync_project_rules(_pro(tmp_path), load("cckb").spec.DRC_SEVERITY)
+    sync_project_rules(_pro(tmp_path), {"npth_inside_courtyard": "warning"})
     doc = json.loads((tmp_path / "x.kicad_pro").read_text())
     assert doc["board"]["design_settings"]["rule_severities"] == {"npth_inside_courtyard": "warning"}
 

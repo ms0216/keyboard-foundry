@@ -175,17 +175,17 @@ def test_the_assembly_models_the_routed_board(asm, geo):
     """組み立ての基板は**発注する配線済みの板**（pcb/cckb_main.kicad_pcb）で、裏の部品を物の数で数える。
 
     - 外形と逃げ穴は板の Edge.Cuts（穴 = スタビ 8）
-    - 板で裏返した部品 70 = JLC の CPL 70 行（段階 2 の報告・fab-checklist）: 箱で置く 69 ＋ 図面の形で置く
-      電源スイッチ 1。**穴（H_LID）を部品に数えない・電源スイッチを二重に数えない**（統合で起きた 2 つの赤）
+    - 板で裏返した部品 69 = JLC の CPL 69 行（fab-checklist）。どれも箱で置く。**穴（H_LID）を部品に数えない**
+      （統合で起きた赤）。電源スイッチは 2026-09-24 から表（スルーホール）で、図面の形で別に置く
     - XIAO・ホルダ・電源スイッチは板のフットプリントの位置に置く
     """
     assert A.ROUTED_BOARD.name == "cckb_main.kicad_pcb" and A.ROUTED_BOARD.parent.name == "pcb"
     assert len(geo["outline"]["holes"]) == 8
     flipped = [f["ref"] for f in geo["footprints"] if f["back"]]
-    assert len(flipped) == 70
+    assert len(flipped) == 69 and "SW_PWR" not in flipped
     refs = asm.bottom_refs()
-    assert len(refs) == 69 and "SW_PWR" not in refs and "H_LID" not in refs
-    assert sorted(refs + ["SW_PWR"]) == sorted(flipped)
+    assert len(refs) == 69 and "H_LID" not in refs
+    assert sorted(refs) == sorted(flipped)
     copper = {p["ref"] for p in geo["pads"] if not p["npth"]}
     assert all(r in copper for r in refs)                      # 穴だけのフットプリントは部品ではない
     fps = {f["ref"]: f for f in geo["footprints"]}
@@ -201,10 +201,17 @@ def test_the_placement_check_notices_a_rotated_part(geo):
 
 
 def test_the_interference_check_notices_a_power_switch_moved_on_the_board(geo):
-    """板の電源スイッチを 0.9 外へ（耳の外端 142.875 → 143.775 が壁の内面 143.675 を越える。
-    壁の内面は 2026-09-24 に基板から片側 0.5 へ広げた・spec.CASE_PCB_GAP）。"""
-    a = A.Assembly(geo_with(geo, "SW_PWR", dx=0.9))
+    """板の電源スイッチを 0.6 外へ（本体の最大の右の縁 143.175 → 143.775 が壁の内面 143.675 を越える。
+    レバーもふたの穴の縁 142.425 を越える）。"""
+    a = A.Assembly(geo_with(geo, "SW_PWR", dx=0.6))
     bad = A.interference(slim(a, ["psw", "tray_R", "lid_R"]))
+    assert ("psw", "tray_R") in bad and ("psw", "lid_R") in bad, bad
+
+
+def test_the_power_switch_pins_must_be_trimmed(asm, g):
+    """電源スイッチの足を切らないと（図の最長 4.1・爪 0.4）床に当たる。切った足（PSW_PIN_TRIM）は当たらない。"""
+    assert A.interference({"psw": g["psw"]}, {"tray_R": g["tray_R"]}) == {}
+    bad = A.interference({"psw": asm.psw(trimmed=False)}, {"tray_R": g["tray_R"]})
     assert ("psw", "tray_R") in bad, bad
 
 
@@ -316,7 +323,7 @@ def test_every_part_can_be_put_in_and_taken_out(asm, g):
 @pytest.mark.parametrize("move,cs_over,path", [
     (("U_MCU", 1.5, 0.0), {}, "usb_plug"),                      # 板の XIAO が 1.5 奥 → プラグの樹脂が壁に入り込む
     (("BT1", 0.0, 2.6), {}, "cell"),                            # 板のホルダが奥 → 電池がプレートの下
-    (None, {"PSW_SLOT_CLEAR": -1.0}, "board"),                  # つまみの切り欠きが狭い
+    (None, {"PSW_SLOT_CLEAR": -0.3}, "lid_R"),                  # レバーの穴が狭い（ふたが外れない）
     (None, {"DRIVER_D": 5.0}, "screws"),                        # ドライバーが座ぐりに入らない
 ])
 def test_the_path_check_notices_a_blocked_path(geo, move, cs_over, path):
@@ -337,11 +344,19 @@ def test_the_retention_check_notices_a_loose_part(geo, over):
 
 def test_the_power_switch_takes_a_fingernail(asm, g):
     assert A.nail_problems(asm, g) == []
+    # 公差を積んだレバーの先とふたの上面の差（正なら下）。**最高では出る**（open-gaps O13 で利用者が決める）
+    worst, nominal, lowest = A.psw_tip_margin(asm)
+    print(f"レバーの先はふたの上面から: 名目 {nominal:+.2f}・公差の最高 {worst:+.2f}・最低 {lowest:+.2f}")
+    assert nominal > 0
 
 
-def test_the_nail_check_notices_no_scoop(geo):
-    a = A.Assembly(geo, ifc_with(PSW_SCOOP=0.0))
-    assert A.nail_problems(a, slim(a, ["tray_R", "lid_R"]))
+@pytest.mark.parametrize("cs_over, ifc_over", [
+    ({"PSW_SLOT_NAIL": 0.3}, {}),                 # 穴の端に爪の場所が無い
+    ({}, {"PSW_TAB": 0.7}),                       # 爪で浮く量が大きい → 先がふたの上面を越える
+])
+def test_the_nail_check_notices_a_blocked_or_protruding_lever(geo, cs_over, ifc_over):
+    a = A.Assembly(geo, ifc_with(**ifc_over) if ifc_over else None, cs_with(**cs_over) if cs_over else CS)
+    assert A.nail_problems(a, slim(a, ["tray_R", "lid_R", "psw"]))
 
 
 # ---------------------------------------------------------------------------
@@ -370,7 +385,7 @@ def test_the_wall_probes_were_measured(asm):
     """測り所が材料に当たっているか（0 のまま通っていないか）と、数。"""
     meshes = {k: A.mesh_of(v) for k, v in asm.printed().items()}
     res = A.measure_probes(asm, meshes)
-    assert len(res) == 23 and all(t > 0.3 for _, _, t, _, _ in res), res
+    assert len(res) == 22 and all(t > 0.3 for _, _, t, _, _ in res), res
 
 
 @pytest.mark.slow
@@ -437,23 +452,24 @@ def test_the_floor_check_notices_missing_islands(geo):
 
 
 def test_the_antislip_islands_keep_clear_of_the_back_of_the_board(asm):
-    """島（上面 1.6）の上に、基板の裏に出る物（足の先の最悪 1.34・電源スイッチ 1.55）が来ない。平面で 0.5 以上。"""
+    """島（上面 1.6）の上に、基板の裏に出る物（足の先の最悪 1.34・裏の部品・電源スイッチの切った足）が来ない。平面で 0.5 以上。"""
     assert A.island_problems(asm) == []
 
 
 def test_the_island_check_notices_the_old_corner_pads(geo):
-    """前の四隅（外面から 3.0・16 × 10）に戻すと、Esc / BS の足と電源スイッチの下に島が入る。"""
+    """前の四隅（外面から 3.0・16 × 10）に戻すと、Esc / BS の足と電源スイッチの足の下に島が入る。"""
     a = A.Assembly(geo, cs=cs_with(ANTISLIP_AT=OLD_CORNER_PADS, ANTISLIP_PAD=(16.0, 10.0)))
     names = {n for _, n, _ in A.island_problems(a)}
-    assert {"SW1 のパッド", "SW15 のパッド", "SW_PWR の裏のコートヤード"} <= names, names
+    assert {"SW1 のパッド", "SW15 のパッド", "SW_PWR のパッド"} <= names, names
 
 
 @pytest.mark.slow
 def test_the_interference_check_notices_an_island_under_the_pins(geo):
-    """同じ壊し方で、組み立ての干渉（隙 0）も島とスイッチの足・電源スイッチを捕まえる。"""
+    """同じ壊し方で、組み立ての干渉（隙 0）も島とスイッチの足を捕まえる。電源スイッチの足は切って
+    島の上面から 0.4 上に止まるので干渉にはならない（平面の余裕は上の island_problems が見る）。"""
     a = A.Assembly(geo, cs=cs_with(ANTISLIP_AT=OLD_CORNER_PADS, ANTISLIP_PAD=(16.0, 10.0)))
     bad = A.interference(slim(a, ["tray_L", "tray_R", "switches", "psw"]))
-    assert ("tray_L", "switches") in bad and ("tray_R", "switches") in bad and ("tray_R", "psw") in bad, bad
+    assert ("tray_L", "switches") in bad and ("tray_R", "switches") in bad and ("tray_R", "psw") not in bad, bad
 
 
 def test_the_stab_housing_stays_off_the_floor(asm):
