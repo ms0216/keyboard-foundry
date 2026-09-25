@@ -288,6 +288,108 @@ def test_the_island_check_notices_the_first_band(monkeypatch):
     assert len(part.solids()) > 1
 
 
+@pytest.fixture(scope="module")
+def plate_parts(plate):
+    """刷るプレートの部品全部: 1 枚の板（分ける前）・左右の半分・スタビのキーの枠（別に刷る物）。"""
+    from foundry.plate import plate_frames, split_plate
+
+    p, main, _, positions = plate
+    keys = p.keys()
+    halves = dict(split_plate(p.spec, main, "main", keys))
+    frames = plate_frames(p.spec, keys, "main")
+    return p, main, halves, frames, positions
+
+
+def test_no_plate_web_is_thinner_than_the_minimum(plate_parts):
+    """刷るプレートのどの部品にも、幅 PLATE_MIN_WEB（0.4 ノズル 3 本）未満の帯・突起が無い。
+    穴どうし・穴と外形の間を、生成した立体の上面を縮めて戻して測る（foundry.plate.thin_webs）。"""
+    from foundry.plate import thin_webs
+
+    p, main, halves, frames, _ = plate_parts
+    bad = {}
+    for name, part in [("板", main)] + list(halves.items()) + list(frames):
+        t = thin_webs(part, p.spec.PLATE_MIN_WEB)
+        if t:
+            bad[name] = t
+    assert not bad, bad
+
+
+def _framed(parts, x, y):
+    from build123d import Vector
+
+    return any(part.is_inside(Vector(x, y, 0.6)) for part in parts)
+
+
+def switch_frame_problems(p, parts, positions):
+    """スイッチの開口の 4 辺（スタビのキーは奥の辺を除く。そこはワイヤの帯）の外側に板があるか。
+    辺から 0.3 と 1.0 の所を、辺に沿って 5 点ずつ刺す（爪は ±x の辺の ±2.25〜3.25。
+    decisions/2026-09-25-choc-v2 §10-6）。板 = 刷るプレートのどれか（半分・枠）。"""
+    from foundry.mech import switch_of
+
+    sw = switch_of(p.spec)
+    c = sw.cutout / 2
+    out = []
+    for (x, y), k in zip(positions, p.keys()):
+        stab = sw.stab_offset_for(k.w_u) is not None
+        sides = {"手前": (0, -1), "左": (-1, 0), "右": (1, 0)}
+        if not stab:
+            sides["奥"] = (0, 1)
+        for name, (nx, ny) in sides.items():
+            for d in (0.3, 1.0):
+                for t in (-6.0, -2.75, 0.0, 2.75, 6.0):
+                    px = x + nx * (c + d) + (t if nx == 0 else 0.0)
+                    py = y + ny * (c + d) + (t if ny == 0 else 0.0)
+                    if not _framed(parts, px, py):
+                        out.append(f"{k.label}（{x:.1f}, {y:.1f}）の{name}")
+                        break
+                else:
+                    continue
+                break
+    return sorted(set(out))
+
+
+def test_every_switch_is_framed_by_plate(plate_parts):
+    """62 個のスイッチ全部で、開口の周り（スタビのキーは手前・左・右）に板がある。
+    **外形まで抜けて板の無いスイッチを作らない**（V2 のスペース 2 つと左 Shift が一度そうなった・2026-09-25）。"""
+    p, _, halves, frames, positions = plate_parts
+    parts = list(halves.values()) + [f for _, f in frames]
+    assert len(positions) == 62
+    assert switch_frame_problems(p, parts, positions) == []
+
+
+def test_the_web_check_notices_salicylics_back_edge(monkeypatch):
+    """羽の奥の端をサリチル酸さんの 10.85 に戻すと、1 段奥の開口との帯 1.075 がスタビのキー 4 つで見つかる。
+    桟の上の突起（0.525 幅）を戻しても見つかる。"""
+    import foundry.mech as mech_mod
+    from foundry.plate import build_plate, thin_webs
+
+    p = load("cckb")
+    back = tuple((x, 10.85 if y == mech_mod.CHOC_V2_STAB_PLATE_BACK else y) for x, y in mech_mod.CHOC_V2_STAB_PLATE)
+    nub = ((0.0, 6.64375), (7.55, 6.64375), (7.55, 7.14375), (8.375, 7.14375), (8.375, 6.64375)) \
+        + mech_mod.CHOC_V2_STAB_PLATE[1:]
+    for poly, want in ((back, 1.08), (nub, 0.5)):
+        monkeypatch.setattr(mech_mod, "CHOC_V2_STAB_PLATE", poly)
+        part, _, _ = build_plate(p.spec, p.keys(), "main")
+        found = thin_webs(part, p.spec.PLATE_MIN_WEB)
+        assert any(abs(min(size) - want) < 0.03 for _, _, size in found), found
+
+
+def test_the_frames_are_the_two_space_keys(plate_parts):
+    """外形まで抜けて切り離された枠は、最下段のスペース 2 キーだけ（左 Shift は右の羽の側で板に繋がる）。
+    枠は 1 つの立体で、厚さはプレートと同じ。"""
+    p, _, _, frames, _ = plate_parts
+    assert [n for n, _ in frames] == ["Space", "Space"]
+    for _, f in frames:
+        assert len(f.solids()) == 1 and abs(f.bounding_box().size.Z - 1.2) < 1e-6
+
+
+def test_the_frame_check_notices_a_plate_without_frames(plate_parts):
+    """枠を刷らない（前の形: 枠ごと抜いた）と、スペース 2 キーの手前・左・右に板が無い。"""
+    p, _, halves, _, positions = plate_parts
+    bad = switch_frame_problems(p, list(halves.values()), positions)
+    assert len(bad) == 6 and all(b.startswith("Space") for b in bad), bad
+
+
 def test_the_plate_is_1_2mm_and_printable_as_a_check(plate, tmp_path):
     from foundry.verify import to_mesh
 

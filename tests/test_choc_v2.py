@@ -339,9 +339,37 @@ def test_the_plate_stab_opening_contains_salicylics(shift):
     polys = choc_v2_stab_polygons()
     pts = _sal_plate_points()
     assert len(pts) > 20
+    trimmed = 0
     for x, y in pts:
+        # **ただ 1 つの例外: 羽の奥の端**（10.85 → mech.CHOC_V2_STAB_PLATE_BACK 10.72）。1 段奥の開口との帯を
+        # PLATE_MIN_WEB に保つために 0.13 詰めた。詰めてよい根拠は下の test_the_plate_stab_back_clears_the_drawing
+        y = min(y, mech.CHOC_V2_STAB_PLATE_BACK) if y > mech.CHOC_V2_STAB_PLATE_BACK else y
+        trimmed += y == mech.CHOC_V2_STAB_PLATE_BACK
         p = (x + math.copysign(shift, x), y)
         assert any(_in_poly(p, poly) for poly in polys), p
+    assert 0 < trimmed and 10.85 - mech.CHOC_V2_STAB_PLATE_BACK <= 0.13 + 1e-9
+
+
+def test_the_plate_stab_back_clears_the_drawing():
+    """羽の奥の端（kerf 0）は、スタビの図のプレートの高さで奥にいちばん出る所（爪の輪の端 = 8.50 + φ3.50/2 = 10.25）
+    より 0.4 以上奥。手前の端も図のねじの側の端（全長 18.75 − 10.25 = 8.50）より 0.4 以上手前。
+    0.4 = 支点の位置のずれ（箱 7.30 と穴 7.5 の y の遊び 0.1 ＋ JLC の外形 ±0.2）とプレートのずれ（開口 13.95 と胴 ±0.05・
+    突起 φ4.8 と穴 φ5.05 の 0.125）の和に近い値。刷った穴の縮みは STAB_KERF が別に受け持つ。"""
+    d = mech.CHOC_V2_STAB_SOURCES["drawing"]
+    back = d["claw"][0] + d["ring"] / 2
+    front = d["length"] - back
+    ys = [y for x, y in mech.CHOC_V2_STAB_PLATE if x > 8.8]
+    assert abs(back - 10.25) < 1e-9 and abs(front - 8.50) < 1e-9
+    assert max(ys) - back >= 0.4 and -min(ys) - front >= 0.4, (max(ys), min(ys))
+
+
+def test_the_back_check_notices_a_back_edge_at_the_ring(monkeypatch):
+    import test_choc_v2
+
+    moved = tuple((x, 10.5 if y == mech.CHOC_V2_STAB_PLATE_BACK else y) for x, y in mech.CHOC_V2_STAB_PLATE)
+    monkeypatch.setattr(mech, "CHOC_V2_STAB_PLATE", moved)
+    with pytest.raises(AssertionError):
+        test_choc_v2.test_the_plate_stab_back_clears_the_drawing()
 
 
 def test_the_plate_checker_notices_a_shrunk_lobe(monkeypatch):
