@@ -162,8 +162,8 @@ def netlist_problems(facts):
 
 def test_every_pad_carries_the_declared_net(facts):
     assert netlist_problems(facts) == []
-    # 母数（物の数）: キー 62 × (スイッチ + ダイオード) ＋ 電子部品 10 ＋ 穴 11
-    assert len(facts["footprints"]) == 62 * 2 + len(circuit.electronics()) + 11
+    # 母数（物の数）: キー 62 × (スイッチ + ダイオード) ＋ 電子部品 10 ＋ 穴 11 ＋ V2 のスタビの穴 4
+    assert len(facts["footprints"]) == 62 * 2 + len(circuit.electronics()) + 11 + 4
     assert len(circuit.electronics()) == 10
     copper = [p for p in facts["pads"] if not p["npth"] and p["num"]]
     # スイッチ 2・ダイオード 2・XIAO 14+7（D0〜D6 のパッド内ビア）・595 16×2・C 2×2・R 2×2・
@@ -242,13 +242,14 @@ def test_the_routed_board_has_no_drc_violation_and_nothing_unrouted(drc_record, 
     assert facts["unconnected"] == 0            # KiCad の連結（pcbnew）でも 0
     assert set(r["warning_kinds"]) <= KNOWN_WARNINGS, r["warning_kinds"]
     # 数を固定する（監査 C 2 回目 軽微 3: 種類の集合だけでは名札がずれて増えても緑のままだった）。
-    # silk_edge_clearance 3 は D15・D55 の名札が外形に、H9 の名札が逃げ穴に近い（刷ると欠けるだけ）
-    assert r["warning_kinds"].get("silk_edge_clearance", 0) == 3, r["warning_kinds"]
+    # silk_edge_clearance 4 は V2 のスタビのキー 4 つ（D42・D43・D58・D60）の名札が箱の穴（Edge.Cuts）に近い
+    # （刷ると欠けるだけ。V1 の 3 件〔D15・D55・H9〕は消えた。2026-09-25 に DRC の座標で数えた）
+    assert r["warning_kinds"].get("silk_edge_clearance", 0) == 4, r["warning_kinds"]
     assert r["warning_kinds"].get("silk_overlap", 0) == 0 and r["warning_kinds"].get("silk_over_copper", 0) == 0
 
 
 def test_the_warning_count_notices_a_label_on_the_edge(tmp_path):
-    """板の写しで表のシルクに文字を 1 つ外形の縁に置くと silk_edge_clearance が 3 から増える
+    """板の写しで表のシルクに文字を 1 つ外形の縁に置くと silk_edge_clearance が 4 から増える
     （数を固定した検査が名札のずれに気づく）。"""
     from foundry import drc
 
@@ -262,7 +263,7 @@ def test_the_warning_count_notices_a_label_on_the_edge(tmp_path):
     i = t.rindex(")")
     (tmp_path / "x.kicad_pcb").write_text(t[:i] + label + t[i:])
     r = drc.run(tmp_path / "x.kicad_pcb")
-    assert r["warning_kinds"].get("silk_edge_clearance", 0) > 3, r["warning_kinds"]
+    assert r["warning_kinds"].get("silk_edge_clearance", 0) > 4, r["warning_kinds"]
 
 
 def test_the_drc_notices_silk_text_below_the_jlc_minimum(tmp_path):
@@ -943,7 +944,7 @@ def test_the_stab_reliefs_are_cut_in_the_routed_board(facts, ifc):
                       math.hypot(b[0] - q[0], b[1] - q[1]) < 1e-3 for p, q in segs)
             assert hit, (a, b)
             n += 1
-    assert n == 8 * 8
+    assert n == 8 * 4                        # V2 の箱の穴は矩形 8 つ（Enter・左 Shift・スペース 2 つの左右）
 
 
 def test_no_copper_under_a_support_post_or_boss_on_the_bottom_parts(facts, ifc):

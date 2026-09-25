@@ -169,6 +169,40 @@ def circle_poly(c, r, n=24):
              c[1] + R * math.sin(2 * math.pi * (i + 0.5) / n)) for i in range(n)]
 
 
+def stadium_poly(c, w, h, grow, n=12):
+    """長円（中心 c・X 幅 w・Y 幅 h）を grow だけ広げ、**外に接する**多角形で（長円を必ず覆う）。CAD。"""
+    r = min(w, h) / 2 + grow
+    half = (max(w, h) - min(w, h)) / 2
+    R = r / math.cos(math.pi / (2 * n))
+    pts = []
+    for end in (1, -1):
+        ox, oy = (end * half, 0.0) if w >= h else (0.0, end * half)
+        base = 0.0 if w >= h else math.pi / 2
+        a0 = base - math.pi / 2 if end == 1 else base + math.pi / 2
+        for i in range(n + 1):
+            a = a0 + math.pi * (i + 0.5) / (n + 1)
+            pts.append((c[0] + ox + R * math.cos(a), c[1] + oy + R * math.sin(a)))
+    return pts
+
+
+def npth_ovals(board, origin):
+    """板の上の非めっきの**長円**の穴（V2 の位置決め・スタビのねじと爪）。[(ref, (x, y), w, h)]（CAD）。"""
+    out = []
+    for fp in board.GetFootprints():
+        for p in fp.Pads():
+            if p.GetAttribute() != pcbnew.PAD_ATTRIB_NPTH or p.GetDrillShape() != pcbnew.PAD_DRILL_SHAPE_OBLONG:
+                continue
+            ds = p.GetDrillSize()
+            w, h = _mm(ds.x), _mm(ds.y)
+            deg = round(p.GetOrientation().AsDegrees()) % 180
+            if deg == 90:
+                w, h = h, w
+            elif deg != 0:
+                raise RuntimeError(f"{fp.GetReference()} の長円の穴が {deg}° 回っている（軸に平行だけ扱う）")
+            out.append((fp.GetReference(), _cad(p.GetPosition(), origin), w, h))
+    return out
+
+
 # 外形・逃げ穴の縁の、配線・ビアを入れない帯の幅。JLC の銅と外形の規則に 0.02 足す。
 # 自分で引く行列（matrix_routes.EDGE_GAP・規則 ＋ 0.05）はこの外にいる
 EDGE_BAND = JLC["edge_clearance"] + 0.02
@@ -260,6 +294,11 @@ def place(board, ctx):
     for poly in ifc.stab_reliefs():
         rule_area(board, ctx, interface.poly_offset_axis(poly, w), both, "EDGE_KEEPOUT",
                   fills=False)
+    # 非めっきの長円の穴（V2 の位置決めの長穴 62・スタビのねじと爪の穴 16）の縁にも同じ帯。**Freerouting は
+    # 長円の穴を DSN で正しく避けず、穴と銅 0.3 を割った**（2026-09-25 の 1 回目: SPI_SCK が 0.216）。
+    # 丸い穴（中心 φ5.05 など）は割っていない
+    for _, c, ow, oh in npth_ovals(board, origin):
+        rule_area(board, ctx, stadium_poly(c, ow, oh, w), both, "NPTH_KEEPOUT", fills=False)
 
     # --- ネットクラス（**Recompute しないと割り当てが効かない**）---------------
     d = board.GetDesignSettings()

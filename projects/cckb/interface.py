@@ -17,7 +17,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from foundry.layout import UNIT, centered          # noqa: E402
-from foundry.mech import CHOC_STAB_OUTLINE, STAB_KERF, switch_of  # noqa: E402
+from foundry.mech import (CHOC_V2_STAB_HOLES, CHOC_V2_STAB_SOURCES, STAB_KERF,  # noqa: E402
+                          choc_v2_stab_plate_polys, switch_of)
 from foundry.project import load                    # noqa: E402
 from foundry.pcb_rules import JLC, NPTH_EDGE_MIN, TRACK_W  # noqa: E402
 
@@ -177,7 +178,11 @@ class Interface:
             keycap_bottomed=top + s.SWITCH_TOP_ABOVE_PCB + s.KEYCAP_TOP_T,
             rim=rim, lid_bottom=rim - s.LID_T,
             pin_tip=top - s.SWITCH_PIN_L,
-            stab_bottom=plate_top - s.STAB_HOUSING_H,
+            # V2 の中心の突起・スタビの箱・爪の下端（名目）と、ねじの頭の下端。床の止まり穴の底
+            stud_tip=top - s.SWITCH_STUD_L,
+            stab_bottom=top - s.STAB_BOX_L, stab_claw_tip=top - s.STAB_CLAW_L,
+            stab_screw_head=pcb_bot - s.STAB_SCREW_HEAD_H,
+            pocket_floor=s.CASE_FLOOR - s.FLOOR_POCKET_DEPTH,
             xiao_top=top + s.XIAO_H, holder_top=top + s.HOLDER_H,
             usb_center=top + s.XIAO_USB_Z,
             # 電源スイッチ（表）: 爪で基板に立ち、台座の下面は PSW_TAB 上。レバーの先は名目の値
@@ -205,7 +210,7 @@ class Interface:
                     right=(right, y - UNIT / 2, hx, y + UNIT / 2))
 
     def switch_bodies(self):
-        """基板の上のスイッチの胴（プレートの開口と同じ 13.8 角）。"""
+        """基板の上のスイッチの胴（プレートの開口と同じ角）。"""
         c = self.sw.cutout
         return [rect(x, y, c, c) for x, y in self.positions]
 
@@ -217,37 +222,63 @@ class Interface:
                 out += [(x - s, y, -1), (x + s, y, 1)]
         return out
 
-    def _stab_poly(self, px, py, side, grow_by):
-        pts = poly_offset_axis(list(CHOC_STAB_OUTLINE), grow_by) if grow_by else \
-            list(CHOC_STAB_OUTLINE)
-        return [(px + side * x, py + y) for x, y in pts]
+    @staticmethod
+    def _pivot_rect(px, py, side, box):
+        """支点 (px, py) から外向き X の矩形 box (x0, y0, x1, y1) を、CAD の点列（反時計回り）に。"""
+        x0, y0, x1, y1 = box
+        xa, xb = sorted((px + side * x0, px + side * x1))
+        return [(xa, py + y0), (xb, py + y0), (xb, py + y1), (xa, py + y1)]
 
     def stab_plate_openings(self):
-        """プレートのスタビの開口（輪郭 ＋ STAB_KERF）。"""
-        return [self._stab_poly(px, py, sd, STAB_KERF) for px, py, sd in self.stab_pivots()]
+        """プレートのスタビの開口（mech.CHOC_V2_STAB_PLATE ＋ STAB_KERF）。キー 1 つに左右 2 つ。"""
+        out = []
+        pl = grow(self.key_area, self.s.PLATE_MARGIN_X)
+        for (x, y), k in zip(self.positions, self.keys):
+            if self.sw.stab_offset_for(k.w_u) is None:
+                continue
+            for poly in choc_v2_stab_plate_polys((x, y), pl, self.s.PLATE_MIN_WEB, STAB_KERF):
+                out.append(poly_offset_axis(poly, STAB_KERF))
+        return out
 
     def stab_reliefs(self):
-        """基板の逃げ穴（輪郭 ＋ STAB_RELIEF_MARGIN）。**基板の次の段が Edge.Cuts に描く。**"""
-        m = self.s.STAB_RELIEF_MARGIN
-        return [self._stab_poly(px, py, sd, m) for px, py, sd in self.stab_pivots()]
+        """基板の箱の穴（mech.CHOC_V2_STAB_HOLES の box ＋ STAB_RELIEF_MARGIN）。**pcb_extra が Edge.Cuts に描く。**
+
+        ねじ・爪の穴は非めっきの穴としてフットプリント（mech.CHOC_V2_STAB_FP）が開ける。
+        """
+        mx, my = self.s.STAB_RELIEF_MARGIN
+        x0, y0, x1, y1 = CHOC_V2_STAB_HOLES["box"]
+        return [self._pivot_rect(px, py, sd, (x0 - mx, y0 - my, x1 + mx, y1 + my))
+                for px, py, sd in self.stab_pivots()]
 
     def stab_housings(self):
-        """ハウジングの平面（spec.STAB_HOUSING・製造図の最大公差）。
+        """箱（基板を貫いて下へ出る部分）の平面。mech.CHOC_V2_STAB_SOURCES の図の part（5.80 × 7.30）を、**支点が 2 つの出典のどちらでも**
+        （24.0 / 23.8）入るように両方の位置の和で包む。"""
+        w, d = CHOC_V2_STAB_SOURCES["drawing"]["part"]
+        nominal = self.sw.stab_offset[2.25]
+        dxs = [src["pivot"] - nominal for src in CHOC_V2_STAB_SOURCES.values()]
+        box = (min(dxs) - w / 2, -d / 2, max(dxs) + w / 2, d / 2)
+        return [self._pivot_rect(px, py, sd, box) for px, py, sd in self.stab_pivots()]
 
-        Keebio の輪郭の中に置く: 本体は輪郭の奥行の中央、突起は切り欠きの中央で
-        切り欠きの奥端までを占めるとみなす（突起の長さは製造図に無い。長い側に取る）。
+    def floor_pockets(self):
+        """床の内側（上面）に掘る止まり穴（spec.FLOOR_POCKET_DEPTH 深さ）。**ケースの段はここから読む。**
+
+        [dict(kind, ref, pos, d)（丸・中心の突起）| dict(kind, ref, box)（矩形・スタビの箱）]。
+        丸は各スイッチの中心（= 基板の中心穴 φ5.05。tests/test_cckb_pcb.py が板の穴と突き合わせる）に
+        突起 φSWITCH_STUD_D ＋ 片側 FLOOR_POCKET_CLEAR。矩形は stab_housings ＋ FLOOR_POCKET_CLEAR。
         """
-        w, d, nw = self.s.STAB_HOUSING
-        out = []
-        ys = [y for _, y in CHOC_STAB_OUTLINE]
-        y0, y_notch, y1 = min(ys), sorted(set(ys))[1], max(ys)
-        dy = ((y_notch - y0) - d) / 2
-        for px, py, sd in self.stab_pivots():
-            body = [(-w / 2, y0 + dy), (w / 2, y0 + dy), (w / 2, y_notch - dy),
-                    (nw / 2, y_notch - dy), (nw / 2, y1), (-nw / 2, y1),
-                    (-nw / 2, y_notch - dy), (-w / 2, y_notch - dy)]
-            out.append([(px + sd * x, py + y) for x, y in body])
+        s = self.s
+        c = s.FLOOR_POCKET_CLEAR
+        out = [dict(kind="stud", ref=f"SW{i}", pos=pos, d=s.SWITCH_STUD_D + 2 * c)
+               for i, pos in enumerate(self.matrix_positions(), start=1)]
+        for n, poly in enumerate(self.stab_housings()):
+            out.append(dict(kind="stab_box", ref=f"STAB{n}", box=grow(poly_box(poly), c)))
         return out
+
+    def matrix_positions(self):
+        """キーの中心を**キーマップ順**（基板の SW1..SWn と同じ並び）で。"""
+        keys, _ = self.p.matrix("main")
+        pos, _ = centered(keys)
+        return pos
 
     # --- 角の部品 -------------------------------------------------------------
     def usb_face_x(self):
@@ -484,7 +515,8 @@ def corridors(ifc, geo):
 
     m = matrix_routes.plan(ifc.p, geo["pads"])
     e, _ = matrix_routes.escape(ifc.p, geo["pads"], others=m)
-    return [(a, b) for _, _, a, b in m + e]
+    pw = matrix_routes.power_runs(ifc.p, geo["pads"], others=m + e)
+    return [(a, b) for _, _, a, b in m + e + pw]
 
 
 def band_ys(ifc):

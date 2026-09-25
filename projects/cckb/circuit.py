@@ -98,7 +98,13 @@ def mechanical_refs(project=None):
     if project is None:
         from foundry.project import load
         project = load(Path(__file__).resolve().parent)
-    return {f"H{i}" for i in range(len(project.spec.MOUNTS["main"]))} | {"H_LID"}
+    from foundry.mech import switch_of
+    sw = switch_of(project.spec)
+    keys, _ = project.matrix("main")
+    # スタビの穴の足跡（ST{キー番号}。foundry.pcb が基板に穴の要るスタビのキーにだけ置く。V2 のねじ留め）
+    stabs = {f"ST{i}" for i, k in enumerate(keys, start=1)
+             if sw.stab_offset_for(k.w_u) in sw.stab_fp}
+    return {f"H{i}" for i in range(len(project.spec.MOUNTS["main"]))} | {"H_LID"} | stabs
 
 
 def expected_pad_nets(project=None):

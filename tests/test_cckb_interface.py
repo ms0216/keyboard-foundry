@@ -45,23 +45,26 @@ def ifc():
 
 def test_poly_offset_matches_build123d():
     """poly_offset_axis がスタビの輪郭を build123d の INTERSECTION オフセットと同じに広げる。
-    （初版は符号が逆で**縮めていた**——取付の探索がスタビの逃げを実際より小さく見た）"""
+    （初版は符号が逆で**縮めていた**——取付の探索がスタビの逃げを実際より小さく見た）。
+    V1 の輪郭（凸でない 8 点）と V2 のプレートの開口（凸でない 8 点）の両方で見る"""
     from build123d import BuildLine, BuildSketch, Kind, Polyline, make_face, offset
 
-    from foundry.mech import CHOC_STAB_OUTLINE
+    from foundry.mech import CHOC_STAB_OUTLINE, CHOC_V2_STAB_PLATE
 
-    for d in (0.15, 0.5):
+    # V2 の開口には幅 0.495 の切り欠き（羽の付け根の角）があり、0.5 広げると閉じる（軸ごとの広げ方は閉じた
+    # 切り欠きを扱えない）。プレートで使う STAB_KERF 0.15 だけで見る
+    for outline, d in [(CHOC_STAB_OUTLINE, 0.15), (CHOC_STAB_OUTLINE, 0.5), (CHOC_V2_STAB_PLATE, 0.15)]:
         with BuildSketch() as sk:
             with BuildLine():
-                Polyline(*CHOC_STAB_OUTLINE, close=True)
+                Polyline(*outline, close=True)
             make_face()
             offset(amount=d, kind=Kind.INTERSECTION)
         bb = sk.sketch.bounding_box()
-        mine = I.poly_box(I.poly_offset_axis(list(CHOC_STAB_OUTLINE), d))
+        mine = I.poly_box(I.poly_offset_axis(list(outline), d))
         assert all(abs(a - b) < 1e-6 for a, b in
                    zip(mine, (bb.min.X, bb.min.Y, bb.max.X, bb.max.Y))), (d, mine, bb)
         area = sk.sketch.area
-        poly = I.poly_offset_axis(list(CHOC_STAB_OUTLINE), d)
+        poly = I.poly_offset_axis(list(outline), d)
         shoelace = abs(sum(poly[i][0] * poly[(i + 1) % len(poly)][1]
                            - poly[(i + 1) % len(poly)][0] * poly[i][1]
                            for i in range(len(poly)))) / 2
@@ -283,16 +286,25 @@ def test_the_left_cover_screw_keeps_5mm_from_the_antenna(ifc):
 def z_problems(ifc):
     s, z = ifc.s, ifc.z()
     out = []
-    # 最悪の足: 基板が −10%・足が +0.1
-    worst_tip = z["pcb_bottom"] + s.PCB_T * (1 - s.PCB_T_TOL) - (s.SWITCH_PIN_L + s.SWITCH_PIN_TOL)
+    # 基板の下へ出る物の最悪（基板が −10%・長さは公差の上限）。**床の止まり穴の上の物は穴の底と比べる**
+    thin = z["pcb_bottom"] + s.PCB_T * (1 - s.PCB_T_TOL)           # 最悪の基板の上面
+    worst_tip = thin - (s.SWITCH_PIN_L + s.SWITCH_PIN_TOL)
     if worst_tip < s.CASE_FLOOR + 0.1:
         out.append(f"足の先（最悪 {worst_tip:.2f}）が床 {s.CASE_FLOOR} に 0.1 未満")
+    stud = thin - (s.SWITCH_STUD_L + s.SWITCH_STUD_TOL)
+    if stud < z["pocket_floor"] + 0.1:
+        out.append(f"中心の突起（最悪 {stud:.2f}）が床の穴の底 {z['pocket_floor']:.2f} に 0.1 未満")
+    box = thin - s.STAB_BOX_L
+    if box < z["pocket_floor"] + 0.1:
+        out.append(f"スタビの箱（最悪 {box:.2f}）が床の穴の底 {z['pocket_floor']:.2f} に 0.1 未満")
+    if z["pocket_floor"] < 0.8 - 1e-9:
+        out.append(f"床の穴の底の肉 {z['pocket_floor']:.2f} が 0.8（0.2 層で 4 層）未満")
     for name, h in (("BAT46W", 1.25), ("TSSOP-16", 1.2), ("裏の部品の包絡", s.BOTTOM_PART_H),
-                    ("電源スイッチの切った足", s.PSW_PIN_TRIM)):
+                    ("電源スイッチの切った足", s.PSW_PIN_TRIM),
+                    ("スタビの爪", s.STAB_CLAW_L - s.PCB_T * (1 - s.PCB_T_TOL)),
+                    ("スタビのねじの頭", s.STAB_SCREW_HEAD_H)):
         if h > s.UNDER_PCB - 0.3:
             out.append(f"{name} が床に 0.3 未満")
-    if z["stab_bottom"] < s.CASE_FLOOR + 0.5:
-        out.append(f"スタビの下端 {z['stab_bottom']:.2f} が床に 0.5 未満")
     if abs(z["plate_top"] - z["plate_bottom"] - ifc.sw.plate_t) > 1e-9 or \
             z["plate_bottom"] - z["pcb_top"] < 0.9:
         out.append("プレートと基板の隙間")
@@ -310,8 +322,10 @@ def z_problems(ifc):
     if s.CASE_FLOOR < 1.2 - 1e-9 or z["island_top"] - s.ANTISLIP_RECESS < 1.2 - 1e-9 \
             or s.ANTISLIP_SHEET_T <= s.ANTISLIP_RECESS:
         out.append("滑り止め（床・島の残りか、シートが接地しない）")
-    if z["keycap_top"] > 13.8 + 1e-9:
-        out.append(f"全体の厚さ {z['keycap_top']:.2f} が利用者の決めた 13.8 を超える（O10）")
+    # 全体の厚さ: V1 で利用者が決めた 13.8（O10）に、V2 の +0.6（ステム 8.0 → 8.6）を足した 14.4。
+    # 2026-09-25 利用者の決定（基板の下の空きは 1.8 のまま・床に止まり穴。決定記録 2026-09-25-choc-v2 §4-2 の案 2）
+    if z["keycap_top"] > 14.4 + 1e-9:
+        out.append(f"全体の厚さ {z['keycap_top']:.2f} が利用者の決めた 14.4 を超える（O10 ＋ V2）")
     return out
 
 
@@ -323,7 +337,11 @@ def test_the_z_stack_holds(ifc):
     (dict(UNDER_PCB=1.5), "足の先"),
     (dict(BOTTOM_PART_H=1.7), "裏の部品の包絡"),
     (dict(PSW_PIN_TRIM=1.7), "電源スイッチの切った足"),
-    (dict(STAB_HOUSING_H=5.9), "スタビ"),
+    (dict(STAB_BOX_L=3.6), "スタビの箱"),
+    (dict(SWITCH_STUD_L=3.6), "中心の突起"),
+    (dict(FLOOR_POCKET_DEPTH=0.2), "中心の突起"),          # 穴が浅い
+    (dict(FLOOR_POCKET_DEPTH=0.6), "床の穴の底の肉"),
+    (dict(STAB_CLAW_L=3.2), "スタビの爪"),
     (dict(SCREW_L=8), "皿の座ぐり"),          # 頭の沈めは先から導くので、長いネジは頭が机の下へ出る
     (dict(SCREW_L=5), "皿の座ぐり"),          # 短いネジは頭がボスの上の肉を食う
     (dict(SCREW_PAST_NUT=-0.2), "ネジの先"),
@@ -331,6 +349,7 @@ def test_the_z_stack_holds(ifc):
     (dict(SCREW_PAST_NUT=0.2), "皿の座ぐり"),
     (dict(CASE_FLOOR=1.0), "滑り止め"),
     (dict(CASE_FLOOR=1.6), "全体の厚さ"),
+    (dict(SWITCH_STEM_ABOVE_PCB=8.7), "全体の厚さ"),
     (dict(ANTISLIP_SHEET_T=0.4), "滑り止め"),
     (dict(RIM_ABOVE_PCB=5.5), "縁"),
 ])
@@ -365,10 +384,25 @@ def stab_problems(ifc, geo=None):
     if len(reliefs) != 8 or len(housings) != 8:
         out.append(f"スタビが {len(reliefs)} 個（Enter・左 Shift・スペース 2 つで 8）")
     for rel, hou in zip(reliefs, housings):
-        gap = min(I.seg_dist(p, rel[i], rel[(i + 1) % len(rel)])
-                  for p in hou for i in range(len(rel)))
-        if not all(I.point_in_poly(p, rel) for p in hou) or gap < 0.4:
-            out.append(f"逃げ穴とハウジングの隙 {gap:.2f}（外形公差 0.2 ＋ 0.2）")
+        r, h = I.poly_box(rel), I.poly_box(hou)
+        gx, gy = min(h[0] - r[0], r[2] - h[2]), min(h[1] - r[1], r[3] - h[3])
+        # x は外形公差 0.2 ＋ 0.2。y はサリチル酸さんの実物の値 0.1（spec.STAB_RELIEF_MARGIN の理由）
+        if gx < 0.4 - 1e-9 or gy < 0.1 - 1e-9:
+            out.append(f"逃げ穴とハウジングの隙 x {gx:.2f}（0.4）・y {gy:.2f}（0.1）")
+    # 箱の穴（Edge.Cuts）とねじ・爪の穴（非めっき）の間の基板の橋。サリチル酸さんの足跡の 0.75 を下回らない
+    from foundry.mech import CHOC_V2_STAB_HOLES
+    for px, py, sd in ifc.stab_pivots():
+        rel = ifc._pivot_rect(px, py, sd, CHOC_V2_STAB_HOLES["box"])
+        mx, my = ifc.s.STAB_RELIEF_MARGIN
+        rb = I.poly_box(rel)
+        rb = (rb[0] - mx, rb[1] - my, rb[2] + mx, rb[3] + my)
+        for k in ("screw", "claw"):
+            (hx, hy), (w, hh) = CHOC_V2_STAB_HOLES[k]
+            c = (px + sd * hx, py + hy)
+            hole = (c[0] - w / 2, c[1] - hh / 2, c[0] + w / 2, c[1] + hh / 2)
+            web = I.rect_gap(rb, hole)
+            if web < 0.75 - 1e-9:
+                out.append(f"箱の穴と{k}の穴の橋 {web:.2f}（0.75 未満）")
     if geo is not None:
         for rel in reliefs:
             for pad in geo["pads"]:
@@ -385,7 +419,12 @@ def test_the_stab_relief_contains_the_housing(ifc):
 
 
 def test_the_stab_check_notices_a_thin_margin():
-    assert any("隙" in b for b in stab_problems(ifc_with(STAB_RELIEF_MARGIN=0.1)))
+    assert any("隙" in b for b in stab_problems(ifc_with(STAB_RELIEF_MARGIN=(0.1, 0.0))))
+
+
+def test_the_stab_check_notices_a_thin_web():
+    """1 回目の板の穴（y にも 0.3 広げた）では、ねじの穴との橋が 0.2 になった。"""
+    assert any("橋" in b for b in stab_problems(ifc_with(STAB_RELIEF_MARGIN=(0.3, 0.3))))
 
 
 # ---------------------------------------------------------------------------
@@ -546,7 +585,7 @@ def test_every_mount_meets_the_five_conditions(ifc, geo):
     ((-120.99, 20.07), "裏のコートヤード"),     # Tab のダイオード（キー −128.59 + 7.6）の上
     ((-139.18, 46.5), "縁"),
     ((-57.24, -40.0), "スタビ"),
-    ((-110.0, 14.75), "配線"),                 # 行 1 のバス（裏・Tab の下 4.3）の上
+    ((-110.0, 15.7), "配線"),                  # 行 1 のバス（裏・キー中心の 3.35 下）の上
     ((0.0, 28.575), "段の境目"),
     ((4.7625, -43.0), "継ぎ目"),
     ((128.5, -38.6), "ホルダ"),
@@ -597,19 +636,63 @@ def _seg_rect_gap(a, b, box):
 
 
 def test_the_stab_relief_clears_the_diodes(ifc, geo):
-    """O7（2026-09-24 基板の段で解決）: スタビのキー 4 つのダイオードは spec.DIODE_OVERRIDE で
-    中心穴の下へ横置き。逃げ穴から 0.3 以上（JLC の外形公差 ±0.2 に 0.1 残す）。"""
+    """O7: スタビのキー 4 つのダイオード（V2 はいつもの位置 mech.CHOC_V2.diode_offset）のコートヤードが、
+    箱の穴から 0.3 以上（JLC の外形公差 ±0.2 に 0.1 残す）。"""
     assert relief_diode_problems(ifc, geo) == []
 
 
 def test_the_relief_check_notices_the_old_diode_place(ifc, geo):
-    """**検査器が壊れていないか。**前の置き場所（7.6, −1.0・縦）に戻したダイオードで落ちること。"""
+    """**検査器が壊れていないか。**V1 の置き場所（7.6, −1.0・縦）に戻したダイオードで落ちること。"""
     g = json.loads(json.dumps(geo))
     for f in g["footprints"]:
         if f["ref"] == "D42":                      # Enter（キー中心 121.444, 0）
             f["courtyard"]["back"] = [121.444 + 7.6 - 1.195, 1.0 - 2.395,
                                       121.444 + 7.6 + 1.195, 1.0 + 2.395]
     assert [r for r, _ in relief_diode_problems(ifc, g)] == ["D42"]
+
+
+def floor_pocket_problems(ifc, geo):
+    """床の止まり穴（interface.floor_pockets・ケースの段が読む）が、**発注する板の実物**の
+    スイッチの中心穴（非めっき φ5.05・母数 62）とスタビの箱の穴（Edge.Cuts・4 キー × 2）に揃っているか。"""
+    out = []
+    pk = ifc.floor_pockets()
+    studs = [p for p in pk if p["kind"] == "stud"]
+    boxes = [p for p in pk if p["kind"] == "stab_box"]
+    holes = {p["ref"]: p for p in geo["pads"] if re.fullmatch(r"SW\d+", p["ref"]) and p["npth"]
+             and p.get("round") and abs(p["drill"] - 5.05) < 1e-6}
+    if len(studs) != 62 or len(holes) != 62:
+        out.append(f"突起の穴 {len(studs)} / 板の中心穴 {len(holes)}（62 ずつ）")
+    for st in studs:
+        h = holes.get(st["ref"])
+        if h is None or math.hypot(h["x"] - st["pos"][0], h["y"] - st["pos"][1]) > 1e-3:
+            out.append(f"{st['ref']} の突起の穴が板の中心穴と違う所")
+        elif st["d"] < ifc.s.SWITCH_STUD_D + 2 * 0.3:
+            out.append(f"{st['ref']} の穴 φ{st['d']} が突起 φ{ifc.s.SWITCH_STUD_D} に狭い")
+    rel = ifc.stab_reliefs()
+    if len(boxes) != len(rel) or len(rel) != 8:
+        out.append(f"スタビの箱の穴 {len(boxes)} / 基板の穴 {len(rel)}（8）")
+    for b in boxes:
+        for h in ifc.stab_housings():
+            hb = I.poly_box(h)
+            if I.rect_gap(b["box"], hb) < 0 and not I.inside(b["box"], hb, 0.3):
+                out.append(f"{b['ref']} の穴が箱 {hb} を 0.3 以上の余裕で含まない")
+    return out
+
+
+def test_the_floor_pockets_sit_under_the_studs_and_the_stab_boxes(ifc, geo):
+    assert floor_pocket_problems(ifc, geo) == []
+
+
+def test_the_pocket_check_notices_a_tight_pocket(geo):
+    bad = floor_pocket_problems(ifc_with(FLOOR_POCKET_CLEAR=0.1), geo)
+    assert any("突起" in b for b in bad) and any("箱" in b for b in bad), bad
+
+
+def test_the_pocket_check_notices_a_moved_switch(ifc, geo):
+    g = json.loads(json.dumps(geo))
+    hole = next(p for p in g["pads"] if p["ref"] == "SW7" and p["npth"] and abs(p["drill"] - 5.05) < 1e-6)
+    hole["x"] += 0.1
+    assert floor_pocket_problems(ifc, g)
 
 
 def test_the_board_outline_is_the_declared_pcb(ifc, geo):
