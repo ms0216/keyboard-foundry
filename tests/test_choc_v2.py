@@ -203,7 +203,12 @@ def _source_shapes(src):
     [(種類, 中心, (X 幅, Y 幅))]。box は矩形、screw・claw は長円（丸は同じ幅の長円）。"""
     s = mech.CHOC_V2_STAB_SOURCES[src]
     dx = s["pivot"] - SWITCHES["choc_v2"].stab_offset[2.25]
-    out = [("box", (dx, 0.0), s["box"])]
+    # 箱の穴: x は推奨の穴、y は箱そのもの（図の推奨 8.00 は、ねじの穴との橋が細るので採らない。
+    # mech.CHOC_V2_STAB_HOLES のコメント）。サリチル酸さんの足跡は穴の値をそのまま
+    bw, bh = s["box"]
+    if "part" in s:
+        bh = s["part"][1]
+    out = [("box", (dx, 0.0), (bw, bh))]
     for k in ("screw", "claw"):
         cy, w, h = s[k]
         out.append((k, (dx, cy), (w, h)))
@@ -214,8 +219,8 @@ def test_the_stab_sources_are_what_the_drawing_and_salicylic_say():
     """生の値を出典と照合する。図の値は画像（chocv2-stab-guide 2026-05-16）から読んだ 24.00・8.00×6.00・
     φ3.00 を 6.20・φ4.00 を 8.50。サリチル酸さんの値は保存したファイルから読み直す。"""
     d = mech.CHOC_V2_STAB_SOURCES["drawing"]
-    assert (d["pivot"] * 2, d["box"], d["screw"], d["claw"]) == \
-        (24.0, (6.00, 8.00), (-6.20, 3.00, 3.00), (8.50, 4.00, 4.00))
+    assert (d["pivot"] * 2, d["box"], d["screw"], d["claw"], d["part"]) == \
+        (24.0, (6.00, 8.00), (-6.20, 3.00, 3.00), (8.50, 4.00, 4.00), (5.80, 7.30))
     text = SAL_STAB.read_text()
     holes = [(float(x), float(y), float(w), float(h)) for x, y, w, h in re.findall(
         r"\(at ([-\d.]+) ([-\d.]+) 180\)\s*\(size ([\d.]+) ([\d.]+)\)", text)]
@@ -285,7 +290,7 @@ def test_the_stab_hole_checker_notices_a_hole_that_misses_a_source(monkeypatch):
     """開ける穴を 0.1 狭めると、どちらかの出典の形がはみ出して落ちる。"""
     import test_choc_v2
 
-    for k, v in (("box", (-3.0, -4.0, 3.0, 4.0)),                  # 支点 23.8 の箱の内の辺
+    for k, v in (("box", (-3.0, -3.75, 3.0, 3.75)),                # 支点 23.8 の箱の内の辺
                  ("screw", ((-0.1, -6.2), (3.1, 3.4))),
                  ("claw", ((-0.05, 8.47), (4.2, 4.4)))):
         H = dict(mech.CHOC_V2_STAB_HOLES)
@@ -340,10 +345,10 @@ def test_the_plate_stab_opening_contains_salicylics(shift):
 
 
 def test_the_plate_checker_notices_a_shrunk_lobe(monkeypatch):
-    import foundry.plate as plate
+    import foundry.mech as mech_mod
     import test_choc_v2
 
     shrunk = tuple((14.9375 if x == 15.0375 else x, y) for x, y in mech.CHOC_V2_STAB_PLATE)
-    monkeypatch.setattr(plate, "CHOC_V2_STAB_PLATE", shrunk)
+    monkeypatch.setattr(mech_mod, "CHOC_V2_STAB_PLATE", shrunk)
     with pytest.raises(AssertionError):
         test_choc_v2.test_the_plate_stab_opening_contains_salicylics(0.1)

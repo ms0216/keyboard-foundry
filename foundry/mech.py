@@ -163,31 +163,82 @@ CHOC_V2_FP = "SW_Kailh_Choc_V2_Slot"
 # 支点の位置そのもの（キャップの脚の位置）は届いた実物で測って決める（決定記録 2026-09-25-choc-v2 §8 の 3）。
 # 各出典の形（支点からの位置・大きさ）。box は (X 幅, Y 幅) の矩形・screw/claw は (中心 y, X 幅, Y 幅) の長円
 CHOC_V2_STAB_SOURCES = {
-    "drawing": dict(pivot=12.0, box=(6.00, 8.00), screw=(-6.20, 3.00, 3.00), claw=(8.50, 4.00, 4.00)),
+    # part = 箱そのもの（図の上面図 5.80 × 7.30）。推奨の穴 8.00 の y は採らない（下の CHOC_V2_STAB_HOLES）
+    "drawing": dict(pivot=12.0, box=(6.00, 8.00), screw=(-6.20, 3.00, 3.00), claw=(8.50, 4.00, 4.00),
+                    part=(5.80, 7.30)),
     "salicylic": dict(pivot=11.9, box=(6.0, 7.5), screw=(-6.2, 3.2, 3.4), claw=(8.24, 3.0, 4.0)),
 }
 # 開ける穴（支点 CHOC_V2.stab_offset = 12.0 から。X は外向き）。上の 2 つを含む最小に近い形を手で決め、
 # tests/test_choc_v2.py が「両方の出典の形を含む」ことと「フットプリントと同じ」ことを確かめる。
 #   box    箱（基板の下へ 3.30 出る）の穴。Edge.Cuts で抜く（interface.stab_reliefs が
-#          spec.STAB_RELIEF_MARGIN を足す）。(x0, y0, x1, y1)
+#          spec.STAB_RELIEF_MARGIN を足す）。(x0, y0, x1, y1)。**y は ±3.75（サリチル酸さんの 7.5）で、図の
+#          推奨 8.00 は採らない**: ねじの穴（長円 3.4・上端は支点から 4.5）との間の基板の橋が、図の 8.00 だと
+#          0.5、それに外形の余裕を足すと 0.2 まで細る（1 回目の板で 0.2 になった・2026-09-25）。7.5 なら 0.75
+#          （サリチル酸さんの足跡と同じ・実物で組まれている）。箱（図の 7.30）との y の隙は片側 0.1
 #   screw  ねじの穴（非めっきの長円）。((中心 x, 中心 y), (X 幅, Y 幅))
 #   claw   ワイヤの側の爪の穴（同）
-CHOC_V2_STAB_HOLES = dict(box=(-3.1, -4.0, 3.0, 4.0),
+CHOC_V2_STAB_HOLES = dict(box=(-3.1, -3.75, 3.0, 3.75),
                           screw=((-0.1, -6.2), (3.2, 3.4)),
                           claw=((-0.05, 8.37), (4.2, 4.4)))
 CHOC_V2_STAB_FP = "Stab_Kailh_Choc_V2_Screw_2u"
 # プレートの開口（片側・**キーの中心を原点**・X は外向き・+Y = ワイヤ = 奥）。軸に平行な辺だけ。
 # 出典: サリチル酸さんの kbd_SW_Hole.pretty/Stab_Hole_Choc_v2_PCBMount_2u（commit 9ade20b。支点 11.9）
 #   羽（スタビ本体が通る）x 8.875〜14.9375・y −9.45（半円の頂）〜10.85
-#   ワイヤの帯 y 9.85〜10.85 を左右の羽の間に渡す・スイッチの開口の角の逃げ x 7.05〜8.875・y 6.64375〜9.85
+#   ワイヤの帯: **スイッチの開口の上辺からそのまま y 9.85 まで**（|x| < 8.375）。開口・帯・羽が 1 つの U 字の穴で、
+#   スイッチの開口と羽の間の桟（x 7.05〜8.875・y 7.14375 より下）だけが残る
 # 変えた所（どれも穴を広げる向き。狭めない）:
 #   - 支点 12.0（図）でも入るよう、羽の外の辺を +0.1（14.9375 → 15.0375）
 #   - 半円・角の丸みは外接する矩形にした（軸に平行な辺だけにする。穴は大きくなる）
 #   - 羽の内の辺は左右で 8.87125 / 8.875 と 0.004 違うので、内側の 8.87 に揃えた
-#   - 角の逃げの内の辺を 7.05 → 6.9（スイッチの開口 13.95 の縁 6.975 より内。0.075 の細い帯を残さない）
+# **1 回目は帯を y 9.85〜10.85 と読み違え、スイッチの開口と帯の間に板の島（13.5 × 2.7）が 4 つ浮いた**
+# （tests/test_cckb_case.py の「1 つの立体」で見つけた・2026-09-25）。tests/test_cckb.py が島の無いことを見る
 # プレートでは STAB_KERF だけ外へ広げて開ける（plate.build_plate）
-CHOC_V2_STAB_PLATE = ((0.0, 9.85), (6.9, 9.85), (6.9, 6.64375), (8.87, 6.64375), (8.87, -9.45),
-                      (15.0375, -9.45), (15.0375, 10.85), (0.0, 10.85))
+CHOC_V2_STAB_PLATE = ((0.0, 6.64375), (7.55, 6.64375), (7.55, 7.14375), (8.375, 7.14375), (8.375, 6.64375),
+                      (8.87, 6.64375), (8.87, -9.45), (15.0375, -9.45), (15.0375, 10.85), (8.375, 10.85),
+                      (8.375, 9.85), (0.0, 9.85))
+
+def choc_v2_stab_plate_polys(at=(0.0, 0.0), outline=None, web=0.0, kerf=0.0):
+    """キーの中心 at の左右 2 つの開口（CHOC_V2_STAB_PLATE・CAD）。ワイヤは常に奥。
+
+    outline（プレートの外形 (x0, y0, x1, y1)）を渡すと、kerf だけ広げた開口と外形の間が web 未満になる辺を
+    外形の外まで伸ばす（**細い帯を残さない**。最下段のスペースでは羽の手前の端が外形から 0.225 だった）。
+    返す点列は kerf を足す前の形（広げるのは使う側）。伸ばした辺は kerf を足しても外形の外にある。
+    """
+    ax, ay = at
+    right = [(ax + x, ay + y) for x, y in CHOC_V2_STAB_PLATE]
+    left = [(ax - x, ay + y) for x, y in reversed(CHOC_V2_STAB_PLATE)]
+    polys = [left, right]
+    if outline is None:
+        return polys
+    x0, y0, x1, y1 = outline
+    out = []
+    ys = [y for _, y in polys[1]]
+    lo, hi = min(ys), max(ys)
+    cut_lo, cut_hi = lo - kerf - y0 < web, y1 - (hi + kerf) < web
+    for poly in polys:
+        new = []
+        for x, y in poly:
+            if y == lo and cut_lo:
+                y = y0 - 1.0
+            elif y == hi and cut_hi:
+                y = y1 + 1.0
+            new.append((x, y))
+        out.append(new)
+    # 羽を外形の外まで伸ばすと、スイッチの開口の外形側の板と、開口と羽の間の桟が島になって落ちる。
+    # **その島ごと抜く**: 左右の羽の内の辺のあいだを、外形の外から反対側の帯の始まりまで（桟も含めて）。
+    # そのキーのスイッチの周りにはプレートが無くなる（スイッチは基板にはんだ付けで留まる。D11）
+    edge = min(y for _, y in CHOC_V2_STAB_PLATE)                 # 羽の手前の端（相対）
+    inner = min(x for x, y in CHOC_V2_STAB_PLATE if y == edge)   # 羽の内の辺
+    # 帯のいちばん低い縁（桟の角の上。開口の縁 6.64 より上の最初の辺）。ここまで抜けば桟の角も残らない
+    band = min(y for _, y in CHOC_V2_STAB_PLATE if y > min(y2 for x2, y2 in CHOC_V2_STAB_PLATE if x2 == 0.0))
+    if cut_lo:
+        out.append([(ax - inner, y0 - 1.0), (ax + inner, y0 - 1.0), (ax + inner, ay + band),
+                    (ax - inner, ay + band)])
+    if cut_hi:
+        out.append([(ax - inner, ay - band), (ax + inner, ay - band), (ax + inner, y1 + 1.0),
+                    (ax - inner, y1 + 1.0)])
+    return out
+
 
 CHOC_V2 = Switch(
     name="choc_v2",

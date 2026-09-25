@@ -20,7 +20,8 @@ from build123d import (BuildLine, BuildPart, BuildSketch, Circle, Kind, Location
                        extrude, make_face, offset)
 
 from .layout import centered
-from .mech import CHOC_STAB_OUTLINE, CHOC_V2_STAB_PLATE, STAB_KERF, stab_flipped, switch_of
+from .mech import (CHOC_STAB_OUTLINE, STAB_KERF, choc_v2_stab_plate_polys, stab_flipped,
+                   switch_of)
 
 M2_CLEAR_D = 2.4         # M2 のバカ穴（0.4 の逃げ）
 
@@ -79,16 +80,13 @@ def choc_stab_polygons(s, at=(0.0, 0.0)):
     return [left, right]
 
 
-def choc_v2_stab_polygons(at=(0.0, 0.0)):
-    """Choc V2 のねじ留めスタビの左右 2 つの開口（mech.CHOC_V2_STAB_PLATE・kerf 0）。ワイヤは常に奥。
+def choc_v2_stab_polygons(at=(0.0, 0.0), outline=None, web=0.0):
+    """Choc V2 のねじ留めスタビの左右 2 つの開口（mech.choc_v2_stab_plate_polys・kerf 0）。ワイヤは常に奥。
 
-    輪郭はキーの中心が原点（支点ではない）で、左右の羽のあいだにワイヤの帯を渡す。
-    プレートに開けるときは STAB_KERF だけ外へ広げる（build_plate）。
+    輪郭はキーの中心が原点（支点ではない）。プレートに開けるときは STAB_KERF だけ外へ広げる（build_plate）。
+    outline・web を渡すと、外形まで web 未満の辺を外形の外まで伸ばす。
     """
-    ax, ay = at
-    right = [(ax + x, ay + y) for x, y in CHOC_V2_STAB_PLATE]
-    left = [(ax - x, ay + y) for x, y in reversed(CHOC_V2_STAB_PLATE)]
-    return [left, right]
+    return choc_v2_stab_plate_polys(at, outline, web, STAB_KERF)
 
 
 def plate_size(spec, keys):
@@ -121,7 +119,8 @@ def build_plate(spec, keys, piece):
                 elif sw.stab_kind == "choc_v2_screw":
                     # スタビは基板にねじで留まり、プレートには掛からない。本体・ワイヤが通る穴を開ける
                     # （輪郭はキーの中心から。支点の半間隔 s は輪郭に織り込み済みで、検査が見る）
-                    for poly in choc_v2_stab_polygons(at=pos):
+                    for poly in choc_v2_stab_polygons(at=pos, outline=(-w / 2, -h / 2, w / 2, h / 2),
+                                                      web=spec.PLATE_MIN_WEB):
                         add(stab_cutout_face(s, polygon=poly), mode=Mode.SUBTRACT)
                 else:
                     raise NotImplementedError(
