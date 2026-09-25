@@ -157,7 +157,7 @@ def build(project, piece):
         if s is not None and s in kind.stab_fp:
             st = _load(KEYSWITCH_LIB, kind.stab_fp[s])
             st.SetPosition(to_kicad(kx, ky))
-            if stab_flipped(k, keys):
+            if kind.stab_turn_front_row and stab_flipped(k, keys):
                 st.SetOrientationDegrees(180)
             st.SetReference(f"ST{i}")
             board.Add(st)

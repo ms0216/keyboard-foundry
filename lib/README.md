@@ -21,6 +21,8 @@ KiCad 標準ライブラリには **3.00u** と **ホットスワップソケッ
 | `Stabilizer_Cherry_MX_2.00u` | 2.25u キー用（間隔 ±11.938mm） |
 | `Stabilizer_Cherry_MX_3.00u` | 3.00u キー用（間隔 ±19.05mm） |
 | `SW_Kailh_Choc_V1` | Choc V1 直付け（CCKB）。全幅で共用 |
+| `SW_Kailh_Choc_V2_Slot` | Choc V2 直付け（CCKB の cckb-v2 の枝）。kiswitch `SW_Kailh_Choc_V2` の位置決め穴だけ替えた物（下） |
+| `Stab_Kailh_Choc_V2_Screw_2u` | Choc V2 用のねじ留めスタビ（遊舎工房 A050001-01-1）のねじ・爪の穴（自作。下） |
 
 ## 寸法を検証した記録
 
@@ -104,6 +106,21 @@ PDF、`PG1350 Keyboard Switch` 料号 CPG135001D01-16）の 1 ページ目、
 `(0,−5.9)` / `(5,−3.8)`）とも一致しており、フットプリントのハンド性
 （鏡像でないこと）を裏付ける。`tests/test_choc.py` は鏡像のまま
 （X の反転を飛ばした）偽のフットプリントでも落ちることを確認している。
+
+### SW_Kailh_Choc_V2_Slot（Choc V2・直付け・静音も受ける）
+
+出典: kiswitch/kiswitch `library/footprints/Switch_Keyboard_Kailh.pretty/SW_Kailh_Choc_V2.kicad_mod`（main・2026-09-25 取得。
+写しは projects/cckb/docs/references/kiswitch-SW_Kailh_Choc_V2.kicad_mod）。**変えたのは位置決め穴の 1 行と名前だけ**:
+kiswitch のめっき穴 φ1.6（ランド φ2.6）→ **非めっきの長円 1.6 × 2.0**。Kailh の図面 3 枚（標準 CPG135301D01 の φ1.60、静音
+CPG1353S01D01-01 / S01D02-01 の長円 2.0 × 1.5・注「この系列のどの軸にも共用できる形」）の和。`tests/test_choc_v2.py` が
+3 枚の図の生の値と照合し（V1 と同じ変換 ＋ 180°）、上流との差が 1 行だけであることも見る。
+
+### Stab_Kailh_Choc_V2_Screw_2u（Choc V2 用のねじ留めスタビ・自作）
+
+ねじ（長円 3.2 × 3.4）と爪（長円 4.2 × 4.4）の非めっきの穴を左右に。ワイヤは奥（KiCad の −y）。箱の穴は機種が
+Edge.Cuts で抜く（projects/cckb/pcb_extra.py）。値は foundry/mech.py の `CHOC_V2_STAB_HOLES`（販売者が公開した
+**非公式の**図と、サリチル酸さんの `Choc_v2_PCBMountStab_2u` の和。支点の間が 24.0 / 23.8 で食い違うので両方を含む）。
+`tests/test_choc_v2.py` が 2 つの出典の形を含むこと・フットプリントが `CHOC_V2_STAB_HOLES` と同じことを見る。
 
 ## xiao.pretty / xiao.3dshapes
 

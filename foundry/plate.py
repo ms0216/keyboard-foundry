@@ -20,7 +20,7 @@ from build123d import (BuildLine, BuildPart, BuildSketch, Circle, Kind, Location
                        extrude, make_face, offset)
 
 from .layout import centered
-from .mech import CHOC_STAB_OUTLINE, STAB_KERF, stab_flipped, switch_of
+from .mech import CHOC_STAB_OUTLINE, CHOC_V2_STAB_PLATE, STAB_KERF, stab_flipped, switch_of
 
 M2_CLEAR_D = 2.4         # M2 のバカ穴（0.4 の逃げ）
 
@@ -79,6 +79,18 @@ def choc_stab_polygons(s, at=(0.0, 0.0)):
     return [left, right]
 
 
+def choc_v2_stab_polygons(at=(0.0, 0.0)):
+    """Choc V2 のねじ留めスタビの左右 2 つの開口（mech.CHOC_V2_STAB_PLATE・kerf 0）。ワイヤは常に奥。
+
+    輪郭はキーの中心が原点（支点ではない）で、左右の羽のあいだにワイヤの帯を渡す。
+    プレートに開けるときは STAB_KERF だけ外へ広げる（build_plate）。
+    """
+    ax, ay = at
+    right = [(ax + x, ay + y) for x, y in CHOC_V2_STAB_PLATE]
+    left = [(ax - x, ay + y) for x, y in reversed(CHOC_V2_STAB_PLATE)]
+    return [left, right]
+
+
 def plate_size(spec, keys):
     _, (kw, kh) = centered(keys)
     return kw + spec.PLATE_MARGIN_X * 2, kh + spec.PLATE_MARGIN_Y * 2
@@ -105,6 +117,11 @@ def build_plate(spec, keys, piece):
                     # Keebio の輪郭は幅がハウジングと同じ 6.30（隙間 0）。刷った PLA では
                     # 締まるので Cherry と同じ STAB_KERF を足す（mech.CHOC_STAB_OUTLINE）
                     for poly in choc_stab_polygons(s, at=pos):
+                        add(stab_cutout_face(s, polygon=poly), mode=Mode.SUBTRACT)
+                elif sw.stab_kind == "choc_v2_screw":
+                    # スタビは基板にねじで留まり、プレートには掛からない。本体・ワイヤが通る穴を開ける
+                    # （輪郭はキーの中心から。支点の半間隔 s は輪郭に織り込み済みで、検査が見る）
+                    for poly in choc_v2_stab_polygons(at=pos):
                         add(stab_cutout_face(s, polygon=poly), mode=Mode.SUBTRACT)
                 else:
                     raise NotImplementedError(
