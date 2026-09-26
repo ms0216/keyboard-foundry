@@ -32,6 +32,12 @@ ZMK_VARIANT = "//zmk"
 
 REQUIRED = ["Kconfig.shield", "{name}.overlay", "{name}.keymap"]
 
+# XIAO nRF52840 のボード定義（zmkfirmware/zephyr v4.1.0+zmk-fixes の boards/seeed/xiao_ble）で**有効なまま**の周辺と、
+# その pinctrl が掴む D ピン。シールドがそのピンを GPIO に使うなら、overlay でその周辺を切る
+# （切らないと眠るときの sleep の pinctrl が行のピンに当たりうる。CCKB の監査 A 軽微 1・2026-09-26）。
+# xiao_serial（D6・D7）は ZMK の xiao_ble//zmk の dts が切っているので入れない
+XIAO_BUSY_PINS = {"xiao_i2c": (4, 5)}      # i2c1: SDA P0.04 = D4・SCL P0.05 = D5
+
 # ZMK 本体に入っているシールド。ローカルにファイルが無いのが正しい。
 # settings_reset は BLE のボンドを消す救援イメージ（build.yaml 参照）。
 UPSTREAM_SHIELDS = {"settings_reset"}
@@ -104,6 +110,19 @@ def count_bindings(keymap):
     out = []
     for m in re.finditer(r"(\w+)\s*\{[^{}]*?bindings\s*=\s*<(.*?)>\s*;", text, re.S):
         out.append((m.group(1), len(re.findall(r"&\w+", m.group(2)))))
+    return out
+
+
+def xiao_pin_conflicts(text):
+    """overlay の文面から、GPIO に使った D ピンが、切っていない XIAO の周辺のピンと重なるもの。[(周辺, ピン)]。"""
+    text = re.sub(r"/\*.*?\*/", " ", text, flags=re.S)
+    text = re.sub(r"//[^\n]*", " ", text)
+    used = {int(n) for n in re.findall(r"&xiao_d\s+(\d+)\b", text)}
+    out = []
+    for periph, pins in XIAO_BUSY_PINS.items():
+        off = re.search(rf"&{periph}\s*\{{[^{{}}]*status\s*=\s*\"disabled\"", text)
+        if not off:
+            out += [(periph, p) for p in pins if p in used]
     return out
 
 
@@ -203,6 +222,13 @@ def main():
                     f"{source}は {n_map} 箇所（{n - n_map:+d}）")
         notes.append(f"  {d.name}: {source} {n_map} 箇所 / "
                      f"レイヤー {len(count_bindings(km[0]))} 枚すべて一致")
+
+    # GPIO に使った D ピンが、ボードで有効なままの周辺（xiao_i2c）と重ならないか
+    for d in sorted(p for p in SHIELDS.iterdir() if p.is_dir()):
+        for ov in sorted(d.glob("*.overlay")):
+            for periph, pin in xiao_pin_conflicts(ov.read_text(encoding="utf-8")):
+                problems.append(f"{ov.name}: D{pin} を GPIO に使うのに &{periph} を切っていない"
+                                f"（status = \"disabled\" を足す）")
 
     for n in notes:
         print(f"  {n}")

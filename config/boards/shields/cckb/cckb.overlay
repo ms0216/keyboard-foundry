@@ -81,3 +81,15 @@
 &adc {
 	status = "okay";
 };
+
+/*
+ * 行 2・3（D4・D5 = P0.04・P0.05）は、XIAO のボード定義で**有効なまま**の i2c1（xiao_i2c）のピンと同じ
+ * （zmkfirmware/zephyr v4.1.0+zmk-fixes の boards/seeed/xiao_ble: xiao_ble_common.dtsi の &i2c1 status "okay"・
+ * xiao_ble-pinctrl.dtsi の i2c1_default / i2c1_sleep が SDA P0.04・SCL P0.05）。ZMK の xiao_ble//zmk は
+ * xiao_serial（D6・D7）だけを切っている。I2C を使わないので切る——眠るときに i2c1 の sleep の pinctrl が
+ * 行のピンに当たると、行のキーで起きられなくなりうる（2026-09-26 の監査 A 軽微 1）。
+ * foundry/check_zmk_config.py が「D4・D5 を使うなら xiao_i2c を切っている」を見る。
+ */
+&xiao_i2c {
+	status = "disabled";
+};
