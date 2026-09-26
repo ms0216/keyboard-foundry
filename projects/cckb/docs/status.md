@@ -6,6 +6,23 @@
 2026-09-24 に電源スイッチを秋月の SS-12D00G3（表・レバーが上・右のふたの穴から爪で）に替えた（決定記録
 [decisions/2026-09-24-power-switch.md](decisions/2026-09-24-power-switch.md)。絵 `build/cckb/psw_section.png`・`psw_corner_iso.png`）。**
 
+## 0. `cckb-v2` の枝（Choc V2 静音）の状態（2026-09-26）
+
+**結論: 核・プレート・基板（DRC 違反 0・未配線 0）・ケース・キャップ・小片まで V2 にした。発注を止めているのは V1 と同じ #1・#4 に、
+V2 の見本で基板に効く所を測る #6 が加わった。** main は V1 の完成した設計のまま（利用者が比べて選ぶ）。
+決定記録 [decisions/2026-09-25-choc-v2.md](decisions/2026-09-25-choc-v2.md) §10。
+
+| 何 | 結果 | 証拠 |
+|---|---|---|
+| 全検査 | **409 passed・飛ばし 0**（`REQUIRE_KICAD=1`・6 分 23 秒） | 2026-09-26 |
+| プレートの欠け | スペース 2 キーのスイッチの周りの枠を**別に刷る**（`plate_frames_main.stl`）。羽の奥の端 10.85 → 10.72（1 段奥の開口との帯 1.075 → 1.205）。幅 1.2 未満の帯 0・板の無いスイッチ 0 | `tests/test_cckb.py`（直す前の板で落ちることを確認）・`build/cckb/v2_plate_bites.png`（前）・`v2_plate_bites_after.png`（後） |
+| ケース | 床の止まり穴 256（足・突起・スタビの箱）。滑り止め 12×6 に・支え 6 本を動かした。**18 個の STL を A1 mini でスライス 18/18 成功** | 組み立ての干渉 0・経路 0（`projects/cckb/assembly.py`） |
+| キャップ | 静音の十字に挿す筒（φ5.5・十字の穴 4.15 × 1.40）・つばの上の窪み・スタビの受け口。天板 1.2 のまま | `build/cckb/section_keycap_socket*.png`・`section_stab_across*.png` |
+| 発注の門 | **閉 — #1・#4・#6** | `tools/kb cckb gate`（2026-09-26） |
+
+**利用者にしか決められないこと**: 見本を先に買うか（購入）・スイッチの種類（静音タクタイル Whale / 静音リニア Islet）・
+O15（スペースの枠をやめてケースを手前へ約 1mm 出すか・天板 0.8 にするか）。
+
 - 買う物: [shopping-list.md](shopping-list.md) ／ 基板の頼み方: [order-steps.md](order-steps.md) ／
   組み立て: [assembly-guide.md](assembly-guide.md) ／ 刷り方: [printing-and-assembly.md](printing-and-assembly.md)
 - 全体の絵: `build/cckb/interface_plan.png`（上から）・`build/cckb/assembly_exploded.png`（分解図）・
