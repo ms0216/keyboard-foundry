@@ -17,7 +17,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from foundry.layout import UNIT, centered          # noqa: E402
-from foundry.mech import CHOC_STAB_OUTLINE, STAB_KERF, switch_of  # noqa: E402
+from foundry.mech import (CHOC_V2_STAB_HOLES, CHOC_V2_STAB_SOURCES, STAB_KERF,  # noqa: E402
+                          choc_v2_stab_plate_polys, switch_of)
 from foundry.project import load                    # noqa: E402
 from foundry.pcb_rules import JLC, NPTH_EDGE_MIN, TRACK_W  # noqa: E402
 
@@ -174,10 +175,17 @@ class Interface:
             plate_bottom=plate_top - self.sw.plate_t, plate_top=plate_top,
             switch_top=top + s.SWITCH_TOP_ABOVE_PCB, stem_top=top + s.SWITCH_STEM_ABOVE_PCB,
             keycap_top=top + s.SWITCH_STEM_ABOVE_PCB + s.KEYCAP_TOP_T,
-            keycap_bottomed=top + s.SWITCH_TOP_ABOVE_PCB + s.KEYCAP_TOP_T,
+            # 押し切ったキャップの上面: 静音の全行程の最大（SWITCH_TRAVEL ＋ TOL）だけ沈む。キャップはつばの上で
+            # 窪ませてあり、つば・ハウジングには当たらない（keycaps.py・tests/test_cckb_case.py）
+            keycap_bottomed=top + s.SWITCH_STEM_ABOVE_PCB + s.KEYCAP_TOP_T - s.SWITCH_TRAVEL - s.SWITCH_TRAVEL_TOL,
+            collar_top=top + s.SWITCH_COLLAR_ABOVE_PCB,
             rim=rim, lid_bottom=rim - s.LID_T,
             pin_tip=top - s.SWITCH_PIN_L,
-            stab_bottom=plate_top - s.STAB_HOUSING_H,
+            # V2 の中心の突起・スタビの箱・爪の下端（名目）と、ねじの頭の下端。床の止まり穴の底
+            stud_tip=top - s.SWITCH_STUD_L,
+            stab_bottom=top - s.STAB_BOX_L, stab_claw_tip=top - s.STAB_CLAW_L,
+            stab_screw_head=pcb_bot - s.STAB_SCREW_HEAD_H,
+            pocket_floor=s.CASE_FLOOR - s.FLOOR_POCKET_DEPTH,
             xiao_top=top + s.XIAO_H, holder_top=top + s.HOLDER_H,
             usb_center=top + s.XIAO_USB_Z,
             # 電源スイッチ（表）: 爪で基板に立ち、台座の下面は PSW_TAB 上。レバーの先は名目の値
@@ -205,7 +213,7 @@ class Interface:
                     right=(right, y - UNIT / 2, hx, y + UNIT / 2))
 
     def switch_bodies(self):
-        """基板の上のスイッチの胴（プレートの開口と同じ 13.8 角）。"""
+        """基板の上のスイッチの胴（プレートの開口と同じ角）。"""
         c = self.sw.cutout
         return [rect(x, y, c, c) for x, y in self.positions]
 
@@ -217,37 +225,111 @@ class Interface:
                 out += [(x - s, y, -1), (x + s, y, 1)]
         return out
 
-    def _stab_poly(self, px, py, side, grow_by):
-        pts = poly_offset_axis(list(CHOC_STAB_OUTLINE), grow_by) if grow_by else \
-            list(CHOC_STAB_OUTLINE)
-        return [(px + side * x, py + y) for x, y in pts]
+    @staticmethod
+    def _pivot_rect(px, py, side, box):
+        """支点 (px, py) から外向き X の矩形 box (x0, y0, x1, y1) を、CAD の点列（反時計回り）に。"""
+        x0, y0, x1, y1 = box
+        xa, xb = sorted((px + side * x0, px + side * x1))
+        return [(xa, py + y0), (xb, py + y0), (xb, py + y1), (xa, py + y1)]
 
     def stab_plate_openings(self):
-        """プレートのスタビの開口（輪郭 ＋ STAB_KERF）。"""
-        return [self._stab_poly(px, py, sd, STAB_KERF) for px, py, sd in self.stab_pivots()]
+        """プレートのスタビの開口（mech.CHOC_V2_STAB_PLATE ＋ STAB_KERF）。キー 1 つに左右 2 つ。"""
+        out = []
+        pl = grow(self.key_area, self.s.PLATE_MARGIN_X)
+        for (x, y), k in zip(self.positions, self.keys):
+            if self.sw.stab_offset_for(k.w_u) is None:
+                continue
+            for poly in choc_v2_stab_plate_polys((x, y), pl, self.s.PLATE_MIN_WEB, STAB_KERF):
+                out.append(poly_offset_axis(poly, STAB_KERF))
+        return out
 
     def stab_reliefs(self):
-        """基板の逃げ穴（輪郭 ＋ STAB_RELIEF_MARGIN）。**基板の次の段が Edge.Cuts に描く。**"""
-        m = self.s.STAB_RELIEF_MARGIN
-        return [self._stab_poly(px, py, sd, m) for px, py, sd in self.stab_pivots()]
+        """基板の箱の穴（mech.CHOC_V2_STAB_HOLES の box。支点 ± 3.0 × ±4.0）。**pcb_extra が Edge.Cuts に描く。**
+
+        ねじ・爪の穴は非めっきの丸穴としてフットプリント（mech.CHOC_V2_STAB_FP）が開ける（stab_holes）。
+        """
+        return [self._pivot_rect(px, py, sd, CHOC_V2_STAB_HOLES["box"]) for px, py, sd in self.stab_pivots()]
+
+    def stab_holes(self):
+        """スタビのねじ・爪の丸穴（CAD）。[(kind, (x, y), 径)]。kind は "screw" / "claw"。支点ごとに 1 つずつ。"""
+        out = []
+        for px, py, sd in self.stab_pivots():
+            for kind in ("screw", "claw"):
+                (hx, hy), d = CHOC_V2_STAB_HOLES[kind]
+                out.append((kind, (px + sd * hx, py + hy), d))
+        return out
+
+    def stab_hole_keepouts(self):
+        """ねじ・爪の穴の中心から spec.STAB_HOLE_KEEPOUT_R の円（GND のベタのほかに銅を置かない）。[((x, y), r)]。"""
+        return [(c, self.s.STAB_HOLE_KEEPOUT_R) for _, c, _ in self.stab_holes()]
 
     def stab_housings(self):
-        """ハウジングの平面（spec.STAB_HOUSING・製造図の最大公差）。
+        """箱（基板を貫いて下へ出る部分）の平面。mech.CHOC_V2_STAB_SOURCES の図（参照）の part（5.80 × 7.30）を、
+        支点（販売者の足跡の 11.9）を中心に置いた物。"""
+        w, d = CHOC_V2_STAB_SOURCES["drawing"]["part"]
+        return [self._pivot_rect(px, py, sd, (-w / 2, -d / 2, w / 2, d / 2)) for px, py, sd in self.stab_pivots()]
 
-        Keebio の輪郭の中に置く: 本体は輪郭の奥行の中央、突起は切り欠きの中央で
-        切り欠きの奥端までを占めるとみなす（突起の長さは製造図に無い。長い側に取る）。
+    def switch_holes(self):
+        """スイッチの足跡（lib/keyswitch.pretty の mech の fp。**板に置いた物と同じファイル**）の穴を、
+        キーマップ順の各スイッチの位置に置いた物（CAD）。[(ref, kind, (x, y), (X 幅, Y 幅))]。
+
+        kind: "stud"（中心の非めっき φ5.05）・"pin"（端子 φ1.2 ×2）・"locator"（位置決めの丸穴 φ2.1。2026-09-26 まで長穴 1.6 × 2.0）。
+        KiCad の足跡は Y 下向きなので y を反転する（スイッチは回さずに置く。tests/test_cckb_interface.py が
+        発注する板の穴と突き合わせる）。
         """
-        w, d, nw = self.s.STAB_HOUSING
+        import re
+        fp = ROOT / "lib" / "keyswitch.pretty" / f"{self.sw.footprint(1.0)}.kicad_mod"
+        pads = []
+        for m in re.finditer(r"\(pad \S+ (thru_hole|np_thru_hole) (circle|oval) \(at ([-\d.]+) ([-\d.]+)\)"
+                             r" \(size [-\d.]+ [-\d.]+\) \(drill (?:oval )?([-\d.]+)(?: ([-\d.]+))?\)",
+                             fp.read_text()):
+            plated, shape, x, y, dx, dy = m.groups()
+            w, h = float(dx), float(dy or dx)
+            kind = "pin" if plated == "thru_hole" else ("stud" if w > 3 else "locator")
+            pads.append((kind, float(x), -float(y), w, h))
+        kinds = sorted(k for k, *_ in pads)
+        if kinds != ["locator", "pin", "pin", "stud"]:
+            raise RuntimeError(f"{fp.name}: 穴の種類 {kinds}（中心・端子 2・位置決め 1 のはず）")
+        return [(f"SW{i}", kind, (x + dx, y + dy), (w, h))
+                for i, (x, y) in enumerate(self.matrix_positions(), start=1)
+                for kind, dx, dy, w, h in pads]
+
+    def floor_pockets(self):
+        """床の内側（上面）に掘る止まり穴（spec.FLOOR_POCKET_DEPTH 深さ）。**ケースの段はここから読む。**
+
+        [dict(kind, ref, pos, d)（丸）| dict(kind, ref, box)（矩形）]。どれも物の外形 ＋ 片側 FLOOR_POCKET_CLEAR。
+          stud      各スイッチの中心の突起 φSWITCH_STUD_D（基板の中心穴 φ5.05 の中）
+          pin       端子の足（基板の穴 φ1.2 の中を通る。穴の径で包む）×2
+          locator   位置決めの穴 φ2.1 の下（穴の中に来る下面の突起を穴の径で包む。2026-09-26 に長穴 1.6 × 2.0 から）
+          stab_box  スタビの箱（stab_housings）
+          stab_screw  スタビのねじの頭 φSTAB_SCREW_HEAD_D ＋ 片側 STAB_SCREW_POCKET_CLEAR（頭の位置のずれ ±0.275 の後に 0.2 残す。
+                    2 回目の V2 監査 E-6）（ねじの穴の真下。基板の下面から STAB_SCREW_HEAD_H 出る。
+                    2026-09-26 に足した: 監査 E 重要 2 で頭が 1.15 でなく 1.5 と分かり、床との隙が 0.3 しかない）
+        足の穴は 2026-09-26 に足した: 足の先（最悪 基板 1.44・足 3.2）が床の上面から 0.04 しか離れず、
+        V1 で決めた余裕 0.1 を割っていた（決定記録 2026-09-25-choc-v2 §10-5 の V5）。
+        tests/test_cckb_interface.py が発注する板の穴（母数 62 × 4）と突き合わせる。
+        """
+        s = self.s
+        c = s.FLOOR_POCKET_CLEAR
         out = []
-        ys = [y for _, y in CHOC_STAB_OUTLINE]
-        y0, y_notch, y1 = min(ys), sorted(set(ys))[1], max(ys)
-        dy = ((y_notch - y0) - d) / 2
-        for px, py, sd in self.stab_pivots():
-            body = [(-w / 2, y0 + dy), (w / 2, y0 + dy), (w / 2, y_notch - dy),
-                    (nw / 2, y_notch - dy), (nw / 2, y1), (-nw / 2, y1),
-                    (-nw / 2, y_notch - dy), (-w / 2, y_notch - dy)]
-            out.append([(px + sd * x, py + y) for x, y in body])
+        for ref, kind, (x, y), (w, h) in self.switch_holes():
+            if kind == "stud":
+                out.append(dict(kind="stud", ref=ref, pos=(x, y), d=s.SWITCH_STUD_D + 2 * c))
+            elif kind == "pin":
+                out.append(dict(kind="pin", ref=ref, pos=(x, y), d=w + 2 * c))
+            else:
+                out.append(dict(kind="locator", ref=ref, pos=(x, y), d=max(w, h) + 2 * c))
+        for n, poly in enumerate(self.stab_housings()):
+            out.append(dict(kind="stab_box", ref=f"STAB{n}", box=grow(poly_box(poly), c)))
+        for n, (kind, pos, _) in enumerate(h for h in self.stab_holes() if h[0] == "screw"):
+            out.append(dict(kind="stab_screw", ref=f"STAB{n}", pos=pos, d=s.STAB_SCREW_HEAD_D + 2 * s.STAB_SCREW_POCKET_CLEAR))
         return out
+
+    def matrix_positions(self):
+        """キーの中心を**キーマップ順**（基板の SW1..SWn と同じ並び）で。"""
+        keys, _ = self.p.matrix("main")
+        pos, _ = centered(keys)
+        return pos
 
     # --- 角の部品 -------------------------------------------------------------
     def usb_face_x(self):
@@ -484,7 +566,9 @@ def corridors(ifc, geo):
 
     m = matrix_routes.plan(ifc.p, geo["pads"])
     e, _ = matrix_routes.escape(ifc.p, geo["pads"], others=m)
-    return [(a, b) for _, _, a, b in m + e]
+    pw = matrix_routes.power_runs(ifc.p, geo["pads"], others=m + e)
+    fx, _ = matrix_routes.fixed_runs(ifc.p, geo["pads"], others=m + e + pw)
+    return [(a, b) for _, _, a, b in m + e + pw] + [(a, b) for _, _, a, b, _ in fx]
 
 
 def band_ys(ifc):
@@ -561,7 +645,7 @@ def mount_problems(ifc, geo, p, corner_ok=False, cache=None):
         cy = fp["courtyard"]
         if "front" in cy and circle_rect_gap(p, HOLE_CRTYD_R, cy["front"]) < 0:
             out.append(f"表のコートヤード {fp['ref']}")
-        if "back" in cy and circle_rect_gap(p, r_boss, cy["back"]) < 0:
+        if "back" in cy and any(circle_rect_gap(p, r_boss, b) < 0 for b in courtyard_parts(fp, "back")):
             out.append(f"裏のコートヤード {fp['ref']}")
     # 5. 配線の通り道
     keep = r_hole + COPPER_GAP + TRACK_HALF
@@ -577,6 +661,13 @@ def mount_problems(ifc, geo, p, corner_ok=False, cache=None):
     if any(abs(p[1] - yb) < keep + BAND_HALF for yb in band_ys(ifc)):
         out.append("段の境目の帯")
     return out
+
+
+def courtyard_parts(fp, side):
+    """フットプリントのコートヤード（side = "front" | "back"）の、閉じた形ごとの外接矩形の一覧
+    （board_geometry の <side>_parts。1 つの形なら全体の外接矩形 1 つ）。"""
+    cy = fp["courtyard"]
+    return cy.get(side + "_parts") or ([cy[side]] if side in cy else [])
 
 
 def support_problems(ifc, geo, p):
@@ -599,7 +690,7 @@ def support_problems(ifc, geo, p):
             out.append(f"{pad['ref']} のパッド")
     for fp in geo["footprints"]:
         if "back" in fp["courtyard"] and not re.fullmatch(r"H\d+", fp["ref"]) \
-                and circle_rect_gap(p, r, fp["courtyard"]["back"]) < 0:
+                and any(circle_rect_gap(p, r, b) < 0 for b in courtyard_parts(fp, "back")):
             out.append(f"裏のコートヤード {fp['ref']}")
     for poly in ifc.stab_reliefs():
         if circle_poly_gap(p, r, poly) < COPPER_GAP:
@@ -607,7 +698,17 @@ def support_problems(ifc, geo, p):
     for m in ifc.mounts():
         if math.hypot(p[0] - m[0], p[1] - m[1]) < r + ifc.s.MOUNT_BOSS_D / 2 + COPPER_GAP:
             out.append("取付のボス")
+    # 床の止まり穴（interface.floor_pockets）が柱の根元を削らない。肉 POCKET_WALL（線 1 本）
+    for pk in ifc.floor_pockets():
+        g = (math.hypot(p[0] - pk["pos"][0], p[1] - pk["pos"][1]) - r - pk["d"] / 2) if "d" in pk \
+            else circle_rect_gap(p, r, pk["box"])
+        if g < POCKET_WALL:
+            out.append(f"{pk['ref']} の床の穴（{pk['kind']}）")
     return out
+
+
+# 床の止まり穴と、床から立つ柱・ボス・島の間に残す肉（線 1 本・0.4 ノズル）
+POCKET_WALL = 0.4
 
 
 # ---------------------------------------------------------------------------

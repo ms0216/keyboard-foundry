@@ -76,6 +76,24 @@ def g(asm):
     return asm.groups()
 
 
+# **プレートを戻したときの組み立て**（spec.PLATE の逆の形）。プレートは 2026-09-26 に使わないと決めたが
+# （決定記録 2026-09-26-plateless）、戻せるように、干渉・経路・押し切り・留め方を両方の形で毎回見る
+@pytest.fixture(scope="module")
+def asm_other(geo):
+    return A.Assembly(geo, plate=not load("cckb").spec.PLATE)
+
+
+@pytest.fixture(scope="module")
+def g_other(asm_other):
+    return asm_other.groups()
+
+
+@pytest.fixture(scope="module", params=["spec", "other"])
+def both(request, asm, g, asm_other, g_other):
+    """(組み立て, 群) を spec.PLATE の形と、その逆の形の 2 通りで。"""
+    return (asm, g) if request.param == "spec" else (asm_other, g_other)
+
+
 def slim(asm, names, pressed=False):
     """組み立ての一部だけ（壊す検査を速くする）。"""
     out = {}
@@ -84,8 +102,8 @@ def slim(asm, names, pressed=False):
         if n in ("tray_L", "tray_R", "lid_L", "lid_R"):
             printed = printed or asm.printed()
             out[n] = printed[n]
-        elif n in ("plate_L", "plate_R"):
-            out[n] = asm.plates()[n]
+        elif n in ("plate_L", "plate_R", "plate_frames"):
+            out[n] = asm.plate_parts()[n]
         elif n == "keycaps":
             out[n] = A.Compound(asm.keycap_solids(pressed))
         elif n == "switches":
@@ -122,8 +140,9 @@ def test_every_case_constant_is_read():
 # ---------------------------------------------------------------------------
 
 def all_printed(asm):
+    """刷れる物の全部。**プレート（使わない間も戻せるように）も含める**——大きさと水密は毎回見る。"""
     parts = dict(asm.printed())
-    parts.update(asm.plates())
+    parts.update(asm.plate_parts())
     parts.update(KC.print_parts(asm.i))
     parts.update(coupons.parts(asm.i))
     return parts
@@ -136,9 +155,34 @@ def printed_all(asm):
 
 def test_every_printed_part_fits_the_a1_mini(asm, printed_all):
     sizes = A.print_sizes(printed_all, LIMIT)
-    assert len(sizes) == 17, sorted(sizes)          # トレイ 2・ふた 2・プレート 2・キャップ 4＋並べた 2・小片 5
+    assert len(sizes) == 19, sorted(sizes)          # トレイ 2・ふた 2・プレート 2＋枠 1・キャップ 4＋並べた 2・小片 6
     bad = {n: v for n, v in sizes.items() if not v[2]}
     assert not bad, bad
+
+
+def test_the_print_set_has_the_plate_only_when_it_is_used(asm, asm_other):
+    """組み立てに入るプレート（plates）は spec.PLATE に従う。プレート無しの形ではプレートの部品が 1 つも無く、
+    ありの形では 3 つ（左右＋スペースの枠）。**プレートの立体そのもの（plate_parts）はどちらの形でも作れる**。"""
+    for a in (asm, asm_other):
+        got = set(a.plates())
+        assert got == (set(A.PLATE_PARTS) if a.plate else set()), (a.plate, got)
+        assert set(a.plate_parts()) == set(A.PLATE_PARTS)
+    assert asm.plate == load("cckb").spec.PLATE and asm_other.plate != asm.plate
+
+
+def test_the_plate_outputs_go_outside_the_print_set_when_unused(printed_all, monkeypatch):
+    """プレートを使わない（spec.PLATE = False）なら、プレートとプレートの小片は build/cckb/plate_optional/ に出る
+    （slice_check が拾う build/cckb/*.stl の外）。True に戻せば build/cckb/ に。PLATE を書いていない機種（HHKB）は使う。"""
+    from foundry.plate import plate_dir, uses_plate
+
+    p = load("cckb")
+    assert set(coupons.PLATE_COUPONS) <= set(printed_all)
+    assert plate_dir(p) == (p.build if p.spec.PLATE else p.build / "plate_optional")
+    monkeypatch.setattr(p.spec, "PLATE", True)
+    assert plate_dir(p) == p.build and uses_plate(p.spec)
+    monkeypatch.setattr(p.spec, "PLATE", False)
+    assert plate_dir(p) == p.build / "plate_optional"
+    assert uses_plate(types.SimpleNamespace())          # PLATE を書いていない機種（HHKB の spec）は使う
 
 
 def test_the_size_check_notices_a_long_tray(geo):
@@ -150,7 +194,8 @@ def test_the_size_check_notices_a_long_tray(geo):
 @pytest.mark.slow
 def test_case_parts_and_keycaps_are_single_watertight_solids(printed_all):
     for name, part in printed_all.items():
-        if name.startswith(("tray_", "lid_", "keycap_", "plate_")):   # keycaps_set_* は並べた Compound
+        if name.startswith(("tray_", "lid_", "keycap_", "plate_")) and name != "plate_frames":
+            # keycaps_set_* は並べた Compound。plate_frames はスペース 2 キーの枠 2 つ（別の立体）
             assert len(part.solids()) == 1, name
         assert A.mesh_of(part).is_watertight, name
 
@@ -159,8 +204,10 @@ def test_case_parts_and_keycaps_are_single_watertight_solids(printed_all):
 # 干渉（B-rep の総当たり）
 # ---------------------------------------------------------------------------
 
-def test_every_part_declares_how_it_is_held(g):
-    assert set(g) == set(A.HELD_BY), (set(g) ^ set(A.HELD_BY))
+def test_every_part_declares_how_it_is_held(both):
+    asm, g = both
+    assert set(g) == set(A.held_by(asm)), (set(g) ^ set(A.held_by(asm)))
+    assert set(A.HELD_BY) - set(A.held_by(asm)) == (set() if asm.plate else set(A.PLATE_PARTS))
 
 
 def test_the_switches_on_the_board_sit_under_the_layout_keys(asm, geo):
@@ -216,7 +263,8 @@ def test_the_power_switch_pins_must_be_trimmed(asm, g):
 
 
 @pytest.mark.slow
-def test_nothing_interferes(g):
+def test_nothing_interferes(both):
+    _, g = both
     sl, failed = [], []
     bad = A.interference(g, skip=set(A.EXPECTED) | {("pads", "desk")}, slivers=sl, failures=failed)
     assert bad == {}, bad
@@ -289,8 +337,8 @@ def test_the_designed_overlap_check_notices_a_lost_captive_web(geo):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.slow
-def test_pressed_keycaps_hit_nothing(asm):
-    gp = asm.groups(pressed=True)
+def test_pressed_keycaps_hit_nothing(both):
+    gp = both[0].groups(pressed=True)
     bad = A.interference({"keycaps": gp["keycaps"]}, {k: v for k, v in gp.items() if k != "keycaps"})
     assert bad == {}, bad
 
@@ -304,7 +352,8 @@ def test_the_pressed_check_notices_caps_over_the_wall(geo):
 
 @pytest.mark.slow
 def test_the_pressed_check_notices_a_long_skirt(geo):
-    a = A.Assembly(geo, cs=cs_with(KEYCAP_SKIRT_H=3.5))      # 押し切った下端 6.5 < プレートの上面 7.2
+    # プレートの形で（プレートを戻したときの検査）。プレート無しの形の同じ壊し方は下の検査
+    a = A.Assembly(geo, cs=cs_with(KEYCAP_SKIRT_H=3.5), plate=True)   # 押し切った下端 6.5 < プレートの上面 7.2
     gp = slim(a, ["keycaps", "switches", "plate_L", "plate_R"], pressed=True)
     bad = A.interference({"keycaps": gp["keycaps"]}, {k: v for k, v in gp.items() if k != "keycaps"})
     assert ("keycaps", "plate_L") in bad, bad
@@ -315,14 +364,14 @@ def test_the_pressed_check_notices_a_long_skirt(geo):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.slow
-def test_every_part_can_be_put_in_and_taken_out(asm, g):
-    assert A.path_problems(asm, g) == {}
+def test_every_part_can_be_put_in_and_taken_out(both):
+    assert A.path_problems(*both) == {}
 
 
 @pytest.mark.slow
 @pytest.mark.parametrize("move,cs_over,path", [
     (("U_MCU", 1.5, 0.0), {}, "usb_plug"),                      # 板の XIAO が 1.5 奥 → プラグの樹脂が壁に入り込む
-    (("BT1", 0.0, 2.6), {}, "cell"),                            # 板のホルダが奥 → 電池がプレートの下
+    (("BT1", 0.0, 2.6), {}, "cell"),                            # 板のホルダが奥 → 電池がキャップ（プレートを使うならプレートも）の下
     (None, {"PSW_SLOT_CLEAR": -0.3}, "lid_R"),                  # レバーの穴が狭い（ふたが外れない）
     (None, {"DRIVER_D": 5.0}, "screws"),                        # ドライバーが座ぐりに入らない
 ])
@@ -332,8 +381,8 @@ def test_the_path_check_notices_a_blocked_path(geo, move, cs_over, path):
     assert path in bad, bad
 
 
-def test_the_parts_are_held(asm, g):
-    assert A.retention_problems(asm, g) == []
+def test_the_parts_are_held(both):
+    assert A.retention_problems(*both) == []
 
 
 @pytest.mark.parametrize("over", [{"RIM_ABOVE_PCB": 9.0}, {"SCREW_L": 4}])
@@ -424,7 +473,7 @@ def _thin(asm, parts):
 @pytest.mark.slow
 def test_every_wall_is_thick_enough(asm):
     parts = dict(asm.printed())
-    parts.update(asm.plates())
+    parts.update(asm.plate_parts())          # プレートは使わない間も見る（戻せるように）
     assert _thin(asm, parts) == []
 
 
@@ -449,6 +498,24 @@ def test_the_seam_does_not_cut_a_post(asm, g):
 def test_the_seam_check_notices_a_seam_through_a_post(geo):
     a = A.Assembly(geo, ifc_with(CASE_SEAM=(-19.18, 4.7625)))
     assert A.seam_problems(a, a.case.tray_halves())
+
+
+def test_the_nuts_can_be_held_from_above_without_the_plate(asm):
+    """プレートが無いとナットの回り止めが無い。上からピンセット・ナット回しで押さえられる空きが 9 個ともある
+    （2026-09-26 に測った: 胴まで 3.79〜6.62・つばまで 3.26〜6.09）。"""
+    got = A.nut_access(asm)
+    assert len(got) == 9
+    assert min(b for _, b, _, _ in got) > 3.7 and min(f for _, _, f, _ in got) > 3.2, got
+    assert A.nut_access_problems(asm) == []
+
+
+def test_the_nut_access_check_notices_a_crowded_nut(geo):
+    """**壊して落ちることを示す。**取付 H9（右の端）をスイッチの胴へ 1.5 寄せると、押さえる道具が入らない。"""
+    s = load("cckb").spec
+    mounts = [list(m) for m in s.MOUNTS["main"]]
+    mounts[-1][0] -= 1.5
+    a = A.Assembly(geo, ifc_with(MOUNTS={"main": [tuple(m) for m in mounts]}))
+    assert A.nut_access_problems(a), A.nut_access(a)
 
 
 def test_the_antislip_pads_keep_clear_of_the_screw_seats(asm):
@@ -519,39 +586,166 @@ def test_the_interference_check_notices_an_island_under_the_pins(geo):
     assert ("tray_L", "switches") in bad and ("tray_R", "switches") in bad and ("tray_R", "psw") not in bad, bad
 
 
+def stab_floor_margin(a):
+    """スタビの箱の下端（最悪: 基板 −10%）と、その下の床の止まり穴の底の間。"""
+    s, z = a.s, a.z
+    return z["pcb_bottom"] + s.PCB_T * (1 - s.PCB_T_TOL) - s.STAB_BOX_L - z["pocket_floor"]
+
+
 def test_the_stab_housing_stays_off_the_floor(asm):
-    """O2: スタビのハウジングの下端は床の上に空きがある → 床に穴は要らない（厚くもしない）。"""
-    z = asm.z
-    assert z["stab_bottom"] - z["floor_top"] >= 0.5
+    """V2 のスタビの箱（基板の上面から 3.30 下）は床の上面（1.2）より下へ出る。**床の止まり穴の中に下りて、
+    穴の底に 0.1 以上残る**（最悪の薄い板で）。モデルの箱・爪・ねじの頭が、止まり穴を掘ったトレイに当たらない。"""
+    assert stab_floor_margin(asm) >= 0.1
+    thin_bottom = asm.z["stab_bottom"] - asm.s.PCB_T_TOL_ABS
+    assert thin_bottom < asm.z["floor_top"]                     # 穴が要る（無ければ当たる）ことの確かめ
+    assert A.interference(slim(asm, ["stabs", "tray_L", "tray_R"])) == {}
 
 
 def test_the_stab_check_notices_a_long_housing(geo):
-    a = A.Assembly(geo, ifc_with(STAB_HOUSING_H=6.0))
+    """箱を 0.6 長くすると（3.90）、止まり穴の底を越えてトレイに当たり、余裕も負になる。"""
+    a = A.Assembly(geo, ifc_with(STAB_BOX_L=3.9))
     bad = A.interference(slim(a, ["stabs", "tray_L", "tray_R"]))
-    assert bad and a.z["stab_bottom"] - a.z["floor_top"] < 0.5
+    assert bad and stab_floor_margin(a) < 0.1
+
+
+def test_the_stab_check_notices_a_tray_without_pockets(geo):
+    """止まり穴を掘らない床（前の形）だと、スタビの箱と中心の突起がトレイに当たる。"""
+    a = A.Assembly(geo)
+    a.case.floor_pockets = lambda: []
+    bad = A.interference(slim(a, ["stabs", "switches", "tray_L", "tray_R"]))
+    assert {("stabs", "tray_L"), ("switches", "tray_L")} <= set(bad), bad
+
+
+def test_the_floor_pockets_keep_off_the_posts_and_islands(asm):
+    """止まり穴と、床から立つボス・支えの柱・ふたの柱、滑り止めの島の間に肉 0.4 が残る。"""
+    assert A.pocket_problems(asm) == []
+
+
+def test_the_pocket_check_notices_a_support_on_a_pocket(geo):
+    """支えの柱を 1 本、段 3|4 の前の場所（y −27.03。位置決めの長穴の止まり穴の縁）に戻すと見つかる。"""
+    s = load("cckb").spec
+    sup = [(-95.18, -27.03) if p == (-95.18, -27.63) else p for p in s.SUPPORTS]
+    a = A.Assembly(geo, ifc_with(SUPPORTS=sup))
+    assert any("支え (-95.18, -27.03)" in b[1] for b in A.pocket_problems(a))
+
+
+def test_the_floor_under_the_pockets_is_0_8(asm):
+    """止まり穴の下の床は 0.8（外の底面は平ら）。**生成したトレイを下から刺して**測る: 中心の突起・端子・位置決め・スタビの箱。"""
+    m = A.mesh_of(asm.printed()["tray_L"])
+    pk = [p for p in asm.i.floor_pockets() if p["ref"] in ("SW16", "STAB0") or p["kind"] == "stab_box"]
+    pts = [p["pos"] if "d" in p else ((p["box"][0] + p["box"][2]) / 2, (p["box"][1] + p["box"][3]) / 2) for p in pk]
+    got = {}
+    for (x, y), p in zip(pts, pk):
+        if x > asm.s.CASE_SEAM[1]:
+            continue
+        r = A.material_runs(m, (x, y, -5), (0, 0, 1))
+        got[(p["ref"], p["kind"])] = round(r[0][1] - r[0][0], 4) if r else 0.0
+    assert len(got) >= 5 and set(got.values()) == {0.8}, got
 
 
 # ---------------------------------------------------------------------------
 # キーキャップ
 # ---------------------------------------------------------------------------
 
-def test_the_keycap_posts_follow_the_kailh_drawing(asm):
-    """脚は図面の穴（1.20 × 3.00・中心間 5.70・X 方向に並ぶ）から STEM_POST_FIT 細い。2.25u はスタビにも。"""
-    cap = KC.keycap(2.25, asm.s, asm.i.sw, asm.c)
-    posts = [s for s in cap.solids()]
-    assert len(posts) == 1
-    bb = cap.bounding_box()
-    assert abs(bb.max.Z - asm.s.KEYCAP_TOP_T) < 1e-6
-    assert abs(bb.min.Z + CS.STEM_POST_L) < 1e-6
-    # 脚の断面（z = −1 で切る）: 6 本、各 (1.2 − fit) × (3.0 − fit)、中心 x = ±12.0 ± 2.85 と ±2.85
+def test_the_keycap_socket_follows_the_silent_v2_drawing(asm):
+    """キャップの筒（z = −1.5 で切る）: 外径 STEM_TUBE_OD（静音の窪み φ5.70 より 0.2 細い）で、中に十字の穴
+    STEM_CROSS_SLOT（図の十字 4.00 × 1.30 より広い）。2.25u は ±11.9（販売者の足跡の支点）にスタビの受け口の細い台
+    （φ STAB_SOCKET_BOSS_D・高さ STAB_SOCKET_GRIP）があり、その中に十字の穴が台の下端から天板の中まで通る。"""
     from build123d import Face, Plane
-    sec = cap & (Plane.XY.offset(-CS.KEYCAP_SKIRT_H - 0.5) * Face.make_rect(100, 100))
-    faces = sec.faces()
-    xs = sorted(round(f.center().X, 3) for f in faces)
-    assert xs == sorted(round(s + d, 3) for s in (-12.0, 0.0, 12.0) for d in (-2.85, 2.85)), xs
-    for f in faces:
-        b = f.bounding_box()
-        assert abs(b.size.X - (1.2 - CS.STEM_POST_FIT)) < 1e-6 and abs(b.size.Y - (3.0 - CS.STEM_POST_FIT)) < 1e-6
+
+    cap = KC.keycap(2.25, asm.s, asm.i.sw, asm.c)
+    assert len(cap.solids()) == 1
+    bb = cap.bounding_box()
+    assert abs(bb.max.Z - asm.s.KEYCAP_TOP_T) < 1e-6 and abs(bb.min.Z + CS.STEM_TUBE_L) < 1e-6
+    sec = cap & (Plane.XY.offset(-1.5) * Face.make_rect(100, 100))
+    tube = [f for f in sec.faces() if abs(f.center().X) < 1]
+    assert len(tube) == 1
+    tb = tube[0].bounding_box()
+    assert abs(tb.size.X - CS.STEM_TUBE_OD) < 0.01 and CS.STEM_TUBE_OD <= asm.c.SW_RECESS_D - 0.2 + 1e-9
+    slot_area = 2 * CS.STEM_CROSS_SLOT[0] * CS.STEM_CROSS_SLOT[1] - CS.STEM_CROSS_SLOT[1] ** 2
+    assert abs(tube[0].area - (math.pi / 4 * CS.STEM_TUBE_OD ** 2 - slot_area)) < 0.05
+    assert all(a > b for a, b in zip(CS.STEM_CROSS_SLOT, CS.STEM_CROSS))
+    # スタビの台: 掴む深さ 1.5 以上（前は 0.45・監査 E 重要 1）。台の下端とスライダーの胴の上面は押しても離れたまま
+    h = KC.stab_grip(asm.s)
+    assert h >= 1.5 and 8.60 - h >= 5.00 + CS.KEYCAP_COLLAR_CLEAR - 1e-9
+    stab_slot_area = 2 * CS.STAB_CROSS_SLOT[0] * CS.STAB_CROSS_SLOT[1] - CS.STAB_CROSS_SLOT[1] ** 2
+    for z in (-0.2, -h / 2, -h + 0.2):                  # 台の上・中・下で、台の中に十字の穴が通っている
+        sec2 = cap & (Plane.XY.offset(z) * Face.make_rect(100, 100))
+        bosses = [f for f in sec2.faces() if abs(f.center().Y) < 1 and abs(f.center().X) > 5
+                  and f.bounding_box().size.X < 6]
+        assert sorted(round(f.center().X, 2) for f in bosses) == [-11.9, 11.9], (z, bosses)
+        for f in bosses:
+            assert abs(f.bounding_box().size.X - CS.STAB_SOCKET_BOSS_D) < 0.01
+            assert abs(f.area - (math.pi / 4 * CS.STAB_SOCKET_BOSS_D ** 2 - stab_slot_area)) < 0.05, (z, f.area)
+
+
+def test_the_stab_boss_enters_the_slider_opening_when_pressed(asm):
+    """押し切ると台は箱の上面より 1.45 下へ入る。箱の口（スライダーの胴が沈んで空いた所）に当たらない。"""
+    from build123d import Compound
+
+    caps = Compound([c for c, k in zip(asm.keycap_solids(True), asm.i.keys) if k.w_u == 2.25])
+    assert A.interference({"keycaps": caps}, {"stabs": Compound(asm.stab_solids(True))}) == {}
+    z = asm.z
+    assert z["stem_top"] - KC.travel_max(asm.s) - KC.stab_grip(asm.s) < z["pcb_top"] + 5.00 - 1.0
+
+
+def test_the_stab_boss_check_notices_a_wide_boss(geo):
+    """台を箱の口より太くすると（φ5.9・口 5.5）、押し切りで箱に当たる。"""
+    from build123d import Compound
+
+    a = A.Assembly(geo, cs=cs_with(STAB_SOCKET_BOSS_D=5.9, STAB_SOCKET_CLEAR=-0.2))
+    caps = Compound([c for c, k in zip(a.keycap_solids(True), a.i.keys) if k.w_u == 2.25])
+    assert A.interference({"keycaps": caps}, {"stabs": Compound(a.stab_solids(True))})
+
+
+def test_the_stab_grip_refuses_a_boss_that_hits_the_slider():
+    with pytest.raises(ValueError):
+        KC.stab_grip(load("cckb").spec, cs_with(STAB_SOCKET_GRIP=3.6))
+    with pytest.raises(ValueError):
+        KC.stab_grip(load("cckb").spec, cs_with(STAB_SOCKET_BOSS_D=5.3))
+
+
+def stab_coupon_slots(width, spec):
+    """coupon_stem のスタビの板（幅 width）を台の高さの真ん中で切り、台の断面 [(x, 外径, 面積)]。"""
+    from build123d import Face, Plane
+
+    part = coupons.stab_cap_coupon(width, 0, CS, spec)          # 天板がベッド（z ≦ 0）・台が上（z 0〜掴む深さ）
+    sec = part & (Plane.XY.offset(KC.stab_grip(spec) / 2) * Face.make_rect(200, 200))
+    return sorted((round(f.center().X, 2), round(f.bounding_box().size.X, 3), f.area) for f in sec.faces()
+                  if abs(f.center().X) > 5)
+
+
+def test_the_stab_coupon_compares_the_slot_widths_at_the_real_pivot():
+    """coupon_stem のスタビの板は、本番の支点 ±11.9・台 φ5.1 で、十字の穴の幅だけが 1.31 / 1.36 / 1.41（本番の幅を挟む）。
+    **軸が戻らなければまず幅を締める**ための板（2 回目の V2 監査 E-3）。長さは本番の 4.10 のまま（台との端の肉 0.5）。"""
+    spec = load("cckb").spec
+    widths = CS.COUPON_STAB_SLOT_WIDTHS
+    assert CS.STAB_CROSS_SLOT[1] in widths and min(widths) < CS.STAB_CROSS_SLOT[1] < max(widths)
+    assert (CS.STAB_SOCKET_BOSS_D - CS.STAB_CROSS_SLOT[0]) / 2 >= 0.5 - 1e-9
+    L = CS.STAB_CROSS_SLOT[0]
+    for w in widths:
+        faces = stab_coupon_slots(w, spec)
+        assert [x for x, _, _ in faces] == [-11.9, 11.9], faces
+        for _, d, a in faces:
+            assert abs(d - CS.STAB_SOCKET_BOSS_D) < 0.01
+            assert abs(a - (math.pi / 4 * CS.STAB_SOCKET_BOSS_D ** 2 - (2 * L * w - w * w))) < 0.02, (w, a)
+
+
+def test_the_stab_coupon_check_notices_a_slot_of_the_wrong_width():
+    """幅 1.31 と書いた板の穴を 1.41 で開けた物（取り違え）は、面積で見分けられる。"""
+    spec = load("cckb").spec
+    L = CS.STAB_CROSS_SLOT[0]
+    (_, _, a), _ = stab_coupon_slots(1.41, spec)
+    assert abs(a - (math.pi / 4 * CS.STAB_SOCKET_BOSS_D ** 2 - (2 * L * 1.31 - 1.31 ** 2))) > 0.05
+
+
+def test_the_keycap_clears_the_silent_collar(asm):
+    """押し切ったとき、天板の下面（つばの窪みの所）が静音のつばの上面より KEYCAP_COLLAR_CLEAR 上に残る。"""
+    z = asm.z
+    under = z["stem_top"] - KC.travel_max(asm.s) + KC.collar_relief_depth(asm.s)
+    assert under - z["collar_top"] >= CS.KEYCAP_COLLAR_CLEAR - 1e-9
+    r0, r1 = CS.KEYCAP_COLLAR_RELIEF
+    assert r0 <= asm.c.SW_STEM_D + 1e-9 and r1 >= asm.s.SWITCH_COLLAR_D + 0.6
 
 
 def test_the_keycap_top_is_the_interface_height(asm, g):

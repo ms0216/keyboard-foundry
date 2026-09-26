@@ -16,7 +16,7 @@ import matplotlib.pyplot as plt                     # noqa: E402
 from matplotlib.patches import Circle, Polygon, Rectangle   # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from interface import Interface, hex_r, size          # noqa: E402
+from interface import Interface, hex_r, poly_box, size   # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[3]
 OUT = ROOT / "build" / "cckb"
@@ -280,7 +280,13 @@ def zstack(ifc):
     fig, ax = plt.subplots(figsize=(12, 6))
     # 左スペースの右のスタビを通る x-z 断面（y = 最下段の中心）
     (px, py, sd) = [p for p in ifc.stab_pivots() if p[1] < -30][1]
-    kx = px - sd * 12.0
+    kx = px - sd * ifc.sw.stab_offset[2.25]
+    i_piv = [p for p in ifc.stab_pivots()].index((px, py, sd))
+    hb = poly_box(ifc.stab_housings()[i_piv])                    # 箱の平面（x の範囲）
+    rb = poly_box(ifc.stab_reliefs()[i_piv])                     # 基板の箱の穴
+    pocket = next(p["box"] for p in ifc.floor_pockets() if p["kind"] == "stab_box"
+                  and p["box"][0] <= px <= p["box"][2] and p["box"][1] <= py <= p["box"][3])
+    stud_d = next(p["d"] for p in ifc.floor_pockets() if p["kind"] == "stud")
     items = [
         ((kx - 20, px + 12, 0, s.CASE_FLOOR), dict(fc="0.85", ec="k", lw=0.5)),
         # 参考: 滑り止めの島（四隅だけ。この断面には無い）の上面。破線
@@ -293,10 +299,17 @@ def zstack(ifc):
         ((kx - 20, px + 12, z["keycap_top"] - s.KEYCAP_TOP_T, z["keycap_top"]),
          dict(fc="#fed", ec="k", lw=0.4)),
         ((kx - 0.6, kx + 0.6, z["pin_tip"], z["pcb_top"]), dict(fc="#c80", ec="k", lw=0.3)),
-        ((px - 3.16, px + 3.16, z["stab_bottom"], z["plate_top"]), dict(fc="m", alpha=0.4, ec="k", lw=0.4)),
-        ((px - 3.65, px + 3.65, z["pcb_bottom"], z["pcb_top"]), dict(fc="w", ec="m", lw=0.8, ls="--")),
-        ((kx + 7.6 - 0.8, kx + 7.6 + 0.8, z["pcb_bottom"] - 1.25, z["pcb_bottom"]),
-         dict(fc="#333", ec="k", lw=0.3)),
+        # V2 の中心の突起（φ SWITCH_STUD_D）と床の止まり穴（interface.floor_pockets）
+        ((kx - s.SWITCH_STUD_D / 2, kx + s.SWITCH_STUD_D / 2, z["stud_tip"], z["pcb_top"]),
+         dict(fc="0.55", ec="k", lw=0.3)),
+        # スタビの箱（基板を貫いて下へ）と、基板の箱の穴（Edge.Cuts）
+        ((hb[0], hb[2], z["stab_bottom"], z["pcb_top"] + 5.0), dict(fc="m", alpha=0.4, ec="k", lw=0.4)),
+        # 床の止まり穴（突起・箱の下。深さ FLOOR_POCKET_DEPTH。外の底面は平ら）
+        ((kx - stud_d / 2, kx + stud_d / 2, z["pocket_floor"], s.CASE_FLOOR), dict(fc="w", ec="b", lw=0.6)),
+        ((pocket[0], pocket[2], z["pocket_floor"], s.CASE_FLOOR), dict(fc="w", ec="b", lw=0.6)),
+        ((rb[0], rb[2], z["pcb_bottom"], z["pcb_top"]), dict(fc="w", ec="m", lw=0.8, ls="--")),
+        ((kx + ifc.sw.diode_offset[0] - 0.8, kx + ifc.sw.diode_offset[0] + 0.8,
+          z["pcb_bottom"] - 1.25, z["pcb_bottom"]), dict(fc="#333", ec="k", lw=0.3)),
     ]
     section_rects(ax, items)
     for name, v in sorted(z.items(), key=lambda kv: kv[1]):

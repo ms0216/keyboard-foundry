@@ -85,3 +85,20 @@ def test_a_row_on_the_xiao_i2c_pins_needs_the_i2c_turned_off():
     # コメントの中の &xiao_i2c は数えない
     assert check_zmk_config.xiao_pin_conflicts(
         "/* &xiao_i2c { status = \"disabled\"; }; */ row-gpios = <&xiao_d 4 0>;") == [("xiao_i2c", 4)]
+
+
+def test_d6_d7_need_the_serial_off_in_the_board_or_the_overlay():
+    """D6・D7 は XIAO の uart0（xiao_serial）のピン（TX P1.11・RX P1.12）。CCKB は D6 を行 4、D7 を CS に使う。
+    ZMK のボード xiao_ble//zmk の dts（写し foundry/upstream/xiao_ble_zmk.dts）が &xiao_serial を切っているので通る。
+    **どちらも切らないと落ちる**: ボードの dts から切る行を消した写しで、D6・D7 が見つかる。overlay で切れば通る
+    （2 回目の V2 監査 A-1。前は「ZMK が切る」とコメントに書いて、何も見ていなかった）。"""
+    from foundry.paths import ROOT
+
+    real = (ROOT / "config/boards/shields/cckb/cckb.overlay").read_text(encoding="utf-8")
+    board = check_zmk_config.XIAO_BOARD_DTS.read_text(encoding="utf-8")
+    assert '&xiao_serial { status = "disabled"; };' in board          # 写しに切る行がある（外の事実）
+    assert check_zmk_config.xiao_pin_conflicts(real) == []
+    unplugged = board.replace('&xiao_serial { status = "disabled"; };', "")
+    assert check_zmk_config.xiao_pin_conflicts(real, unplugged) == [("xiao_serial", 6), ("xiao_serial", 7)]
+    fixed = real + '\n&xiao_serial {\n\tstatus = "disabled";\n};\n'
+    assert check_zmk_config.xiao_pin_conflicts(fixed, unplugged) == []

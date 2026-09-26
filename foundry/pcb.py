@@ -157,7 +157,7 @@ def build(project, piece):
         if s is not None and s in kind.stab_fp:
             st = _load(KEYSWITCH_LIB, kind.stab_fp[s])
             st.SetPosition(to_kicad(kx, ky))
-            if stab_flipped(k, keys):
+            if kind.stab_turn_front_row and stab_flipped(k, keys):
                 st.SetOrientationDegrees(180)
             st.SetReference(f"ST{i}")
             board.Add(st)
@@ -238,7 +238,8 @@ def build(project, piece):
     out.mkdir(parents=True, exist_ok=True)
     path = out / f"{project.root.name}_{piece}.kicad_pcb"
     board.Save(str(path))
-    sync_project_rules(path, getattr(spec, "DRC_SEVERITY", None))
+    sync_project_rules(path, getattr(spec, "DRC_SEVERITY", None),
+                       pth_hole_clearance=getattr(spec, "DRC_PTH_HOLE_CLEARANCE", False))
     return path, (pcb_w, pcb_h), len(keys), n_stab, len(nets)
 
 

@@ -15,12 +15,13 @@ from __future__ import annotations
 
 import sys
 
-from build123d import (BuildLine, BuildPart, BuildSketch, Circle, Kind, Locations,
+from build123d import (BuildLine, BuildPart, BuildSketch, Circle, Compound, Kind, Locations,
                        Mode, Polygon, Polyline, Rectangle, RectangleRounded, RegularPolygon, add,
                        extrude, make_face, offset)
 
 from .layout import centered
-from .mech import CHOC_STAB_OUTLINE, STAB_KERF, stab_flipped, switch_of
+from .mech import (CHOC_STAB_OUTLINE, STAB_KERF, choc_v2_stab_plate_polys, stab_flipped,
+                   switch_of)
 
 M2_CLEAR_D = 2.4         # M2 のバカ穴（0.4 の逃げ）
 
@@ -79,13 +80,108 @@ def choc_stab_polygons(s, at=(0.0, 0.0)):
     return [left, right]
 
 
+def choc_v2_stab_polygons(at=(0.0, 0.0), outline=None, web=0.0):
+    """Choc V2 のねじ留めスタビの左右 2 つの開口（mech.choc_v2_stab_plate_polys・kerf 0）。ワイヤは常に奥。
+
+    輪郭はキーの中心が原点（支点ではない）。プレートに開けるときは STAB_KERF だけ外へ広げる（build_plate）。
+    outline・web を渡すと、外形まで web 未満の辺を外形の外まで伸ばす。
+    """
+    return choc_v2_stab_plate_polys(at, outline, web, STAB_KERF)
+
+
+def thin_webs(part, web, min_area=0.1):
+    """板の中で幅 web 未満の所（2 つの穴・穴と外形の間の帯、細い突起）を返す。
+
+    上を向いた面ごとに、形を web/2 だけ縮めてから戻す（opening）。幅 web 未満の所は縮めたときに消えて
+    戻らない。消えた所のうち面積が min_area を超える物を数える。**凸の角も丸まって削れる**が、
+    90° の角の削れは (1 − π/4)(web/2)² = 0.077mm²（web 1.2）で min_area 未満になる。
+    返り値 [(面積, (x, y), (X の幅, Y の幅))]。幅 web ちょうどの帯は通す（縮める量を 0.005 減らす）。
+    """
+    from build123d import Axis, Kind, offset
+
+    top = part.bounding_box().max.Z
+    faces = [f for f in part.faces().filter_by(Axis.Z) if abs(f.center().Z - top) < 1e-6]
+    out = []
+    r = web / 2 - 0.005
+    for face in faces:
+        opened = offset(offset(face, amount=-r, kind=Kind.ARC), amount=r, kind=Kind.ARC)
+        lost = face - opened
+        for f in (lost.faces() if hasattr(lost, "faces") else []):
+            if f.area > min_area:
+                c, bb = f.center(), f.bounding_box()
+                out.append((round(f.area, 3), (round(c.X, 2), round(c.Y, 2)),
+                            (round(bb.size.X, 2), round(bb.size.Y, 2))))
+    return sorted(out, key=lambda t: -t[0])
+
+
+def _frame_solids(spec, keys, part):
+    """part の立体のうち、スタビのキーのスイッチの枠（羽が外形まで抜けて切り離された、開口の手前の板と桟）。
+
+    [(キーの名前, 立体)]。枠かどうかは、そのキーの開口の手前 0.5 の点を含むかで見る。
+    **いちばん大きい立体（板）は枠にしない。**それ以外の浮いた立体は枠に数えない（板に残り、
+    tests/test_cckb.py の「1 つの立体」が落とす）。
+    """
+    from build123d import Vector
+
+    sols = list(part.solids())
+    if len(sols) < 2:
+        return []
+    main = max(sols, key=lambda s: s.volume)
+    sw = switch_of(spec)
+    positions, _ = centered(keys)
+    out = []
+    for (x, y), k in zip(positions, keys):
+        if sw.stab_offset_for(k.w_u) is None:
+            continue
+        probe = Vector(x, y - sw.cutout / 2 - 0.5, sw.plate_t / 2)
+        for s in sols:
+            if s is not main and s.is_inside(probe) and all(s is not f for _, f in out):
+                out.append((k.label, s))
+    return out
+
+
+def plate_frames(spec, keys, piece):
+    """スタビのキーのうち、羽が外形まで抜けて板から切り離されたスイッチの枠。**別に刷る部品**。
+
+    [(キーの名前, 立体)]（組み立ての位置・z 0〜plate_t）。スイッチの ±x の辺の爪 4 つとつばが挟んで留める
+    （CCKB ではスペースの 2 キー。決定記録 2026-09-25-choc-v2 §10-6）。
+    """
+    part, _, _ = _build_whole(spec, keys, piece)
+    return _frame_solids(spec, keys, part)
+
+
+def frames_for_print(frames, gap=3.0):
+    """枠を刷る向き（組み立てと同じ・板の下面をベッドに）で横に並べた 1 つの Compound。"""
+    from build123d import Pos
+
+    placed, x = [], 0.0
+    for _, f in frames:
+        bb = f.bounding_box()
+        placed.append(Pos(x - bb.min.X, -bb.min.Y, -bb.min.Z) * f)
+        x += bb.size.X + gap
+    return Compound(placed)
+
+
 def plate_size(spec, keys):
     _, (kw, kh) = centered(keys)
     return kw + spec.PLATE_MARGIN_X * 2, kh + spec.PLATE_MARGIN_Y * 2
 
 
 def build_plate(spec, keys, piece):
-    """1 枚のプレート。返り値は (part, (幅, 奥行), キー中心の並び)。"""
+    """1 枚のプレート。返り値は (part, (幅, 奥行), キー中心の並び)。
+
+    スタビの羽が外形まで抜けて切り離されたスイッチの枠は**含めない**（plate_frames が別の部品として返す）。
+    """
+    part, size, positions = _build_whole(spec, keys, piece)
+    frames = _frame_solids(spec, keys, part)
+    if frames:
+        rest = [s for s in part.solids() if not any(s.wrapped.IsSame(f.wrapped) for _, f in frames)]
+        part = rest[0] if len(rest) == 1 else Compound(rest)
+    return part, size, positions
+
+
+def _build_whole(spec, keys, piece):
+    """プレートの立体（枠も含む）。"""
     sw = switch_of(spec)
     positions, _ = centered(keys)
     w, h = plate_size(spec, keys)
@@ -105,6 +201,12 @@ def build_plate(spec, keys, piece):
                     # Keebio の輪郭は幅がハウジングと同じ 6.30（隙間 0）。刷った PLA では
                     # 締まるので Cherry と同じ STAB_KERF を足す（mech.CHOC_STAB_OUTLINE）
                     for poly in choc_stab_polygons(s, at=pos):
+                        add(stab_cutout_face(s, polygon=poly), mode=Mode.SUBTRACT)
+                elif sw.stab_kind == "choc_v2_screw":
+                    # スタビは基板にねじで留まり、プレートには掛からない。本体・ワイヤが通る穴を開ける
+                    # （輪郭はキーの中心から。支点の半間隔 s は輪郭に織り込み済みで、検査が見る）
+                    for poly in choc_v2_stab_polygons(at=pos, outline=(-w / 2, -h / 2, w / 2, h / 2),
+                                                      web=spec.PLATE_MIN_WEB):
                         add(stab_cutout_face(s, polygon=poly), mode=Mode.SUBTRACT)
                 else:
                     raise NotImplementedError(
@@ -166,12 +268,31 @@ def split_plate(spec, part, piece, keys):
     return [(f"{piece}_L", left), (f"{piece}_R", right)]
 
 
+def uses_plate(spec):
+    """機種がプレートを使うか（spec.PLATE。書いていない機種〔HHKB〕は使う）。"""
+    return bool(getattr(spec, "PLATE", True))
+
+
+def plate_dir(p):
+    """プレートの STL・絵の置き場。使わない機種は build/<機種>/plate_optional/（刷る物の置き場の外）。"""
+    return p.build if uses_plate(p.spec) else p.build / "plate_optional"
+
+
 def main(argv):
     from .project import load
     from .verify import render_outline_2d, to_mesh
 
     p = load(argv[0])
-    p.build.mkdir(parents=True, exist_ok=True)
+    out = plate_dir(p)
+    out.mkdir(parents=True, exist_ok=True)
+    if out != p.build:
+        # **プレートを使わない機種（spec.PLATE = False）**: 刷る物の置き場（build/<機種>/*.stl。slice_check が
+        # 全部を「刷る物」として拾う）から前のプレートを消し、別の置き場に出す（置き換えたら古い方を消す）
+        gone = [q for pat in ("plate_*.stl", "plate_*.png") for q in p.build.glob(pat)]
+        for q in gone:
+            q.unlink()
+        print(f"{p.name}: プレートは使わない（spec.PLATE = False）。作れることを確かめるために {out} に出す"
+              f"（build/ から前のプレート {len(gone)} 個を消した）")
     bad = 0
     for piece, keys in p.pieces().items():
         whole, _, _ = build_plate(p.spec, keys, piece)
@@ -179,12 +300,22 @@ def main(argv):
         for name, part in split_plate(p.spec, whole, piece, keys):
             size = part.bounding_box().size
             w, h = size.X, size.Y
-            mesh, stl = to_mesh(part, p.build / f"plate_{name}.stl")
-            png = render_outline_2d(part, p.build / f"plate_{name}.png",
+            mesh, stl = to_mesh(part, out / f"plate_{name}.stl")
+            png = render_outline_2d(part, out / f"plate_{name}.png",
                                     title=f"{p.name} plate {name}  {w:.2f} x {h:.2f} mm")
             # **出力を読んでから報告する。**水密でなければ刷れない
             print(f"{'OK' if mesh.is_watertight else 'NG'} {name:6s} "
                   f"{w:7.2f} x {h:6.2f} x {switch_of(p.spec).plate_t}mm 水密={mesh.is_watertight}")
+            print(f"   {stl}\n   {png}")
+            bad += not mesh.is_watertight
+        frames = plate_frames(p.spec, keys, piece)
+        if frames:
+            part = frames_for_print(frames)
+            mesh, stl = to_mesh(part, out / f"plate_frames_{piece}.stl")
+            png = render_outline_2d(part, out / f"plate_frames_{piece}.png",
+                                    title=f"{p.name} plate frames {piece}  ({', '.join(n for n, _ in frames)})")
+            print(f"{'OK' if mesh.is_watertight else 'NG'} 枠 {len(frames)} 個（{', '.join(n for n, _ in frames)}）"
+                  f" 水密={mesh.is_watertight}")
             print(f"   {stl}\n   {png}")
             bad += not mesh.is_watertight
     return 1 if bad else 0          # NG を print だけにしない（スクリプトから判定できるように）

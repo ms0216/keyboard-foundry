@@ -33,10 +33,16 @@ ZMK_VARIANT = "//zmk"
 REQUIRED = ["Kconfig.shield", "{name}.overlay", "{name}.keymap"]
 
 # XIAO nRF52840 のボード定義（zmkfirmware/zephyr v4.1.0+zmk-fixes の boards/seeed/xiao_ble）で**有効なまま**の周辺と、
-# その pinctrl が掴む D ピン。シールドがそのピンを GPIO に使うなら、overlay でその周辺を切る
-# （切らないと眠るときの sleep の pinctrl が行のピンに当たりうる。CCKB の監査 A 軽微 1・2026-09-26）。
-# xiao_serial（D6・D7）は ZMK の xiao_ble//zmk の dts が切っているので入れない
-XIAO_BUSY_PINS = {"xiao_i2c": (4, 5)}      # i2c1: SDA P0.04 = D4・SCL P0.05 = D5
+# その pinctrl が掴む D ピン（seeed_xiao_connector.dtsi の D ピン ↔ P ピン・xiao_ble-pinctrl.dtsi。2026-09-26 に読んだ）。
+# シールドがそのピンを GPIO に使うなら、その周辺が**ボードの dts か overlay のどちらかで**切れていること
+# （切らないと眠るときの sleep の pinctrl が行のピンに当たりうる。CCKB の監査 A 軽微 1・2026-09-26）
+XIAO_BUSY_PINS = {
+    "xiao_i2c": (4, 5),       # i2c1: SDA P0.04 = D4・SCL P0.05 = D5
+    "xiao_serial": (6, 7),    # uart0: TX P1.11 = D6・RX P1.12 = D7（2 回目の V2 監査 A-1。前は「ZMK が切る」と書いて見ていなかった）
+}
+# ZMK のボード xiao_ble//zmk の dts の写し（出典と commit は写しの冒頭）。&xiao_serial を切っているのはここ。
+# **config/west.yml は ZMK の main を追う**ので、ZMK が上げたら取り直す（写しが古いと、切れていないのに通る）
+XIAO_BOARD_DTS = Path(__file__).resolve().parent / "upstream" / "xiao_ble_zmk.dts"
 
 # ZMK 本体に入っているシールド。ローカルにファイルが無いのが正しい。
 # settings_reset は BLE のボンドを消す救援イメージ（build.yaml 参照）。
@@ -113,15 +119,24 @@ def count_bindings(keymap):
     return out
 
 
-def xiao_pin_conflicts(text):
-    """overlay の文面から、GPIO に使った D ピンが、切っていない XIAO の周辺のピンと重なるもの。[(周辺, ピン)]。"""
+def _strip_comments(text):
     text = re.sub(r"/\*.*?\*/", " ", text, flags=re.S)
-    text = re.sub(r"//[^\n]*", " ", text)
+    return re.sub(r"//[^\n]*", " ", text)
+
+
+def _disabled(periph, text):
+    return re.search(rf"&{periph}\s*\{{[^{{}}]*status\s*=\s*\"disabled\"", text) is not None
+
+
+def xiao_pin_conflicts(text, board_text=None):
+    """overlay の文面から、GPIO に使った D ピンが、**ボードの dts（board_text。既定は XIAO_BOARD_DTS の写し）でも
+    overlay でも**切っていない XIAO の周辺のピンと重なるもの。[(周辺, ピン)]。"""
+    text = _strip_comments(text)
+    board = _strip_comments(XIAO_BOARD_DTS.read_text(encoding="utf-8") if board_text is None else board_text)
     used = {int(n) for n in re.findall(r"&xiao_d\s+(\d+)\b", text)}
     out = []
     for periph, pins in XIAO_BUSY_PINS.items():
-        off = re.search(rf"&{periph}\s*\{{[^{{}}]*status\s*=\s*\"disabled\"", text)
-        if not off:
+        if not (_disabled(periph, text) or _disabled(periph, board)):
             out += [(periph, p) for p in pins if p in used]
     return out
 
@@ -223,12 +238,13 @@ def main():
         notes.append(f"  {d.name}: {source} {n_map} 箇所 / "
                      f"レイヤー {len(count_bindings(km[0]))} 枚すべて一致")
 
-    # GPIO に使った D ピンが、ボードで有効なままの周辺（xiao_i2c）と重ならないか
+    # GPIO に使った D ピンが、ボードで有効なままの周辺（xiao_i2c・xiao_serial）と重ならないか
+    notes.append(f"XIAO のボードの dts: {XIAO_BOARD_DTS.relative_to(ROOT)}（ZMK の写し。ZMK を上げたら取り直す）")
     for d in sorted(p for p in SHIELDS.iterdir() if p.is_dir()):
         for ov in sorted(d.glob("*.overlay")):
             for periph, pin in xiao_pin_conflicts(ov.read_text(encoding="utf-8")):
-                problems.append(f"{ov.name}: D{pin} を GPIO に使うのに &{periph} を切っていない"
-                                f"（status = \"disabled\" を足す）")
+                problems.append(f"{ov.name}: D{pin} を GPIO に使うのに &{periph} がボードの dts でも overlay でも"
+                                f"切れていない（overlay に status = \"disabled\" を足す）")
 
     for n in notes:
         print(f"  {n}")

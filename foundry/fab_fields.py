@@ -62,6 +62,12 @@ def stamp(board, spec):
         if kind is None:
             if not any(re.fullmatch(p, ref) for p in NOT_PARTS):
                 unknown.append(ref)
+            else:
+                # 実装しない機械部品は BOM・CPL から外す。KiCad の取付穴は足跡が外しているが、自作の
+                # 足跡（CCKB の V2 のスタビの穴）は外していなかった: BOM に「ST42…」の行が出た（2026-09-25）
+                if fp.GetAttributes() & EXCLUDE != EXCLUDE:
+                    fp.SetAttributes(fp.GetAttributes() | EXCLUDE)
+                    n["excluded"] += 1
             continue
         if kind in not_assembled:
             fp.SetAttributes(fp.GetAttributes() | EXCLUDE)

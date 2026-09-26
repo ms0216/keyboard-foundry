@@ -27,9 +27,11 @@ JLC = {
     # 前は KiCad の既定（0.8・0.08）のままで、1 段小さい字を置いても DRC が黙った（CCKB 4 回目の監査 C 軽微 3）
     "text_height_min": 1.0,
     "text_thickness_min": 0.15,
-    # 穴と銅の距離（min_hole_clearance）は KiCad の既定 0.25 のまま。JLC は PTH と線 0.28・NPTH と銅 0.2 と分けて
-    # いるが、KiCad の規則は 1 つの値で両方を見る。0.28 にすると NPTH のまわりのベタ（CCKB で 0.25）まで違反に
-    # なり、塗り直すと銅が変わる。CCKB の PTH と線の最小は 0.742（4 回目の監査 C）
+    # 穴と銅の距離（min_hole_clearance）は既定では KiCad の 0.25 のまま。JLC は PTH と線 0.28・NPTH と銅 0.2 と分けて
+    # いるが、KiCad の規則は 1 つの値で両方を見る。0.28 にすると NPTH のまわりのベタ（0.25）まで違反になり、
+    # 塗り直すと銅が変わる。**機種が spec.DRC_PTH_HOLE_CLEARANCE = True で 0.28 に上げられる**（塗り直す前提。
+    # CCKB は 2026-09-26 の 2 回目の V2 監査 C-4 で上げた。HHKB は上げない）
+    "pth_to_track": 0.28,
     "annular_ring": 0.13,     # KiCad 既定 0.1 では足りない
 }
 
@@ -52,7 +54,7 @@ DOWNGRADABLE = frozenset({
 })
 
 
-def sync_project_rules(pcb_path, severities=None):
+def sync_project_rules(pcb_path, severities=None, pth_hole_clearance=False):
     """`.kicad_pro` の規則を JLC に揃える。**kicad-cli の DRC はここを読む。**
 
     HHKB で JLC の値を直しても DRC が古い規則で判定し続けた（#50）。
@@ -61,6 +63,9 @@ def sync_project_rules(pcb_path, severities=None):
     severities: 機種が spec.DRC_SEVERITY で**理由を書いて**変える重大度（例: 違反 → 警告）。
     **消す（ignore）ことはさせない**——警告に下げたものも drc.py が種類ごとに数えて出す。
     警告に下げてよいのは DOWNGRADABLE の種類だけ（clearance などを下げさせない）。
+
+    pth_hole_clearance: True なら穴と銅の距離（min_hole_clearance）を JLC の PTH と線の 0.28 にする
+    （機種の spec.DRC_PTH_HOLE_CLEARANCE。KiCad はこの値でベタも穴から引くので、上げたら塗り直す）。
     """
     pro = Path(str(pcb_path)[:-len(".kicad_pcb")] + ".kicad_pro")
     doc = json.loads(pro.read_text())
@@ -77,6 +82,8 @@ def sync_project_rules(pcb_path, severities=None):
         "min_text_thickness": JLC["text_thickness_min"],
         "min_via_annular_width": JLC["annular_ring"],
     })
+    if pth_hole_clearance:
+        rules["min_hole_clearance"] = JLC["pth_to_track"]
     for kind, sev in (severities or {}).items():
         if sev not in ("error", "warning"):
             raise ValueError(f"{kind}: 重大度 {sev!r} は error / warning だけ（ignore で隠さない）")

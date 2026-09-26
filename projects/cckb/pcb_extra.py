@@ -1,11 +1,12 @@
 """CCKB の基板に、キー以外の物を置く（foundry.pcb が呼ぶ `place(board, ctx)`）。**KiCad の Python。**
 
 置くもの（決定記録 decisions/2026-09-24-interface.md §5-5 の凍結した境界）:
-  - スタビの逃げ穴 8 つ（Edge.Cuts・interface.stab_reliefs）
+  - スタビの箱の穴 8 つ（Edge.Cuts・interface.stab_reliefs）
   - XIAO（表・平ら・キャステレーション）・電池ホルダ（表）・電源スイッチ（表・スルーホール）・右のふたの柱の穴
   - 裏の電子部品（74LVC595 ×2・パスコン・電源のショットキー D_PWR・分圧）
   - ルール領域: アンテナの銅の禁止域（全層）・XIAO の下の表の銅の禁止（XIAO の裏のパッドと短絡させない）・
-    基板の面に当たる金属（ナット・インサート・電源スイッチの枠の爪）の下の銅の禁止
+    基板の面に当たる金属（ナット・インサート・電源スイッチの枠の爪）の下の銅の禁止・
+    スタビのねじ・爪の穴の周りの線とビアの禁止（STAB_HOLE_KEEPOUT。ベタの GND は入る）
   - ネットクラス POWER
 
 **寸法は持たない**（spec.py・interface.py）。持つのは規則に足す余裕（EDGE_BAND の ＋0.02）と、
@@ -210,6 +211,16 @@ def place(board, ctx):
             dx, dy = s.REF_TEXT_AT[ref]
             fp.Reference().SetPosition(ctx["to_kicad"](px + dx, py + dy))
 
+    # 核が置いた部品（キーのダイオードなど）の名札: 部品の位置から (dx, dy)
+    for ref, (dx, dy) in s.REF_TEXT_AT.items():
+        if ref in s.PART_AT:
+            continue
+        fp = board.FindFootprintByReference(ref)
+        if fp is None:
+            raise RuntimeError(f"REF_TEXT_AT の {ref} が板に無い")
+        px, py = _cad(fp.GetPosition(), origin)
+        fp.Reference().SetPosition(ctx["to_kicad"](px + dx, py + dy))
+
     # --- 手はんだの部品（spec.NOT_ASSEMBLED）のパッドからペーストの層を外す ------------------
     # JLC はペーストの層からステンシルを作り、載せない部品のパッドにもはんだを盛ってリフローする
     # （監査 B 2 回目 B2-1・C 軽微 1: 裏の SW_PWR の 7 パッドに盛られて届き、突起が穴に沈まない）
@@ -260,6 +271,12 @@ def place(board, ctx):
     for poly in ifc.stab_reliefs():
         rule_area(board, ctx, interface.poly_offset_axis(poly, w), both, "EDGE_KEEPOUT",
                   fills=False)
+    # スタビのねじ・爪の丸穴（16）の周り: 線・ビアを入れない（ベタは入れてよい。ベタは GND だけ）。
+    # 穴はきつい側に開けてあり、実物が入らなければ手で広げる。そのとき信号を切らない（spec.STAB_HOLE_KEEPOUT_R）。
+    # 前（2026-09-25〜26）は長円の穴の縁に NPTH_KEEPOUT の帯を置いていた（Freerouting が長円を正しく避けなかった）。
+    # 板の長円は 0 になったので消した
+    for c, r in ifc.stab_hole_keepouts():
+        rule_area(board, ctx, circle_poly(c, r), both, "STAB_HOLE_KEEPOUT", fills=False)
 
     # --- ネットクラス（**Recompute しないと割り当てが効かない**）---------------
     d = board.GetDesignSettings()

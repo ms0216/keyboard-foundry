@@ -46,6 +46,10 @@ def dump_board(board):
             poly = fp.GetCourtyard(layer)
             if poly.OutlineCount():
                 crt[name] = _box(poly.BBox())
+                # 閉じた形ごとの外接矩形。スタビの裏のコートヤードは左右 2 つに分かれていて、全体の外接矩形は
+                # 左右の間（キーの真ん中）まで塗ってしまう（2026-09-26 の 2 回目の V2 監査 B-3 で裏に付けたとき）
+                if poly.OutlineCount() > 1:
+                    crt[name + "_parts"] = [_box(poly.Outline(i).BBox()) for i in range(poly.OutlineCount())]
         q = fp.GetPosition()
         out["footprints"].append(dict(
             ref=ref, fp=fp.GetFPID().GetLibItemName().wx_str(),

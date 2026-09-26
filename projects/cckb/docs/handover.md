@@ -14,7 +14,7 @@
 
 ## 現行の手順
 
-    tools/kb cckb plate
+    tools/kb cckb plate            # 2026-09-26 からプレートは使わない（spec.PLATE = False）。build/cckb/plate_optional/ に出る
     tools/kb cckb pcb
     "$KICAD_PYTHON" projects/cckb/tools/route_pcb.py
     tools/kb cckb fab-fields

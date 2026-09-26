@@ -196,17 +196,23 @@ def render_outline_2d(part, out_png, axis="Z", title="", annotate_count=True):
     sort_axis, i0, i1, xlabel, ylabel = ax_map[axis]
 
     faces = part.faces().sort_by(sort_axis)
-    face = faces[-1]
+    # いちばん上の面。**立体が複数あれば（別に刷る枠を並べた物など）同じ高さの面を全部描く**
+    # （前は 1 つだけ描き、2 つ並べた枠の片方が絵から消えていた・2026-09-26）
+    k = {"X": 0, "Y": 1, "Z": 2}[axis]
+    top = tuple(faces[-1].center())[k]
+    tops = [f for f in faces if abs(tuple(f.center())[k] - top) < 1e-6
+            and abs(tuple(f.normal_at())[k]) > 1 - 1e-6]
 
     fig, ax = plt.subplots(figsize=(12, 6), dpi=160)
 
-    outer = _sample_wire(face.outer_wire())
-    ax.plot(outer[:, i0], outer[:, i1], color="black", linewidth=1.4)
-
-    inner_wires = face.inner_wires()
-    for w in inner_wires:
-        p = _sample_wire(w)
-        ax.plot(p[:, i0], p[:, i1], color="#c0392b", linewidth=0.9)
+    inner_wires = []
+    for face in tops:
+        outer = _sample_wire(face.outer_wire())
+        ax.plot(outer[:, i0], outer[:, i1], color="black", linewidth=1.4)
+        for w in face.inner_wires():
+            inner_wires.append(w)
+            p = _sample_wire(w)
+            ax.plot(p[:, i0], p[:, i1], color="#c0392b", linewidth=0.9)
 
     ax.set_aspect("equal")
     ax.set_xlabel(f"{xlabel} [mm]", fontsize=8)

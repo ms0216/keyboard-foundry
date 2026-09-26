@@ -71,10 +71,10 @@ def test_the_checker_notices_a_moved_key(tmp_path):
     assert differences(load_layout(f), load_layout(HHKB))
 
 
-def test_the_machine_uses_choc_v1():
+def test_the_machine_uses_choc_v2():
     from foundry.mech import switch_of
 
-    assert switch_of(load("cckb").spec).name == "choc_v1"
+    assert switch_of(load("cckb").spec).name == "choc_v2"
     assert (paths.PROJECTS / "cckb" / "layout.json").exists()
 
 
@@ -162,25 +162,25 @@ def _in_opening(x, y, poly, kerf=None):
 
 
 def test_the_choc_stab_openings_are_widened_by_the_kerf(plate):
-    """Keebio の輪郭は幅がハウジングと同じ 6.30（隙間 0）。プレートでは STAB_KERF だけ
-    広げて開けていること: 輪郭の横の辺から 0.1mm 外は穴、STAB_KERF + 0.1mm 外は板。"""
-    from foundry.mech import CHOC_STAB_OUTLINE, STAB_KERF, switch_of
+    """V2 のスタビの羽（mech.CHOC_V2_STAB_PLATE・kerf 0）は、プレートでは STAB_KERF だけ広げて開けていること:
+    羽の外の辺から 0.1mm 外は穴、STAB_KERF + 0.1mm 外は板（羽の高さの真ん中・スタビのキー 4 つの左右）。"""
+    from foundry.mech import CHOC_V2_STAB_PLATE, STAB_KERF, switch_of
 
     p, part, _, positions = plate
     sw = switch_of(p.spec)
-    half = max(x for x, _ in CHOC_STAB_OUTLINE)             # 3.15（横の辺）
+    outer = max(x for x, _ in CHOC_V2_STAB_PLATE)            # 14.9375（羽の外の辺）
+    lobe = [y for x, y in CHOC_V2_STAB_PLATE if x == outer]
+    ym = (min(lobe) + max(lobe)) / 2
     probed = 0
     for (x, y), k in zip(positions, p.keys()):
-        s = sw.stab_offset_for(k.w_u)
-        if s is None:
+        if sw.stab_offset_for(k.w_u) is None:
             continue
-        for centre in (x - s, x + s):
-            for side in (-1, 1):
-                edge = centre + side * half
-                assert not _solid(part, edge + side * 0.1, y), (k.label, centre, side)
-                assert _solid(part, edge + side * (STAB_KERF + 0.1), y), (k.label, centre, side)
-                probed += 1
-    assert probed == 4 * 4, probed                            # Enter・左 Shift・スペース 2 つ
+        for side in (-1, 1):
+            edge = x + side * outer
+            assert not _solid(part, edge + side * 0.1, y + ym), (k.label, side)
+            assert _solid(part, edge + side * (STAB_KERF + 0.1), y + ym), (k.label, side)
+            probed += 1
+    assert probed == 4 * 2, probed                            # Enter・左 Shift・スペース 2 つ
 
 
 def test_the_web_around_the_corner_keys_survives(plate):
@@ -198,7 +198,7 @@ def test_the_web_around_the_corner_keys_survives(plate):
     """
     from foundry.layout import centered
     from foundry.mech import switch_of
-    from foundry.plate import choc_stab_polygons
+    from foundry.plate import choc_stab_polygons, choc_v2_stab_polygons
 
     p, part, _, positions = plate
     keys = p.keys()
@@ -220,7 +220,9 @@ def test_the_web_around_the_corner_keys_survives(plate):
         s = sw.stab_offset_for(k.w_u)
         if s is None:
             return []
-        return choc_stab_polygons(s, at=pos) if sw.stab_kind == "choc" else []
+        if sw.stab_kind == "choc":
+            return choc_stab_polygons(s, at=pos)
+        return choc_v2_stab_polygons(at=pos) if sw.stab_kind == "choc_v2_screw" else []
 
     checked_total = 0
 
@@ -248,22 +250,148 @@ def test_the_web_around_the_corner_keys_survives(plate):
         stabs = own_stab_polys(pos, k)
         # 角にかぶっている部分の x 範囲（セルの中、角の側）
         if x - half_cell_x < left_edge:
-            xs = [x - half_cell_x + dx for dx in (2.0, half_cell_x, half_cell_x * 1.6)
-                  if 2.0 <= dx <= half_cell_x * 2]
+            xs = [x - half_cell_x + dx for dx in (2.0, half_cell_x, half_cell_x * 1.25)
+                  if 2.0 <= dx <= half_cell_x * 2 and x - half_cell_x + dx < left_edge]
         else:
-            xs = [x + half_cell_x - dx for dx in (2.0, half_cell_x, half_cell_x * 1.6)
-                  if 2.0 <= dx <= half_cell_x * 2]
+            xs = [x + half_cell_x - dx for dx in (2.0, half_cell_x, half_cell_x * 1.25)
+                  if 2.0 <= dx <= half_cell_x * 2 and x + half_cell_x - dx > right_edge]
         for r in (7.2, 8.2, 9.2):
             py = y - r
             for px in xs:
-                # 前提: スタビの開口は中心から y −3.05 − kerf までしか下に伸びないので、
-                # 7.2mm 以上下のプローブは開口の外。**推測で除外せず** assert で確かめる
+                # 前提: プローブ点は自分のスタビの開口の外（V2 の羽は中心から y −9.6 まで下へ伸びるが、
+                # 羽の x の範囲にプローブは来ない）。**推測で除外せず** assert で確かめる
                 assert not any(_in_opening(px, py, poly) for poly in stabs), \
                     (k.label, r, px, "プローブがスタビ開口にかかった")
                 checked_total += 1
                 assert _solid(part, px, py), (k.label, r, px)
 
     assert checked_total > 0, "probe 点が 1 つも取れなかった"
+
+
+def test_the_plate_has_no_floating_island(plate):
+    """開口どうしが板を切り離して、浮いた島を作っていない（プレートは 1 つの立体）。"""
+    _, part, _, _ = plate
+    assert len(part.solids()) == 1, [tuple(round(v, 1) for v in (s.bounding_box().min.X, s.bounding_box().min.Y))
+                                     for s in part.solids()]
+
+
+def test_the_island_check_notices_the_first_band(monkeypatch):
+    """1 回目の読み違え（帯を y 9.85〜10.85 に置き、スイッチの開口との間を板に残した）で落ちること。"""
+    import foundry.mech as mech_mod
+    from foundry.plate import build_plate
+
+    old = ((0.0, 9.85), (6.9, 9.85), (6.9, 6.64375), (8.87, 6.64375), (8.87, -9.45),
+           (15.0375, -9.45), (15.0375, 10.85), (0.0, 10.85))
+    monkeypatch.setattr(mech_mod, "CHOC_V2_STAB_PLATE", old)
+    p = load("cckb")
+    part, _, _ = build_plate(p.spec, p.keys(), "main")
+    assert len(part.solids()) > 1
+
+
+@pytest.fixture(scope="module")
+def plate_parts(plate):
+    """刷るプレートの部品全部: 1 枚の板（分ける前）・左右の半分・スタビのキーの枠（別に刷る物）。"""
+    from foundry.plate import plate_frames, split_plate
+
+    p, main, _, positions = plate
+    keys = p.keys()
+    halves = dict(split_plate(p.spec, main, "main", keys))
+    frames = plate_frames(p.spec, keys, "main")
+    return p, main, halves, frames, positions
+
+
+def test_no_plate_web_is_thinner_than_the_minimum(plate_parts):
+    """刷るプレートのどの部品にも、幅 PLATE_MIN_WEB（0.4 ノズル 3 本）未満の帯・突起が無い。
+    穴どうし・穴と外形の間を、生成した立体の上面を縮めて戻して測る（foundry.plate.thin_webs）。"""
+    from foundry.plate import thin_webs
+
+    p, main, halves, frames, _ = plate_parts
+    bad = {}
+    for name, part in [("板", main)] + list(halves.items()) + list(frames):
+        t = thin_webs(part, p.spec.PLATE_MIN_WEB)
+        if t:
+            bad[name] = t
+    assert not bad, bad
+
+
+def _framed(parts, x, y):
+    from build123d import Vector
+
+    return any(part.is_inside(Vector(x, y, 0.6)) for part in parts)
+
+
+def switch_frame_problems(p, parts, positions):
+    """スイッチの開口の 4 辺（スタビのキーは奥の辺を除く。そこはワイヤの帯）の外側に板があるか。
+    辺から 0.3 と 1.0 の所を、辺に沿って 5 点ずつ刺す（爪は ±x の辺の ±2.25〜3.25。
+    decisions/2026-09-25-choc-v2 §10-6）。板 = 刷るプレートのどれか（半分・枠）。"""
+    from foundry.mech import switch_of
+
+    sw = switch_of(p.spec)
+    c = sw.cutout / 2
+    out = []
+    for (x, y), k in zip(positions, p.keys()):
+        stab = sw.stab_offset_for(k.w_u) is not None
+        sides = {"手前": (0, -1), "左": (-1, 0), "右": (1, 0)}
+        if not stab:
+            sides["奥"] = (0, 1)
+        for name, (nx, ny) in sides.items():
+            for d in (0.3, 1.0):
+                for t in (-6.0, -2.75, 0.0, 2.75, 6.0):
+                    px = x + nx * (c + d) + (t if nx == 0 else 0.0)
+                    py = y + ny * (c + d) + (t if ny == 0 else 0.0)
+                    if not _framed(parts, px, py):
+                        out.append(f"{k.label}（{x:.1f}, {y:.1f}）の{name}")
+                        break
+                else:
+                    continue
+                break
+    return sorted(set(out))
+
+
+def test_every_switch_is_framed_by_plate(plate_parts):
+    """62 個のスイッチ全部で、開口の周り（スタビのキーは手前・左・右）に板がある。
+    **外形まで抜けて板の無いスイッチを作らない**（V2 のスペース 2 つと左 Shift が一度そうなった・2026-09-25）。
+
+    **見るのは「周りに板があるか」だけ。**スペースの 2 キーの周りの板は別に刷る枠で、枠はプレートにも基板にも
+    留まらずスイッチに挟まってぶら下がる（スイッチを留めるのは基板のはんだ）。枠がスイッチを保持するかはこの検査では
+    分からない（2026-09-26 の監査 E 重要 4。一枚板にするかは利用者の判断 O15）。"""
+    p, _, halves, frames, positions = plate_parts
+    parts = list(halves.values()) + [f for _, f in frames]
+    assert len(positions) == 62
+    assert switch_frame_problems(p, parts, positions) == []
+
+
+def test_the_web_check_notices_salicylics_back_edge(monkeypatch):
+    """羽の奥の端をサリチル酸さんの 10.85 に戻すと、1 段奥の開口との帯 1.075 がスタビのキー 4 つで見つかる。
+    桟の上の突起（0.525 幅）を戻しても見つかる。"""
+    import foundry.mech as mech_mod
+    from foundry.plate import build_plate, thin_webs
+
+    p = load("cckb")
+    back = tuple((x, 10.85 if y == mech_mod.CHOC_V2_STAB_PLATE_BACK else y) for x, y in mech_mod.CHOC_V2_STAB_PLATE)
+    nub = ((0.0, 6.64375), (7.55, 6.64375), (7.55, 7.14375), (8.375, 7.14375), (8.375, 6.64375)) \
+        + mech_mod.CHOC_V2_STAB_PLATE[1:]
+    for poly, want in ((back, 1.08), (nub, 0.5)):
+        monkeypatch.setattr(mech_mod, "CHOC_V2_STAB_PLATE", poly)
+        part, _, _ = build_plate(p.spec, p.keys(), "main")
+        found = thin_webs(part, p.spec.PLATE_MIN_WEB)
+        assert any(abs(min(size) - want) < 0.03 for _, _, size in found), found
+
+
+def test_the_frames_are_the_two_space_keys(plate_parts):
+    """外形まで抜けて切り離された枠は、最下段のスペース 2 キーだけ（左 Shift は右の羽の側で板に繋がる）。
+    枠は 1 つの立体で、厚さはプレートと同じ。"""
+    p, _, _, frames, _ = plate_parts
+    assert [n for n, _ in frames] == ["Space", "Space"]
+    for _, f in frames:
+        assert len(f.solids()) == 1 and abs(f.bounding_box().size.Z - 1.2) < 1e-6
+
+
+def test_the_frame_check_notices_a_plate_without_frames(plate_parts):
+    """枠を刷らない（前の形: 枠ごと抜いた）と、スペース 2 キーの手前・左・右に板が無い。"""
+    p, _, halves, _, positions = plate_parts
+    bad = switch_frame_problems(p, list(halves.values()), positions)
+    assert len(bad) == 6 and all(b.startswith("Space") for b in bad), bad
 
 
 def test_the_plate_is_1_2mm_and_printable_as_a_check(plate, tmp_path):
@@ -293,7 +421,12 @@ def test_the_board_has_one_switch_and_one_diode_per_key(board):
     sw = [r for r in parts if re.fullmatch(r"SW\d+", r)]
     d = [r for r in parts if re.fullmatch(r"D\d+", r)]
     assert len(sw) == 62 and len(d) == 62
-    assert all(parts[r]["fp"].endswith("SW_Kailh_Choc_V1") for r in sw)
+    from foundry.mech import CHOC_V2_FP, CHOC_V2_STAB_FP
+
+    assert all(parts[r]["fp"].endswith(CHOC_V2_FP) for r in sw)
+    st = [r for r in parts if re.fullmatch(r"ST\d+", r)]
+    assert sorted(st) == ["ST42", "ST43", "ST58", "ST60"]           # Enter・左 Shift・スペース 2 つ
+    assert all(parts[r]["fp"].endswith(CHOC_V2_STAB_FP) for r in st)
     assert all(parts[r]["back"] for r in d)                      # ダイオードは裏（D8）
 
 
@@ -479,8 +612,9 @@ def test_the_board_check_notices_two_swapped_columns():
 # 核の約束: ダイオードの置き換えと DRC の重大度（最終レビュー M2・M3。KiCad は要らない）
 # ---------------------------------------------------------------------------
 
-def test_the_diode_override_names_real_keys():
-    assert sorted(load("cckb").diode_override("main")) == [42, 43, 58, 60]
+def test_the_diode_override_is_not_used_with_v2():
+    """V2 はスタビのキーでもいつもの位置（mech.CHOC_V2.diode_offset）に置く。上書きが残っていれば落とす。"""
+    assert load("cckb").diode_override("main") == {}
 
 
 @pytest.mark.parametrize("over, msg", [
@@ -508,6 +642,19 @@ def test_the_project_rules_take_the_spec_severity(tmp_path):
     sync_project_rules(_pro(tmp_path), {"npth_inside_courtyard": "warning"})
     doc = json.loads((tmp_path / "x.kicad_pro").read_text())
     assert doc["board"]["design_settings"]["rule_severities"] == {"npth_inside_courtyard": "warning"}
+
+
+def test_the_project_rules_raise_the_hole_clearance_only_when_asked(tmp_path):
+    """spec.DRC_PTH_HOLE_CLEARANCE（CCKB は True）のときだけ穴と銅の距離を JLC の PTH と線 0.28 にする。
+    渡さなければ書かない（HHKB は KiCad の既定 0.25 のまま・核の既定を変えない）。"""
+    from foundry.pcb_rules import JLC, sync_project_rules
+
+    sync_project_rules(_pro(tmp_path))
+    rules = json.loads((tmp_path / "x.kicad_pro").read_text())["board"]["design_settings"]["rules"]
+    assert "min_hole_clearance" not in rules
+    sync_project_rules(_pro(tmp_path), pth_hole_clearance=True)
+    rules = json.loads((tmp_path / "x.kicad_pro").read_text())["board"]["design_settings"]["rules"]
+    assert rules["min_hole_clearance"] == JLC["pth_to_track"] == 0.28
 
 
 @pytest.mark.parametrize("sev, msg", [
