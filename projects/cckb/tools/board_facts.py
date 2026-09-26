@@ -15,6 +15,10 @@
   copper_in   引数の矩形（CAD）ごとに、層ごとの銅の面積 mm²（塗ったベタ・線・ビア・パッド）。
               引数が "c:x,y,r" なら円（内に接する 128 角形）
   islands     GND ベタの島ごとに 層・面積・外接矩形・中にある GND のビアの数
+  gnd_fill    GND ベタの塗った形（層ごとに島の外形と穴の点列）。検査が「銅の上の道のりで最寄りの GND の
+              ビアまで」を測る（2026-09-26 の 2 回目の V2 監査 D-1・D-2）
+  silk_to_mask シルクの文字（名札・値・板の文字）ごとに、同じ面のパッドのマスクの開口までの最短（1.0 で打ち切り）
+              （同 C-3: R_LO の名札が 0.081）
 座標は CAD（キー領域の中心が原点・Y 上向き・mm）。
 """
 
@@ -82,6 +86,65 @@ def copper(board, layer):
                 p.TransformShapeToPolygon(ps, layer, 0, err, pcbnew.ERROR_INSIDE)
     ps.Simplify()
     return ps
+
+
+def _pts(chain):
+    return [xy(chain.CPoint(k)) for k in range(chain.PointCount())]
+
+
+def gnd_fill(board):
+    """{層: [{outline: 点列, holes: [点列]}]}（CAD）。GND のベタの塗った形そのもの。"""
+    out = {}
+    for z in board.Zones():
+        if z.GetIsRuleArea() or z.GetNetname() != "GND":
+            continue
+        for n, lay in LAYERS.items():
+            if z.IsOnLayer(lay):
+                ps = z.GetFilledPolysList(lay)
+                out.setdefault(n, []).extend(
+                    dict(outline=_pts(ps.Outline(i)), holes=[_pts(ps.Hole(i, h)) for h in range(ps.HoleCount(i))])
+                    for i in range(ps.OutlineCount()))
+    return out
+
+
+SILK_MASK = {pcbnew.F_SilkS: pcbnew.F_Mask, pcbnew.B_SilkS: pcbnew.B_Mask}
+
+
+def silk_to_mask(board, reach=1.0):
+    """シルクの文字ごとに、同じ面のパッドのマスクの開口（パッドの形 ＋ そのパッドのマスクの広げ）までの最短 mm。
+    reach より遠ければ reach。[{owner, text, layer, dist, near}]。"""
+    err = pcbnew.FromMM(0.001)
+    openings = {m: [] for m in SILK_MASK.values()}
+    for fp in board.GetFootprints():
+        for p in fp.Pads():
+            for m in openings:
+                if p.IsOnLayer(m):
+                    ps = pcbnew.SHAPE_POLY_SET()
+                    p.TransformShapeToPolygon(ps, m, p.GetSolderMaskExpansion(m), err, pcbnew.ERROR_OUTSIDE)
+                    openings[m].append((p.GetBoundingBox(), ps, f"{fp.GetReference()}.{p.GetNumber()}"))
+    texts = [(fp.GetReference(), t) for fp in board.GetFootprints() for t in (fp.Reference(), fp.Value())
+             if t.IsVisible() and t.GetLayer() in SILK_MASK]
+    texts += [("", d) for d in board.GetDrawings() if d.GetClass() == "PCB_TEXT" and d.GetLayer() in SILK_MASK]
+    out = []
+    for owner, t in texts:
+        sh = t.GetEffectiveTextShape()
+        bb = t.GetBoundingBox()
+        bb.Inflate(pcbnew.FromMM(reach))
+        best, near = reach, ""
+        for pbb, ps, name in openings[SILK_MASK[t.GetLayer()]]:
+            if not bb.Intersects(pbb) or not ps.Collide(sh, pcbnew.FromMM(best)):
+                continue
+            lo, hi = 0.0, best                     # 当たる最小の余裕を 2 分で（0.001 まで）
+            while hi - lo > 0.0005:
+                mid = (lo + hi) / 2
+                if ps.Collide(sh, pcbnew.FromMM(mid)):
+                    hi = mid
+                else:
+                    lo = mid
+            best, near = hi, name
+        out.append(dict(owner=owner, text=t.GetText(), layer=board.GetLayerName(t.GetLayer()),
+                        dist=round(best, 3), near=near))
+    return out
 
 
 def facts(path, rects):
@@ -155,6 +218,8 @@ def facts(path, rects):
                          and not any(h.PointInside(v) for h in holes))
                 out["islands"].append(dict(layer=n, area=round(abs(ol.Area()) / 1e12, 3),
                                            box=box(ol.BBox()), vias=nv))
+    out["gnd_fill"] = gnd_fill(board)
+    out["silk_to_mask"] = silk_to_mask(board)
     out["origin"] = list(ORIGIN)                     # CAD → KiCad（x + ox, oy − y）
     out["unconnected"] = board.GetConnectivity().GetUnconnectedCount(False)
     out["copper_in"] = []

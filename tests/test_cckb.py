@@ -644,6 +644,19 @@ def test_the_project_rules_take_the_spec_severity(tmp_path):
     assert doc["board"]["design_settings"]["rule_severities"] == {"npth_inside_courtyard": "warning"}
 
 
+def test_the_project_rules_raise_the_hole_clearance_only_when_asked(tmp_path):
+    """spec.DRC_PTH_HOLE_CLEARANCE（CCKB は True）のときだけ穴と銅の距離を JLC の PTH と線 0.28 にする。
+    渡さなければ書かない（HHKB は KiCad の既定 0.25 のまま・核の既定を変えない）。"""
+    from foundry.pcb_rules import JLC, sync_project_rules
+
+    sync_project_rules(_pro(tmp_path))
+    rules = json.loads((tmp_path / "x.kicad_pro").read_text())["board"]["design_settings"]["rules"]
+    assert "min_hole_clearance" not in rules
+    sync_project_rules(_pro(tmp_path), pth_hole_clearance=True)
+    rules = json.loads((tmp_path / "x.kicad_pro").read_text())["board"]["design_settings"]["rules"]
+    assert rules["min_hole_clearance"] == JLC["pth_to_track"] == 0.28
+
+
 @pytest.mark.parametrize("sev, msg", [
     ({"npth_inside_courtyard": "ignore"}, "ignore で隠さない"),   # 消させない
     ({"clearance": "warning"}, "警告に下げられない"),              # 製造に効く種類は下げさせない

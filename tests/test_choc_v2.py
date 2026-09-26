@@ -369,6 +369,62 @@ def test_the_stab_checker_notices_a_break(tmp_path, monkeypatch, old, new):
         test_choc_v2.test_the_stab_footprint_is_the_holes()
 
 
+# 基板の下の爪の先（支点の y で、キーの中心から奥へ）。mech の CHOC_V2_STAB_PLATE のコメントの読み: 上面図の 10.95 まで
+# の 0.70 は、基板の穴を通って基板の下で開く爪の先（**読み**。見本で確かめる V9）
+STAB_CLAW_TIP_Y = 10.95
+COURTYARD_MARGIN = 0.25          # F.CrtYd と同じ（本体 ＋ 0.25）
+
+
+def _courtyard(path, layer):
+    """その層のコートヤードの線の端点から、左右（x の符号）ごとの外接矩形 (x0, y0, x1, y1)（KiCad・Y 下向き）。"""
+    pts = [(float(a), float(b)) for m in re.finditer(rf"\(fp_line \(start ([-\d.]+) ([-\d.]+)\) \(end ([-\d.]+) ([-\d.]+)\)"
+                                                     rf" \(layer {re.escape(layer)}\)", path.read_text())
+           for a, b in (m.group(1, 2), m.group(3, 4))]
+    out = {}
+    for s in (-1, 1):
+        q = [p for p in pts if p[0] * s > 0]
+        if q:
+            out[s] = (min(x for x, _ in q), min(y for _, y in q), max(x for x, _ in q), max(y for _, y in q))
+    return out
+
+
+def test_the_stab_footprint_has_a_bottom_courtyard():
+    """B.CrtYd（基板の下に出る物）が、左右それぞれ箱（図の 5.80 × 7.30）・ねじの頭（spec.STAB_SCREW_HEAD_D。
+    ねじの穴の真下）・爪（爪の穴 φ4.0 と、下で開く先 STAB_CLAW_TIP_Y）を COURTYARD_MARGIN 以上で包む
+    （2026-09-26 の 2 回目の V2 監査 B-3。前は表の F.CrtYd だけで、裏の部品との重なりを DRC が見なかった）。"""
+    from foundry.project import load
+
+    spec = load("cckb").spec
+    s = SWITCHES["choc_v2"].stab_offset[2.25]
+    bw, bh = mech.CHOC_V2_STAB_SOURCES["drawing"]["part"]
+    (_, sy), _ = mech.CHOC_V2_STAB_HOLES["screw"]
+    (_, cy), cd = mech.CHOC_V2_STAB_HOLES["claw"]
+    cy_ = _courtyard(STAB_FP, "B.CrtYd")
+    assert set(cy_) == {-1, 1}, cy_
+    m = COURTYARD_MARGIN - 1e-9
+    for side, (x0, y0, x1, y1) in cy_.items():
+        px = side * s
+        need = [(px - bw / 2, -bh / 2, px + bw / 2, bh / 2),                                  # 箱（KiCad の y は −y が奥）
+                (px - spec.STAB_SCREW_HEAD_D / 2, -sy - spec.STAB_SCREW_HEAD_D / 2,
+                 px + spec.STAB_SCREW_HEAD_D / 2, -sy + spec.STAB_SCREW_HEAD_D / 2),            # ねじの頭（手前 +y）
+                (px - cd / 2, -STAB_CLAW_TIP_Y, px + cd / 2, -cy + cd / 2)]                      # 爪（奥 −y）
+        for a0, b0, a1, b1 in need:
+            assert x0 <= a0 - m and y0 <= b0 - m and x1 >= a1 + m and y1 >= b1 + m, (side, (x0, y0, x1, y1), (a0, b0, a1, b1))
+
+
+def test_the_bottom_courtyard_check_notices_it_missing(tmp_path, monkeypatch):
+    """B.CrtYd を B.Fab に書き換えた（コートヤードが無い）足跡で落ちる。ねじの頭の側を 0.5 縮めても落ちる。"""
+    import test_choc_v2
+
+    _break(tmp_path, monkeypatch, "(layer B.CrtYd)", "(layer B.Fab)", target="STAB_FP")
+    with pytest.raises(AssertionError):
+        test_choc_v2.test_the_stab_footprint_has_a_bottom_courtyard()
+    monkeypatch.undo()
+    _break(tmp_path, monkeypatch, " 8.375)", " 7.875)", target="STAB_FP")      # 手前の辺（ねじの頭の側）だけ
+    with pytest.raises(AssertionError):
+        test_choc_v2.test_the_stab_footprint_has_a_bottom_courtyard()
+
+
 # --- プレートの開口 -----------------------------------------------------------
 
 def _sal_plate_points():

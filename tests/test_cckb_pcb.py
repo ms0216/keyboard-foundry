@@ -317,6 +317,32 @@ def test_the_drc_check_notices_a_short(tmp_path):
     assert r["violations"] > 0 or r["unconnected"] > 0
 
 
+def test_the_hole_clearance_rule_is_jlcs_pth_to_track():
+    """穴と銅の距離（min_hole_clearance）は JLC の PTH と線 0.28（KiCad の既定 0.25 ではない）。発注する板と
+    未配線の板の .kicad_pro の両方（route_pcb はこの値で塗る。2026-09-26 の 2 回目の V2 監査 C-4）。"""
+    from foundry.pcb_rules import JLC
+
+    assert SPEC.DRC_PTH_HOLE_CLEARANCE is True
+    for pro in (BOARD.with_suffix(".kicad_pro"), UNROUTED.with_suffix(".kicad_pro")):
+        rules = json.loads(pro.read_text())["board"]["design_settings"]["rules"]
+        assert rules["min_hole_clearance"] == JLC["pth_to_track"] == 0.28, pro
+
+
+def test_the_drc_reads_the_hole_clearance_and_the_board_sits_at_it(tmp_path):
+    """**壊すと落ちる**: 板の写しの .kicad_pro で穴と銅の距離を 0.30 に上げると、DRC が hole_clearance を出す
+    （規則が効いていて、ベタが 0.28 で穴から引いてある。0.25 で塗った前の板は 0.28 で 206 件だった）。"""
+    from foundry import drc
+
+    require(paths.KICAD_CLI, "DRC")
+    board = board_copy(tmp_path / "b")
+    pro = board.with_suffix(".kicad_pro")
+    doc = json.loads(pro.read_text())
+    doc["board"]["design_settings"]["rules"]["min_hole_clearance"] = 0.30
+    pro.write_text(json.dumps(doc, indent=2))
+    r = drc.run(board)
+    assert "hole_clearance" in r["violation_kinds"], r["violation_kinds"]
+
+
 # ---------------------------------------------------------------------------
 # (c) 実装面: JLC が実装する物は全部裏（パッドの層で見る）。表は XIAO とホルダ（とスイッチの足）
 # ---------------------------------------------------------------------------
@@ -936,6 +962,136 @@ def test_the_island_check_notices_a_long_single_via_island(facts):
     i = max(f["islands"], key=lambda i: i["area"])
     f["islands"].append(dict(i, vias=1, box=[-62.7, -2.0, -43.8, 2.0]))
     assert island_problems(f)
+
+
+# GND のベタの中の点から、同じ島の GND のビアまでの**銅の上の道のり**（2026-09-26 の 2 回目の V2 監査 D-1・D-2）。
+# 島ごとのビアの数（上の island_problems）では、ビアのある島から細い帯が長く伸びていても見えない。
+# 格子 REACH_STEP の 8 近傍の最短路（塗りの形を画素にする。帯の幅 0.25 まで拾える細かさ）
+REACH_STEP = 0.05
+
+
+def _inside(pt, poly):
+    """点が多角形の中か（偶奇の規則）。"""
+    x, y = pt
+    c = False
+    for (x1, y1), (x2, y2) in zip(poly, poly[1:] + poly[:1]):
+        if (y1 > y) != (y2 > y) and x < x1 + (y - y1) * (x2 - x1) / (y2 - y1):
+            c = not c
+    return c
+
+
+def gnd_reach(facts, layer, seed, probe):
+    """layer の GND の塗りのうち点 seed を含む島で、probe（CAD の矩形）の中の点から同じ島の GND のビアまでの
+    道のりの最大と、その点。[(最大, (x, y))]（seed を含む島が無ければ []。ビアが無ければ inf）。"""
+    import heapq
+
+    import numpy as np
+    from PIL import Image, ImageDraw
+
+    s = REACH_STEP
+    vias = [v["pos"] for v in facts["vias"] if v["net"] == "GND"]
+    out = []
+    for isl in facts["gnd_fill"][layer]:
+        if not _inside(seed, isl["outline"]) or any(_inside(seed, hole) for hole in isl["holes"]):
+            continue
+        xs = [p[0] for p in isl["outline"]]
+        ys = [p[1] for p in isl["outline"]]
+        x0, y1 = min(xs) - 2 * s, max(ys) + 2 * s
+        w, h = int((max(xs) - x0) / s) + 3, int((y1 - min(ys)) / s) + 3
+        im = Image.new("1", (w, h), 0)
+        d = ImageDraw.Draw(im)
+
+        def px(pts):
+            return [((x - x0) / s, (y1 - y) / s) for x, y in pts]
+        d.polygon(px(isl["outline"]), fill=1)
+        for hole in isl["holes"]:
+            d.polygon(px(hole), fill=0)
+        m = np.array(im, dtype=bool)
+        dist = np.full(m.shape, np.inf)
+        heap = []
+        for vx, vy in vias:
+            i, j = round((y1 - vy) / s), round((vx - x0) / s)
+            if 0 <= i < h and 0 <= j < w and m[i, j]:
+                dist[i, j] = 0.0
+                heap.append((0.0, i, j))
+        heapq.heapify(heap)
+        steps = [(di, dj, math.hypot(di, dj) * s) for di in (-1, 0, 1) for dj in (-1, 0, 1) if di or dj]
+        while heap:
+            dd, i, j = heapq.heappop(heap)
+            if dd > dist[i, j]:
+                continue
+            for di, dj, c in steps:
+                a, b = i + di, j + dj
+                if 0 <= a < h and 0 <= b < w and m[a, b] and dd + c < dist[a, b]:
+                    dist[a, b] = dd + c
+                    heapq.heappush(heap, (dd + c, a, b))
+        ii, jj = np.nonzero(m)
+        px_x, px_y = x0 + jj * s, y1 - ii * s
+        inside = (px_x >= probe[0]) & (px_x <= probe[2]) & (px_y >= probe[1]) & (px_y <= probe[3])
+        if not inside.any():
+            continue
+        k = np.argmax(np.where(inside, dist[ii, jj], -1.0))
+        out.append((float(dist[ii[k], jj[k]]), (round(float(px_x[k]), 2), round(float(px_y[k]), 2))))
+    return out
+
+
+# 監査が名指しした 2 か所と、いま届いている道のりの上限（**置いたビアで決まる値 ＋ 格子の粗さ**）:
+#   D-1 裏の帯（ROW4 と手前の縁の間）: 33.3 → 3.1（spec.GND_STITCH_AT の 5 本）
+#   D-2 表の島（左 Shift の左の箱の穴を VBAT_SW が囲む U 字）: 12.3 → 10.3（1 本。3 以下はビアでは届かない。
+#       U の腕の幅 1.006 / 0.8 にビアが入らない。spec.GND_STITCH_AT のコメント・open-gaps）
+# (層, 島の中の点, 測る矩形, 上限)。点は帯の先・島の中（CAD）
+GND_REACH_NAMED = {
+    "D-1": ("B.Cu", (-124.0, -47.1), (-124.6, -47.7, -97.6, -46.5), 3.5),
+    "D-2": ("F.Cu", (-137.05, -15.5), (-143.0, -31.6, -128.4, -14.3), 10.5),
+}
+
+
+def test_the_gnd_strips_the_audit_named_reach_a_via(facts):
+    """監査が名指しした細い帯・島の先から、銅の上の道のりで最寄りの GND のビアまでが上限以下。
+    spec.GND_STITCH_AT のビアが板に全部ある（route_pcb.declared_gnd_vias が打った物）。"""
+    have = [v["pos"] for v in facts["vias"] if v["net"] == "GND"]
+    for x, y in SPEC.GND_STITCH_AT:
+        assert any(math.hypot(x - p[0], y - p[1]) < 1e-3 for p in have), (x, y)
+    for name, (layer, seed, probe, limit) in GND_REACH_NAMED.items():
+        got = gnd_reach(facts, layer, seed, probe)
+        print(name, layer, got)
+        assert got and max(r for r, _ in got) <= limit, (name, got)
+
+
+def test_the_reach_check_notices_the_strip_without_the_vias(facts):
+    """**壊すと落ちる**: 宣言したビアを事実の写しから消すと、D-1 の帯の先は 30 を超え、D-2 の島は 12 を超える
+    （直す前の板の 33.3・12.3 と同じ）。"""
+    f = copy.deepcopy(facts)
+    f["vias"] = [v for v in f["vias"] if not any(
+        math.hypot(x - v["pos"][0], y - v["pos"][1]) < 1e-3 for x, y in SPEC.GND_STITCH_AT)]
+    for name, least in (("D-1", 30), ("D-2", 12)):
+        layer, seed, probe, _ = GND_REACH_NAMED[name]
+        assert max(r for r, _ in gnd_reach(f, layer, seed, probe)) > least, name
+    with pytest.raises(AssertionError):
+        test_the_gnd_strips_the_audit_named_reach_a_via(f)
+
+
+# シルクの文字とマスクの開口（パッドの銅が出る所）の間。JLC はシルクを開口で切り取る（字が欠ける）。
+# .kicad_pro の min_silk_clearance と同じ JLC["silk_width"] 0.15。KiCad の DRC は R_LO の 0.081 を見逃した
+# （2026-09-26 の 2 回目の V2 監査 C-3）
+def silk_problems(facts):
+    from foundry.pcb_rules import JLC
+
+    return [t for t in facts["silk_to_mask"] if t["dist"] < JLC["silk_width"]]
+
+
+def test_no_silk_text_is_near_a_mask_opening(facts):
+    assert len(facts["silk_to_mask"]) > 200            # 名札・値・キーの字（母数を数える）
+    assert silk_problems(facts) == []
+    print("いちばん近い 3 つ:", sorted((t["dist"], t["owner"] or t["text"], t["near"]) for t in facts["silk_to_mask"])[:3])
+
+
+def test_the_silk_check_notices_r_lo_at_the_old_place(facts):
+    """R_LO の名札を前の位置（部品の中心の右 3.2）に戻した距離 0.081 にすると落ちる。"""
+    f = copy.deepcopy(facts)
+    t = next(t for t in f["silk_to_mask"] if t["owner"] == "R_LO" and t["text"] == "R_LO")
+    t["dist"] = 0.081
+    assert [x["owner"] for x in silk_problems(f)] == ["R_LO"]
 
 
 # ---------------------------------------------------------------------------
@@ -1577,6 +1733,7 @@ m.__file__ = path
 exec(compile(src, path, "exec"), m.__dict__)
 assert callable(m.main)
 assert m.parse_args([]) is None and m.parse_args(["--reroute", "CS,ROW1"]) == {"CS", "ROW1"}
+assert m.parse_args(["--keep"]) == set()           # 何も引き直さない（GND だけ作り直す）
 missing = []
 mods = {n: getattr(m, n) for n in ("interface", "matrix_routes", "boardhash", "board_geometry",
                                    "paths", "pcbnew")}

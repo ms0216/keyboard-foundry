@@ -10,6 +10,10 @@
         # 部品を動かしたとき: 名指しした網の前の線・ビアのうち、**端が矩形（CAD）の中にあるもの**を
         # 捨ててから引き直す（前の部品の位置へ行く線を残さない）。引いた後、名指しした網の行き止まりの
         # 線（端が何にも繋がっていない）を消す。2026-09-24 に電源スイッチとホルダを動かしたとき
+    "$KICAD_PYTHON" projects/cckb/tools/route_pcb.py --keep
+        # 引き直す網なし: GND 以外の線・ビアを**全部**前の板から持ってきて、GND（ベタ・縫いのビア）だけを
+        # 作り直す。名札・コートヤード・規則・宣言した GND のビア（spec.GND_STITCH_AT）だけを変えたとき
+        # （2026-09-26 の 2 回目の V2 監査の直し。Freerouting を回さない）
     .venv/bin/python3 -m foundry.drc projects/cckb/pcb/cckb_main.kicad_pcb
 
 順序（docs/knowledge/pcb.md）:
@@ -952,6 +956,18 @@ def stitch_islands(board, space, rounds=4):
     return placed, [(lay, a) for lay, a, hit, _ in islands(board) if not hit]
 
 
+def declared_gnd_vias(board, points):
+    """spec.GND_STITCH_AT（CAD）に GND のビアを打つ。ほかの縫いのビアと同じ判定（Space.free）で、**置けなければ止まる**
+    （黙って飛ばさない）。格子（6mm おき）と離島の手順が拾わない細い帯の先に、監査が場所を名指ししたもの。打った数。"""
+    space = Space(board)
+    for x, y in points:
+        pos = kpt(x, y)
+        if not space.free(pos, "GND"):
+            raise SystemExit(f"spec.GND_STITCH_AT の ({x}, {y}) に GND のビアを置けない（ほかの銅・穴・禁止域・縁に近い）")
+        space.add_via(pos, "GND")
+    return len(points)
+
+
 def island_vias(board):
     """GND ベタの島ごとに [(層, 面積 mm², 島の外形, [ビアの位置])]。"""
     vias = [t.GetPosition() for t in board.GetTracks()
@@ -1297,10 +1313,13 @@ def split_clear(argv):
 
 
 def parse_args(argv):
+    """None = 全部引く・set() = --keep（何も引き直さない）・{網, ...} = --reroute。"""
     if not argv:
         return None
+    if argv == ["--keep"]:
+        return set()
     if len(argv) != 2 or argv[0] != "--reroute" or not argv[1]:
-        raise SystemExit("使い方: route_pcb.py [--reroute NET[,NET...] [--clear X0,Y0,X1,Y1]]")
+        raise SystemExit("使い方: route_pcb.py [--keep | --reroute NET[,NET...] [--clear X0,Y0,X1,Y1]]")
     return set(argv[1].split(","))
 
 
@@ -1458,19 +1477,26 @@ def main():
     n_orphan = orphan_gnd_vias(board)
     if n_orphan:
         fill(board)
+    # 宣言したビアは**最後に**打つ（前の手順の置き場所を動かさない。2026-09-26 に --keep で前の板と
+    # 線・ビア・塗りが同じに戻ることを確かめてから足した）。打った後に塗り直し、下の成分の数で繋がりを見る
+    n_decl = declared_gnd_vias(board, getattr(load(PROJ).spec, "GND_STITCH_AT", ()))
+    if n_decl:
+        fill(board)
     if len(gnd_components(board)) != 1:
         raise SystemExit(f"GND が {len(gnd_components(board))} 個の成分に分かれたまま")
     print(f"   GND ビア: リング {n_ring} / フェンス {n_fence} / 格子 {n_grid} / 離島 {n_is}"
           f" / 消した島 {len(left)} 個 {removed:.2f} mm² / 1 本の島に足した {n_dbl}"
           f" / 1 本のまま {[(round(a, 1), round(L, 1)) for _, a, L in single]}"
-          f" / 浮いた組を本土へつないだビア {n_join} / 浮いた組のビアを消した {n_orphan}")
+          f" / 浮いた組を本土へつないだビア {n_join} / 浮いた組のビアを消した {n_orphan}"
+          f" / 宣言したビア {n_decl}")
 
     board.BuildConnectivity()
     unconnected = board.GetConnectivity().GetUnconnectedCount(False)
     board.Save(str(OUT))
     pro_src = SRC.with_suffix(".kicad_pro")
     shutil.copy(pro_src, OUT.with_suffix(".kicad_pro"))
-    sync_project_rules(OUT, getattr(load(PROJ).spec, "DRC_SEVERITY", None))
+    sync_project_rules(OUT, getattr(load(PROJ).spec, "DRC_SEVERITY", None),
+                       pth_hole_clearance=getattr(load(PROJ).spec, "DRC_PTH_HOLE_CLEARANCE", False))
     areas = {("F" if lay == pcbnew.F_Cu else "B"): round(sum(
         a for l2, a, _, _ in islands(board) if l2 == lay), 1) for lay in (pcbnew.F_Cu, pcbnew.B_Cu)}
     rec = dict(board=OUT.name, unrouted=SRC.name,
@@ -1483,7 +1509,7 @@ def main():
                margins_tried=info["tried"],
                matrix_segments=n_mx, power_segments=n_pw, fixed_segments=n_fx, fixed_vias=len(fvias),
                gnd_fanout=len(fan), ring=n_ring, fence=n_fence,
-               grid=n_grid, island_vias=n_is, second_island_vias=n_dbl,
+               grid=n_grid, island_vias=n_is, second_island_vias=n_dbl, declared_vias=n_decl,
                single_via_islands=[dict(layer="F.Cu" if lay == pcbnew.F_Cu else "B.Cu",
                                         area_mm2=round(a, 2), length_mm=round(L, 2))
                                    for lay, a, L in single],
