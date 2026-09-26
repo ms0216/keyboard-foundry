@@ -242,14 +242,14 @@ def test_the_routed_board_has_no_drc_violation_and_nothing_unrouted(drc_record, 
     assert facts["unconnected"] == 0            # KiCad の連結（pcbnew）でも 0
     assert set(r["warning_kinds"]) <= KNOWN_WARNINGS, r["warning_kinds"]
     # 数を固定する（監査 C 2 回目 軽微 3: 種類の集合だけでは名札がずれて増えても緑のままだった）。
-    # silk_edge_clearance 4 は V2 のスタビのキー 4 つ（D42・D43・D58・D60）の名札が箱の穴（Edge.Cuts）に近い
-    # （刷ると欠けるだけ。V1 の 3 件〔D15・D55・H9〕は消えた。2026-09-25 に DRC の座標で数えた）
-    assert r["warning_kinds"].get("silk_edge_clearance", 0) == 4, r["warning_kinds"]
+    # silk_edge_clearance は 0。2026-09-25〜26 の 4 件（V2 のスタビのキー D42・D43・D58・D60 の名札が箱の穴に近い）は
+    # 名札をダイオードの左へ動かして消した（spec.REF_TEXT_AT・監査 C 軽微 3）
+    assert r["warning_kinds"].get("silk_edge_clearance", 0) == 0, r["warning_kinds"]
     assert r["warning_kinds"].get("silk_overlap", 0) == 0 and r["warning_kinds"].get("silk_over_copper", 0) == 0
 
 
 def test_the_warning_count_notices_a_label_on_the_edge(tmp_path):
-    """板の写しで表のシルクに文字を 1 つ外形の縁に置くと silk_edge_clearance が 4 から増える
+    """板の写しで表のシルクに文字を 1 つ外形の縁に置くと silk_edge_clearance が 0 から増える
     （数を固定した検査が名札のずれに気づく）。"""
     from foundry import drc
 
@@ -263,7 +263,7 @@ def test_the_warning_count_notices_a_label_on_the_edge(tmp_path):
     i = t.rindex(")")
     (tmp_path / "x.kicad_pcb").write_text(t[:i] + label + t[i:])
     r = drc.run(tmp_path / "x.kicad_pcb")
-    assert r["warning_kinds"].get("silk_edge_clearance", 0) > 4, r["warning_kinds"]
+    assert r["warning_kinds"].get("silk_edge_clearance", 0) > 0, r["warning_kinds"]
 
 
 def test_the_drc_notices_silk_text_below_the_jlc_minimum(tmp_path):
@@ -446,10 +446,8 @@ def cpl_misplacements(rows, lcsc_of, facts, ee, tol=0.15):
 
 
 @pytest.fixture(scope="module")
-def production(tmp_path_factory):
-    """**実際に発注する道具**（Fabrication Toolkit・`-t`）を板の写しに通した BOM と CPL。"""
-    import csv
-
+def production_dir(tmp_path_factory):
+    """**実際に発注する道具**（Fabrication Toolkit・`-t`）を板の写しに通した出力の置き場（production/）。"""
     require(paths.KICAD_PYTHON, "Fabrication Toolkit")
     # 発注の CPL を確かめる検査。**REQUIRE_KICAD=1 なら無いのは赤**（前は黙って skip した。I6）
     require(FT_PLUGIN / "com_github_bennymeg_JLC-Plugin-for-KiCad", "Fabrication Toolkit")
@@ -461,6 +459,15 @@ def production(tmp_path_factory):
                        cwd=FT_PLUGIN, capture_output=True, text=True, timeout=600)
     prod = d / "production"
     assert (prod / "positions.csv").exists(), r.stdout[-2000:] + r.stderr[-2000:]
+    return prod
+
+
+@pytest.fixture(scope="module")
+def production(production_dir):
+    """発注の道具が出した BOM と CPL。"""
+    import csv
+
+    prod = production_dir
     rows = list(csv.DictReader((prod / "positions.csv").open(encoding="utf-8-sig")))
     bom = list(csv.DictReader((prod / "bom.csv").open(encoding="utf-8-sig")))
     return rows, bom
@@ -945,6 +952,111 @@ def test_the_stab_reliefs_are_cut_in_the_routed_board(facts, ifc):
             assert hit, (a, b)
             n += 1
     assert n == 8 * 4                        # V2 の箱の穴は矩形 8 つ（Enter・左 Shift・スペース 2 つの左右）
+
+
+# JLC の PCB Capabilities（https://jlcpcb.com/capabilities/pcb-capabilities・2026-09-26 に読んだ）:
+# 「The length of the slot should be at least 2 times of the width」・非めっきの長円の最小幅 1.0・長円の公差は非めっき ±0.2。
+# 丸穴の公差は ±0.08 前後（JLC のブログ npth-design-guide）。**KiCad の DRC はこの比を見ない。**
+# V2 の 1 回目の板（sha256 dae52e33…）は位置決め 1.6 × 2.0 ×62・スタビのねじ 3.2 × 3.4 ×8・爪 4.2 × 4.4 ×8 の
+# 78 個が比 1.05〜1.25 だった（2026-09-26 の監査 C 重要 1）
+SLOT_MIN_RATIO = 2.0
+NPTH_SLOT_MIN_W = 1.0
+PTH_SLOT_MIN_W = 0.5
+
+
+# **保留している例外（数を固定）**: スタビのねじ・爪の長円 16 個（ST42・ST43・ST58・ST60 の各 4。3.2 × 3.4・4.2 × 4.4）。
+# スタビの品を選び直している最中（2026-09-26・Kailh 公式の CPG1353G24D01 はプレート留めで、選ぶと基板のねじの穴が無くなる）
+# なので、形はまだ直さない。**発注は止める**（open-gaps の ★ #6）。スタビが決まったらこの例外を消す
+HELD_STAB_SLOTS = 16
+
+
+def slot_problems(pads, held=()):
+    """長円の穴で、長さ/幅 < 2 か、幅が JLC の最小を割る物。pads は事実の pads（drill_wh・slot）。
+    held: 保留した参照名（その部品の長円は数えない。数は呼ぶ側が固定する）。"""
+    out = []
+    for p in pads:
+        if not p["slot"] or p["ref"] in held:
+            continue
+        lo, hi = sorted(p["drill_wh"])
+        if hi < SLOT_MIN_RATIO * lo - 1e-9:
+            out.append(f"{p['ref']} の長円 {p['drill_wh']}（長さ/幅 {hi / lo:.2f} < {SLOT_MIN_RATIO}）")
+        if lo < (NPTH_SLOT_MIN_W if p["npth"] else PTH_SLOT_MIN_W) - 1e-9:
+            out.append(f"{p['ref']} の長円の幅 {lo}")
+    return out
+
+
+def test_every_slot_on_the_board_is_long_enough_or_round(facts):
+    holes = [p for p in facts["pads"] if p["drill"] > 0]
+    slots = [p for p in holes if p["slot"]]
+    npth = [p for p in holes if p["npth"]]
+    print(f"穴 {len(holes)}（非めっき {len(npth)}）・長円 {len(slots)}")
+    # 母数: 非めっきはキーごとに中心 1・位置決め 1（62 × 2）、スタビのねじと爪 4 × 4、取付の穴・ふたの柱など
+    assert len(npth) >= 62 * 2 + 4 * 4
+    stabs = {p["ref"] for p in facts["pads"] if re.fullmatch(r"ST\d+", p["ref"])}
+    held = [p for p in slots if p["ref"] in stabs]
+    print(f"保留したスタビの長円 {len(held)}（{sorted(stabs)}）")
+    assert len(held) == HELD_STAB_SLOTS and len(stabs) == 4
+    assert slot_problems(facts["pads"], held=stabs) == []
+
+
+def test_the_slot_check_notices_the_first_v2_board(facts):
+    """1 回目の板の位置決めの長穴（1.6 × 2.0）を写しに戻すと落ちる。"""
+    f = copy.deepcopy(facts)
+    p = next(p for p in f["pads"] if p["npth"] and p["ref"] == "SW1" and p["drill"] < 3)
+    p.update(slot=True, drill_wh=[1.6, 2.0])
+    assert slot_problems(f["pads"])
+
+
+def drill_file_slots(text):
+    """Excellon（KiCad の出力）の長円の穴: [(工具の径, 長さ)]。KiCad は長円を工具で G01 の道として書く
+    （M15 … G01 … M16）。長さ = 道の長さ ＋ 径。丸穴（座標だけの行）は数えない。"""
+    import re as _re
+
+    tools, tool, pos, out = {}, None, None, []
+    down = False
+    for line in text.splitlines():
+        m = _re.fullmatch(r"T(\d+)C([\d.]+)", line)
+        if m:
+            tools[m.group(1)] = float(m.group(2))
+            continue
+        m = _re.fullmatch(r"T(\d+)", line)
+        if m:
+            tool = tools[m.group(1)]
+            continue
+        m = _re.fullmatch(r"(G00|G01)?X([-\d.]+)Y([-\d.]+)", line)
+        if m:
+            q = (float(m.group(2)), float(m.group(3)))
+            if m.group(1) == "G01" and down:
+                out.append((tool, math.dist(pos, q) + tool))
+            pos = q
+            continue
+        if line == "M15":
+            down = True
+        elif line == "M16":
+            down = False
+    return out
+
+
+def test_the_drill_files_sent_to_jlc_have_no_short_slot(production_dir):
+    """**JLC が読むドリルのファイル**（発注の道具が出した zip の中の PTH/NPTH の .drl）で長円を数える。"""
+    import zipfile
+
+    zips = list(production_dir.glob("*.zip"))
+    assert len(zips) == 1, zips
+    with zipfile.ZipFile(zips[0]) as z:
+        names = [n for n in z.namelist() if n.endswith(".drl")]
+        assert sorted(n.rsplit("-", 1)[1] for n in names) == ["NPTH.drl", "PTH.drl"], names
+        slots = [s for n in names for s in drill_file_slots(z.read(n).decode())]
+    print("ドリルのファイルの長円（径, 長さ）:", sorted(set(slots)))
+    short = [s for s in slots if s[1] < SLOT_MIN_RATIO * s[0] - 1e-6]
+    # 保留したスタビの 16（工具 3.2 × 長さ 3.4・4.2 × 4.4）だけ。位置決めの 1.6 × 2.0 が戻れば数が増えて落ちる
+    assert len(short) == HELD_STAB_SLOTS and {(round(d, 2), round(n, 2)) for d, n in short} == {(3.2, 3.4), (4.2, 4.4)}, short
+
+
+def test_the_drill_file_reader_sees_a_short_slot():
+    """1 回目の板の NPTH.drl の書き方（位置決め 1.6 × 2.0）を読むと、短い長円として見つける。"""
+    text = "M48\nMETRIC\nT1C1.600\n%\nG90\nG05\nT1\nG00X11.65Y-66.85\nM15\nG01X11.65Y-67.25\nM16\nG05\n"
+    assert [(1.6, pytest.approx(2.0))] == drill_file_slots(text)
 
 
 def test_no_copper_under_a_support_post_or_boss_on_the_bottom_parts(facts, ifc):

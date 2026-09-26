@@ -558,7 +558,7 @@ def test_the_floor_pockets_keep_off_the_posts_and_islands(asm):
 def test_the_pocket_check_notices_a_support_on_a_pocket(geo):
     """支えの柱を 1 本、段 3|4 の前の場所（y −27.03。位置決めの長穴の止まり穴の縁）に戻すと見つかる。"""
     s = load("cckb").spec
-    sup = [(-95.18, -27.03) if p == (-95.18, -27.53) else p for p in s.SUPPORTS]
+    sup = [(-95.18, -27.03) if p == (-95.18, -27.63) else p for p in s.SUPPORTS]
     a = A.Assembly(geo, ifc_with(SUPPORTS=sup))
     assert any("支え (-95.18, -27.03)" in b[1] for b in A.pocket_problems(a))
 

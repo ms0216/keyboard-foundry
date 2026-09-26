@@ -40,6 +40,16 @@ def box(b):
             round(MM(b.GetRight()) - ORIGIN[0], 4), round(ORIGIN[1] - MM(b.GetTop()), 4)]
 
 
+def _drill_wh(p):
+    """穴の X 幅・Y 幅（板の上で。90° 回っていれば入れ替える。軸に平行でない長円は落とす）。"""
+    ds = p.GetDrillSize()
+    w, h = round(MM(ds.x), 4), round(MM(ds.y), 4)
+    deg = round(p.GetOrientation().AsDegrees()) % 180
+    if p.GetDrillShape() == pcbnew.PAD_DRILL_SHAPE_OBLONG and deg not in (0, 90):
+        raise SystemExit(f"{p.GetParentFootprint().GetReference()} の長円の穴が {deg}° 回っている")
+    return [h, w] if deg == 90 else [w, h]
+
+
 def rect_poly(r):
     ps = pcbnew.SHAPE_POLY_SET()
     ps.NewOutline()
@@ -98,7 +108,10 @@ def facts(path, rects):
                 npth=p.GetAttribute() == pcbnew.PAD_ATTRIB_NPTH,
                 paste=p.IsOnLayer(pcbnew.F_Paste) or p.IsOnLayer(pcbnew.B_Paste),
                 pos=xy(p.GetPosition()), box=box(p.GetBoundingBox()),
-                drill=round(MM(p.GetDrillSize().x), 4)))
+                drill=round(MM(p.GetDrillSize().x), 4),
+                # 穴の形（丸か長円か）と板の上の X 幅・Y 幅（回転を解いた後）。JLC の「長円の長さ ≧ 幅 × 2」を見る
+                slot=p.GetDrillShape() == pcbnew.PAD_DRILL_SHAPE_OBLONG,
+                drill_wh=_drill_wh(p)))
     for t in board.GetTracks():
         if t.GetClass() == "PCB_VIA":
             out["vias"].append(dict(net=t.GetNetname(), pos=xy(t.GetPosition()),

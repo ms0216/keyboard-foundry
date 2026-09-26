@@ -670,15 +670,16 @@ def test_the_relief_check_notices_the_old_diode_place(ifc, geo):
 
 def floor_pocket_problems(ifc, geo):
     """床の止まり穴（interface.floor_pockets・ケースの段が読む）が、**発注する板の実物**の
-    スイッチの中心穴（非めっき φ5.05・母数 62）・端子の穴（φ1.2・62 × 2）・位置決めの長穴（62）と
+    スイッチの中心穴（非めっき φ5.05・母数 62）・端子の穴（φ1.2・62 × 2）・位置決めの穴（φ2.1・62）と
     スタビの箱の穴（Edge.Cuts・4 キー × 2）に揃っているか。"""
     out = []
     pk = ifc.floor_pockets()
     studs = [p for p in pk if p["kind"] == "stud"]
     boxes = [p for p in pk if p["kind"] == "stab_box"]
     # 端子と位置決め: 板の穴ごとに、同じスイッチの穴で、中心が同じ・穴の外形 ＋ 片側 0.3 以上を含む物があるか
+    # 足 = 端子（めっき）と位置決め（非めっき φ2.1。2026-09-26 に長円から丸に）。中心の穴 φ5.05 は除く
     feet = [p for p in geo["pads"] if re.fullmatch(r"SW\d+", p["ref"]) and p["drill"] > 0
-            and not (p["npth"] and p.get("round"))]
+            and not (p["npth"] and p["drill"] > 3)]
     if len(feet) != 62 * 3:
         out.append(f"板の足の穴 {len(feet)}（62 × 3 のはず）")
     for h in feet:

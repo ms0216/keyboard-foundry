@@ -266,7 +266,7 @@ class Interface:
         """スイッチの足跡（lib/keyswitch.pretty の mech の fp。**板に置いた物と同じファイル**）の穴を、
         キーマップ順の各スイッチの位置に置いた物（CAD）。[(ref, kind, (x, y), (X 幅, Y 幅))]。
 
-        kind: "stud"（中心の非めっき φ5.05）・"pin"（端子 φ1.2 ×2）・"locator"（位置決めの長穴 1.6 × 2.0）。
+        kind: "stud"（中心の非めっき φ5.05）・"pin"（端子 φ1.2 ×2）・"locator"（位置決めの丸穴 φ2.1。2026-09-26 まで長穴 1.6 × 2.0）。
         KiCad の足跡は Y 下向きなので y を反転する（スイッチは回さずに置く。tests/test_cckb_interface.py が
         発注する板の穴と突き合わせる）。
         """
@@ -293,7 +293,7 @@ class Interface:
         [dict(kind, ref, pos, d)（丸）| dict(kind, ref, box)（矩形）]。どれも物の外形 ＋ 片側 FLOOR_POCKET_CLEAR。
           stud      各スイッチの中心の突起 φSWITCH_STUD_D（基板の中心穴 φ5.05 の中）
           pin       端子の足（基板の穴 φ1.2 の中を通る。穴の径で包む）×2
-          locator   位置決めの足（長穴 1.6 × 2.0 の中。長穴の形で包む）
+          locator   位置決めの穴 φ2.1 の下（穴の中に来る下面の突起を穴の径で包む。2026-09-26 に長穴 1.6 × 2.0 から）
           stab_box  スタビの箱（stab_housings）
         足の穴は 2026-09-26 に足した: 足の先（最悪 基板 1.44・足 3.2）が床の上面から 0.04 しか離れず、
         V1 で決めた余裕 0.1 を割っていた（決定記録 2026-09-25-choc-v2 §10-5 の V5）。
@@ -308,7 +308,7 @@ class Interface:
             elif kind == "pin":
                 out.append(dict(kind="pin", ref=ref, pos=(x, y), d=w + 2 * c))
             else:
-                out.append(dict(kind="locator", ref=ref, box=grow(rect(x, y, w, h), c)))
+                out.append(dict(kind="locator", ref=ref, pos=(x, y), d=max(w, h) + 2 * c))
         for n, poly in enumerate(self.stab_housings()):
             out.append(dict(kind="stab_box", ref=f"STAB{n}", box=grow(poly_box(poly), c)))
         return out

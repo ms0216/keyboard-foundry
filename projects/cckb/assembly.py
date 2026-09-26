@@ -355,7 +355,8 @@ class Assembly:
         胴（開口 13.95 角・プレートの上面まで）＋つば 15.0 角＋上の胴（ハウジングの上面 5.30 まで）＋静音のつば
         φSWITCH_COLLAR_D（5.70 まで）。ステム φ6.50 の中に窪み φ5.70（底 SW_RECESS_FLOOR）と十字 4.00 × 1.30。
         押し切るとステムは travel だけ沈む（胴にはその分の穴）。
-        足: 中心の突起 φ4.80・端子（穴 φ1.2 より 0.2 細い）・位置決め（長穴 1.6 より 0.2 細い）。長さは公差の上限と
+        足: 中心の突起 φ4.80・端子（穴 φ1.2 より 0.2 細い）・位置決めの穴の中の突起（丸穴 φ2.1 より 0.2 細い円柱で包む。
+        2026-09-26 に長穴 1.6 × 2.0 から）。長さは公差の上限と
         **基板の厚さの公差（薄い側）**を足す: 板は下面でボスに載るので、薄い板では足の先がその分下がる。
         """
         s, c, z = self.s, self.c, self.z
@@ -386,7 +387,7 @@ class Assembly:
                                                                     z["stem_top"] + dz, c.STEM_CROSS)])
             parts.append(stem)
             for p in pads[ref]:
-                if p["npth"] and p.get("round"):
+                if p["npth"] and p["drill"] > 3:          # 中心の穴 φ5.05（位置決めも丸の非めっきなので径で分ける）
                     length, d = s.SWITCH_STUD_L + s.SWITCH_STUD_TOL, s.SWITCH_STUD_D
                 else:
                     length, d = s.SWITCH_PIN_L + s.SWITCH_PIN_TOL, p["drill"] - 0.2

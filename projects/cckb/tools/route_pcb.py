@@ -602,8 +602,12 @@ def restore_rule_areas(board):
             ls.addLayer(lay)
         z.SetLayerSet(ls)
         seen.add(name)
-    if seen != set(want):
-        raise SystemExit(f"ルール領域が足りない: {set(want) - seen}")
+    # NPTH_KEEPOUT は長円の非めっきの穴があるときだけ（2026-09-26 に位置決めの長円 62 を丸にした。いまはスタビの 16 が残る）
+    ovals = any(p.GetAttribute() == pcbnew.PAD_ATTRIB_NPTH and p.GetDrillShape() == pcbnew.PAD_DRILL_SHAPE_OBLONG
+                for fp in board.GetFootprints() for p in fp.Pads())
+    need = set(want) if ovals else set(want) - {"NPTH_KEEPOUT"}
+    if not need <= seen:
+        raise SystemExit(f"ルール領域が足りない: {need - seen}")
 
 
 def widen_thin(board):
@@ -1011,14 +1015,17 @@ def _via_key(v):
 
 
 def kept_wiring(prev, reroute, board, clear=None):
-    """前の板の線とビアのうち、GND（ベタ・縫いのビアは毎回作る）以外。引き直す網（reroute）は
+    """前の板の線とビアのうち、GND（ベタ・縫いのビアは毎回作る）と計画が引く網（PREWIRED）以外。引き直す網（reroute）は
     board のルール領域に掛からない部分だけ（掛かる部分を Freerouting が繋ぎ直す）。
     clear（CAD の矩形）があれば、引き直す網の線・ビアのうち端がその中にある物を先に捨てる（数は返す）。
     ([(ネット, 層名, 始点, 終点, 幅)], [(ネット, 位置, 径, 穴)], [外した物], 捨てた数)（KiCad の整数座標）。"""
     tracks, vias = [], []
     for t in prev.GetTracks():
         n = t.GetNetname()
-        if n == "GND":
+        # GND と、計画（matrix_routes.plan・escape）が毎回引き切る網（ROW*・SW*_D）は持ってこない。計画が変わると
+        # 前の線が新しい計画の線と食い違って残る（2026-09-26: スタビの箱の穴を広げる案〔保留して戻した〕を試したとき、
+        # 行のバスの回り道が変わり、前の回り道が新しい禁止域に掛かって止まった）
+        if n == "GND" or PREWIRED.fullmatch(n):
             continue
         if t.GetClass() == "PCB_VIA":
             vias.append((n, (t.GetPosition().x, t.GetPosition().y), t.GetWidth(pcbnew.F_Cu),

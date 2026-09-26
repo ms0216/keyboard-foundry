@@ -1,21 +1,12 @@
 {
   "board": "cckb_main.kicad_pcb",
   "unrouted": "cckb_main.kicad_pcb",
-  "unrouted_fingerprint": "8132dd8845ff15189449a151bbc4c5e4b5dc1cd1537a00e237a93d3e59477a8b",
-  "unrouted_sha256": "ca88057cb65d67676e20b0290601bb8fb25a0bc23626858af3faef612b7e7b03",
+  "unrouted_fingerprint": "78d35eae3c50655c8c3b1165ab03c3406835c276daaad3228d0a582d40df0b88",
+  "unrouted_sha256": "e1f11a30f7c50f352eadb4955f0dc15e51d14e5aeb96aa992dac60d2faa6b49a",
   "freerouting": "freerouting-2.3.0.jar",
   "passes": 100,
-  "margin_um": 35,
-  "margins_tried": [
-    [
-      30,
-      1
-    ],
-    [
-      35,
-      0
-    ]
-  ],
+  "margin_um": null,
+  "margins_tried": [],
   "matrix_segments": 451,
   "power_segments": 6,
   "gnd_fanout": 9,
@@ -68,18 +59,20 @@
       "length_mm": 3.52
     }
   ],
-  "rerouted_nets": null,
+  "rerouted_nets": [
+    "CS"
+  ],
   "cleared_box": null,
-  "cleared": null,
+  "cleared": 0,
   "pruned_dangling": 0,
-  "kept_from_sha256": null,
+  "kept_from_sha256": "dae52e33a814918f8f4e6edfb3a896ca37c7ae4f975aa7fef6acf5771f37ea08",
   "islands_removed": 27,
   "joined_vias": 0,
   "orphan_vias_removed": 0,
   "islands_removed_mm2": 191.27,
   "gnd_area_mm2": {
-    "F": 21822.3,
-    "B": 21116.8
+    "F": 21783.2,
+    "B": 21076.7
   },
   "unconnected": 0
 }

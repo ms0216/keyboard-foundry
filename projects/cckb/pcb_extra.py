@@ -244,6 +244,16 @@ def place(board, ctx):
             dx, dy = s.REF_TEXT_AT[ref]
             fp.Reference().SetPosition(ctx["to_kicad"](px + dx, py + dy))
 
+    # 核が置いた部品（キーのダイオードなど）の名札: 部品の位置から (dx, dy)
+    for ref, (dx, dy) in s.REF_TEXT_AT.items():
+        if ref in s.PART_AT:
+            continue
+        fp = board.FindFootprintByReference(ref)
+        if fp is None:
+            raise RuntimeError(f"REF_TEXT_AT の {ref} が板に無い")
+        px, py = _cad(fp.GetPosition(), origin)
+        fp.Reference().SetPosition(ctx["to_kicad"](px + dx, py + dy))
+
     # --- 手はんだの部品（spec.NOT_ASSEMBLED）のパッドからペーストの層を外す ------------------
     # JLC はペーストの層からステンシルを作り、載せない部品のパッドにもはんだを盛ってリフローする
     # （監査 B 2 回目 B2-1・C 軽微 1: 裏の SW_PWR の 7 パッドに盛られて届き、突起が穴に沈まない）
@@ -294,7 +304,7 @@ def place(board, ctx):
     for poly in ifc.stab_reliefs():
         rule_area(board, ctx, interface.poly_offset_axis(poly, w), both, "EDGE_KEEPOUT",
                   fills=False)
-    # 非めっきの長円の穴（V2 の位置決めの長穴 62・スタビのねじと爪の穴 16）の縁にも同じ帯。**Freerouting は
+    # 非めっきの長円の穴（スタビのねじと爪の穴 16。2026-09-26 に位置決めは丸 φ2.1 にした）の縁にも同じ帯。**Freerouting は
     # 長円の穴を DSN で正しく避けず、穴と銅 0.3 を割った**（2026-09-25 の 1 回目: SPI_SCK が 0.216）。
     # 丸い穴（中心 φ5.05 など）は割っていない
     for _, c, ow, oh in npth_ovals(board, origin):

@@ -24,7 +24,7 @@ from foundry import mech
 from foundry.mech import SWITCHES
 
 LIB = ROOT / "lib" / "keyswitch.pretty"
-FP = LIB / "SW_Kailh_Choc_V2_Slot.kicad_mod"
+FP = LIB / "SW_Kailh_Choc_V2_Common.kicad_mod"
 STAB_FP = LIB / "Stab_Kailh_Choc_V2_Screw_2u.kicad_mod"
 REF = ROOT / "projects" / "cckb" / "docs" / "references"
 UPSTREAM = REF / "kiswitch-SW_Kailh_Choc_V2.kicad_mod"
@@ -126,19 +126,46 @@ def test_the_pins_and_centre_match_each_drawing(name):
     assert len(c) == 1 and min(c[0]["drill"]) >= d["center_d"], c
 
 
-@pytest.mark.parametrize("name", sorted(DRAWINGS))
-def test_the_locating_hole_takes_each_drawings_hole(name):
-    """位置決め穴は 3 枚の図の穴の**和**を含む（標準 φ1.6・静音 長円 2.0×1.5）。めっき無し。"""
+# JLC の丸穴の公差（非めっき。JLC のブログ npth-design-guide「±0.08」・能力表の穴の公差 +0.13/−0.08 の小さい側）と
+# 穴の位置の公差（能力表「Hole Position Tolerance ±0.05」）。2026-09-26 に読んだ
+JLC_HOLE_MINUS = 0.08
+JLC_HOLE_POS = 0.05
+
+
+def _locator():
     loc = [p for p in _pads(FP) if p["kind"] == "np_thru_hole" and (p["x"], p["y"]) != (0.0, 0.0)]
     assert len(loc) == 1, loc
-    h = loc[0]
+    return loc[0]
+
+
+@pytest.mark.parametrize("name", sorted(DRAWINGS))
+def test_the_locating_hole_takes_each_drawings_hole(name):
+    """位置決め穴は 3 枚の図の推奨の穴の**和**を含む（標準 φ1.6・静音 長円 2.0×1.5）。**JLC の公差で最も小さく
+    開いても**（径 −0.08）。めっき無し。"""
+    h = _locator()
     assert h["size"] == h["drill"]                          # 銅の輪が無い（行のバスを近くに通せる理由）
     c, size = _source_hole(DRAWINGS[name]["locate"])
+    small = tuple(d - JLC_HOLE_MINUS for d in h["drill"])
     for p in _stadium_rim(c, size):
-        assert _in_stadium(p, (h["x"], h["y"]), h["drill"]), (name, p, h)
+        assert _in_stadium(p, (h["x"], h["y"]), small), (name, p, h)
 
 
-def test_the_slot_footprint_is_kiswitch_but_the_locating_hole():
+def test_the_locating_hole_is_round():
+    """JLC は長円を「長さ ≧ 幅 × 2」でしか作らない（能力表）。1.6 × 2.0 の長円（比 1.25）はやめた（2026-09-26）。"""
+    h = _locator()
+    assert h["shape"] == "circle" and h["drill"][0] == h["drill"][1], h
+
+
+def test_the_nubs_under_the_switch_fit_the_worst_hole():
+    """底面図の突起（mech.CHOC_V2_LOCATOR_NUBS・画素で読んだ）の角が、JLC の公差で最も小さく・最もずれて開いた穴の中。"""
+    h = _locator()
+    r = (h["drill"][0] - JLC_HOLE_MINUS) / 2 - JLC_HOLE_POS
+    far = max(math.hypot(x - h["x"], y - h["y"]) for x0, y0, x1, y1 in mech.CHOC_V2_LOCATOR_NUBS
+              for x in (x0, x1) for y in (y0, y1))
+    assert 0.7 < far and far + 0.1 <= r, (far, r)                 # 0.1 = 画素の読みの幅
+
+
+def test_the_footprint_is_kiswitch_but_the_locating_hole():
     """上流（kiswitch SW_Kailh_Choc_V2・無改変の写し）との差は、名前と位置決め穴の 1 行だけ。"""
     up = UPSTREAM.read_text().splitlines()
     mine = FP.read_text().splitlines()
@@ -148,10 +175,10 @@ def test_the_slot_footprint_is_kiswitch_but_the_locating_hole():
     changed_pads = [(a, b) for a, b in diff if "(pad" in a]
     assert len(changed_pads) == 1
     a, b = changed_pads[0]
-    assert "thru_hole circle (at -5 5.15)" in a and "np_thru_hole oval (at -5 5.15)" in b
+    assert "thru_hole circle (at -5 5.15)" in a and "np_thru_hole circle (at -5 5.15)" in b
 
 
-def test_the_switch_table_uses_the_slot_footprint_and_the_drawings_plate():
+def test_the_switch_table_uses_the_footprint_and_the_drawings_plate():
     sw = SWITCHES["choc_v2"]
     assert set(sw.fp.values()) == {FP.stem}
     assert all(abs(sw.cutout - d["housing"]) <= HOUSING_TOL for d in DRAWINGS.values())
@@ -178,12 +205,14 @@ def _break(tmp_path, monkeypatch, old, new, target="FP", src=None):
     ("(at 5 -3.8)", "(at -5 -3.8)", "test_the_pins_and_centre_match_each_drawing"),        # 鏡映
     ("(size 5.05 5.05) (drill 5.05)", "(size 3.45 3.45) (drill 3.45)",
      "test_the_pins_and_centre_match_each_drawing"),                                      # V1 の中心穴に戻す
-    ("(at -5 5.15) (size 1.6 2)", "(at -5 5.25) (size 1.6 2)",
+    ("(at -5 5.15) (size 2.1 2.1)", "(at -5 5.25) (size 2.1 2.1)",
      "test_the_locating_hole_takes_each_drawings_hole"),                                   # 位置決めを y 0.1
-    ("(at -5 5.15) (size 1.6 2)", "(at -5.1 5.15) (size 1.6 2)",
+    ("(at -5 5.15) (size 2.1 2.1)", "(at -5.1 5.15) (size 2.1 2.1)",
      "test_the_locating_hole_takes_each_drawings_hole"),                                   # 位置決めを x 0.1
-    ("(size 1.6 2) (drill oval 1.6 2)", "(size 1.6 1.6) (drill oval 1.6 1.6)",
-     "test_the_locating_hole_takes_each_drawings_hole"),                                   # 静音を受けない丸穴
+    ("(size 2.1 2.1) (drill 2.1)", "(size 2.0 2.0) (drill 2.0)",
+     "test_the_locating_hole_takes_each_drawings_hole"),                                   # φ2.0（公差 −0.08 で静音の端を割る）
+    ("(size 2.1 2.1) (drill 2.1)", "(size 1.6 1.6) (drill 1.6)",
+     "test_the_locating_hole_takes_each_drawings_hole"),                                   # 標準の φ1.6 だけ
 ])
 def test_the_switch_checker_notices_a_break(tmp_path, monkeypatch, old, new, test):
     import test_choc_v2
@@ -192,6 +221,25 @@ def test_the_switch_checker_notices_a_break(tmp_path, monkeypatch, old, new, tes
     with pytest.raises(AssertionError):
         for name in sorted(DRAWINGS):
             getattr(test_choc_v2, test)(name)
+
+
+def test_the_round_check_notices_the_first_boards_slot(tmp_path, monkeypatch):
+    """1 回目の板の長円 1.6 × 2.0 に戻すと落ちる。"""
+    import test_choc_v2
+
+    _break(tmp_path, monkeypatch, "np_thru_hole circle (at -5 5.15) (size 2.1 2.1) (drill 2.1)",
+           "np_thru_hole oval (at -5 5.15) (size 1.6 2) (drill oval 1.6 2)")
+    with pytest.raises(AssertionError):
+        test_choc_v2.test_the_locating_hole_is_round()
+
+
+def test_the_nub_check_notices_a_small_hole(tmp_path, monkeypatch):
+    """標準の推奨の φ1.6 に JLC の公差を足すと、突起の角（中心から約 0.79）が穴の縁に掛かる。"""
+    import test_choc_v2
+
+    _break(tmp_path, monkeypatch, "(size 2.1 2.1) (drill 2.1)", "(size 1.6 1.6) (drill 1.6)")
+    with pytest.raises(AssertionError):
+        test_choc_v2.test_the_nubs_under_the_switch_fit_the_worst_hole()
 
 
 # ---------------------------------------------------------------------------
