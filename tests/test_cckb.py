@@ -350,7 +350,11 @@ def switch_frame_problems(p, parts, positions):
 
 def test_every_switch_is_framed_by_plate(plate_parts):
     """62 個のスイッチ全部で、開口の周り（スタビのキーは手前・左・右）に板がある。
-    **外形まで抜けて板の無いスイッチを作らない**（V2 のスペース 2 つと左 Shift が一度そうなった・2026-09-25）。"""
+    **外形まで抜けて板の無いスイッチを作らない**（V2 のスペース 2 つと左 Shift が一度そうなった・2026-09-25）。
+
+    **見るのは「周りに板があるか」だけ。**スペースの 2 キーの周りの板は別に刷る枠で、枠はプレートにも基板にも
+    留まらずスイッチに挟まってぶら下がる（スイッチを留めるのは基板のはんだ）。枠がスイッチを保持するかはこの検査では
+    分からない（2026-09-26 の監査 E 重要 4。一枚板にするかは利用者の判断 O15）。"""
     p, _, halves, frames, positions = plate_parts
     parts = list(halves.values()) + [f for _, f in frames]
     assert len(positions) == 62
