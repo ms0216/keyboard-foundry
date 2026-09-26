@@ -119,10 +119,11 @@ CPG1353S01D01-01 / S01D02-01 の長円 2.0 × 1.5・注「この系列のどの�
 
 ### Stab_Kailh_Choc_V2_Screw_2u（Choc V2 用のねじ留めスタビ・自作）
 
-ねじ（長円 3.2 × 3.4）と爪（長円 4.2 × 4.4）の非めっきの穴を左右に。ワイヤは奥（KiCad の −y）。箱の穴は機種が
-Edge.Cuts で抜く（projects/cckb/pcb_extra.py）。値は foundry/mech.py の `CHOC_V2_STAB_HOLES`（販売者が公開した
-**非公式の**図と、サリチル酸さんの `Choc_v2_PCBMountStab_2u` の和。支点の間が 24.0 / 23.8 で食い違うので両方を含む）。
-`tests/test_choc_v2.py` が 2 つの出典の形を含むこと・フットプリントが `CHOC_V2_STAB_HOLES` と同じことを見る。
+ねじ（丸 φ3.0 を +6.2）と爪（丸 φ4.0 を −8.24）の非めっきの穴を支点 ±11.9 に（KiCad の座標。ワイヤは奥の −y）。箱の穴は機種が
+Edge.Cuts で抜く（projects/cckb/pcb_extra.py）。値は foundry/mech.py の `CHOC_V2_STAB_HOLES`（**販売者の足跡
+`Choc_v2_PCBMountStab_2u`〔実物の実測〕が正**、販売者が公開した仕入れ先の図は参照。2026-09-26 に 2 出典の和の長円から替えた。
+決定記録 2026-09-25-choc-v2 §10-9）。穴はきつい側で、機種が穴の周り半径 2.6 に銅を置かない。コートヤードは本体の全長 ＋ 0.25。
+`tests/test_choc_v2.py` が足跡・図の値と、フットプリントが `CHOC_V2_STAB_HOLES` と同じことを見る。
 
 ## xiao.pretty / xiao.3dshapes
 
