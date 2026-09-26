@@ -18,6 +18,8 @@
                  当たらないか（押し切りで擦れる音・引っ掛かり）
   coupon_nut     プレート 1.2 に M2 ナットの六角の穴 4.1 / 4.2 / 4.3（落ちて入り、回らないか）
   coupon_insert  インサートの柱 φ5.2（下穴 2.9 / 3.0 / 3.1）と、ネジを捕まえる膜（穴 1.4 / 1.6 / 1.8）
+
+coupon_switch・coupon_stab・coupon_nut はプレートの小片（PLATE_COUPONS）。プレートを使わない間は刷らない。
 """
 
 from __future__ import annotations
@@ -219,6 +221,11 @@ def insert_coupon(spec, cs=CS):
         part = part - cyl(x, 5.0, web_h - cs.CAPTIVE_WEB_T - 0.01, web_h + 1, hd)
         part = notches(part, j + 1, k * pitch + 1.0, 0.0, base_t, pitch=1.6)
     return part.clean()
+
+
+# **プレートの小片**（プレートの開口・六角の穴を試す物）。プレートを使わない間（spec.PLATE = False）は刷る物から外し、
+# case.export_all が build/cckb/plate_optional/ にプレートと一緒に出す（戻したら刷る）。決定記録 2026-09-26-plateless
+PLATE_COUPONS = ("coupon_switch", "coupon_stab", "coupon_nut")
 
 
 def parts(ifc=None, cs=CS):

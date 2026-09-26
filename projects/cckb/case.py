@@ -323,11 +323,12 @@ def print_pose(name, part):
 
 def export_all(out=None):
     """印刷する全部品を out（既定 build/cckb/）に書く（プレートは foundry.plate、キャップと小片も）。
+    プレートは spec.PLATE が False なら out/plate_optional/ に出す（刷る物の外。作れることを毎回確かめる）。
 
     slice_check は projects/cckb/*.py より古い STL を「古い」として落とすので、**全部を一度に作る**。
     返り値の report の各部品に ok（水密で A1 mini に入る）。NG があれば __main__ は 1 で終わる。
     """
-    from foundry.plate import build_plate, split_plate
+    from foundry.plate import build_plate, split_plate, uses_plate
     from foundry.plate import main as plate_main
     from foundry.project import load
     from foundry.verify import render_outline_2d, to_mesh
@@ -340,28 +341,38 @@ def export_all(out=None):
     out.mkdir(parents=True, exist_ok=True)
     plate_bad = 0
     if out == p.build:
-        plate_bad = plate_main(["cckb"])         # 絵（plate_*.png）も出す
+        # 絵（plate_*.png）も出す。**プレートを使わない（spec.PLATE = False）ときは build/cckb/plate_optional/ に出し、
+        # build/cckb/ の前のプレートを消す**（刷る物の置き場に残すと slice_check が刷る物として拾う）
+        plate_bad = plate_main(["cckb"])
     else:                                        # 前は out を無視して build/ に書いていた（M5）
+        pout = out if uses_plate(p.spec) else out / "plate_optional"
+        pout.mkdir(parents=True, exist_ok=True)
         for piece, keys in p.pieces().items():
             whole, _, _ = build_plate(p.spec, keys, piece)
             for name, part in split_plate(p.spec, whole, piece, keys):
-                mesh, _ = to_mesh(part, out / f"plate_{name}.stl")
-                render_outline_2d(part, out / f"plate_{name}.png", title=f"{p.name} plate {name}")
+                mesh, _ = to_mesh(part, pout / f"plate_{name}.stl")
+                render_outline_2d(part, pout / f"plate_{name}.png", title=f"{p.name} plate {name}")
                 plate_bad += not mesh.is_watertight
     parts = dict(Case().parts())
     parts.update(keycaps.print_parts())
     parts.update(coupons.parts())
+    # プレートを使わないなら、プレートの小片も刷る物の外（plate_optional/）へ。前の STL は消す
+    optional = set() if uses_plate(p.spec) else set(coupons.PLATE_COUPONS)
+    for name in optional:
+        (out / f"{name}.stl").unlink(missing_ok=True)
     report = {}
     for name, part in parts.items():
         posed = print_pose(name, part)
-        mesh, stl = to_mesh(posed, out / f"{name}.stl")
+        dest = out / "plate_optional" if name in optional else out
+        dest.mkdir(parents=True, exist_ok=True)
+        mesh, stl = to_mesh(posed, dest / f"{name}.stl")
         bb = posed.bounding_box()
         report[name] = dict(size=(round(bb.size.X, 2), round(bb.size.Y, 2), round(bb.size.Z, 2)),
                             volume=round(part.volume, 1), watertight=bool(mesh.is_watertight),
                             solids=len(part.solids()))
         ok = mesh.is_watertight and max(bb.size.X, bb.size.Y) <= p.spec.PRINT_MAX
         report[name]["ok"] = bool(ok)
-        print(f"{'OK' if ok else 'NG'} {name:14s} {bb.size.X:7.2f} x {bb.size.Y:6.2f} x {bb.size.Z:5.2f}"
+        print(f"{'OK' if ok else 'NG'} {name:14s}{' （プレートを戻すときだけ）' if name in optional else ''} {bb.size.X:7.2f} x {bb.size.Y:6.2f} x {bb.size.Z:5.2f}"
               f"  体積 {part.volume / 1000:6.2f} cm3  水密={mesh.is_watertight}  立体 {len(part.solids())}")
     if plate_bad:
         report["plates"] = dict(ok=False)

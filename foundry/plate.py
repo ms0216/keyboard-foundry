@@ -268,12 +268,31 @@ def split_plate(spec, part, piece, keys):
     return [(f"{piece}_L", left), (f"{piece}_R", right)]
 
 
+def uses_plate(spec):
+    """機種がプレートを使うか（spec.PLATE。書いていない機種〔HHKB〕は使う）。"""
+    return bool(getattr(spec, "PLATE", True))
+
+
+def plate_dir(p):
+    """プレートの STL・絵の置き場。使わない機種は build/<機種>/plate_optional/（刷る物の置き場の外）。"""
+    return p.build if uses_plate(p.spec) else p.build / "plate_optional"
+
+
 def main(argv):
     from .project import load
     from .verify import render_outline_2d, to_mesh
 
     p = load(argv[0])
-    p.build.mkdir(parents=True, exist_ok=True)
+    out = plate_dir(p)
+    out.mkdir(parents=True, exist_ok=True)
+    if out != p.build:
+        # **プレートを使わない機種（spec.PLATE = False）**: 刷る物の置き場（build/<機種>/*.stl。slice_check が
+        # 全部を「刷る物」として拾う）から前のプレートを消し、別の置き場に出す（置き換えたら古い方を消す）
+        gone = [q for pat in ("plate_*.stl", "plate_*.png") for q in p.build.glob(pat)]
+        for q in gone:
+            q.unlink()
+        print(f"{p.name}: プレートは使わない（spec.PLATE = False）。作れることを確かめるために {out} に出す"
+              f"（build/ から前のプレート {len(gone)} 個を消した）")
     bad = 0
     for piece, keys in p.pieces().items():
         whole, _, _ = build_plate(p.spec, keys, piece)
@@ -281,8 +300,8 @@ def main(argv):
         for name, part in split_plate(p.spec, whole, piece, keys):
             size = part.bounding_box().size
             w, h = size.X, size.Y
-            mesh, stl = to_mesh(part, p.build / f"plate_{name}.stl")
-            png = render_outline_2d(part, p.build / f"plate_{name}.png",
+            mesh, stl = to_mesh(part, out / f"plate_{name}.stl")
+            png = render_outline_2d(part, out / f"plate_{name}.png",
                                     title=f"{p.name} plate {name}  {w:.2f} x {h:.2f} mm")
             # **出力を読んでから報告する。**水密でなければ刷れない
             print(f"{'OK' if mesh.is_watertight else 'NG'} {name:6s} "
@@ -292,8 +311,8 @@ def main(argv):
         frames = plate_frames(p.spec, keys, piece)
         if frames:
             part = frames_for_print(frames)
-            mesh, stl = to_mesh(part, p.build / f"plate_frames_{piece}.stl")
-            png = render_outline_2d(part, p.build / f"plate_frames_{piece}.png",
+            mesh, stl = to_mesh(part, out / f"plate_frames_{piece}.stl")
+            png = render_outline_2d(part, out / f"plate_frames_{piece}.png",
                                     title=f"{p.name} plate frames {piece}  ({', '.join(n for n, _ in frames)})")
             print(f"{'OK' if mesh.is_watertight else 'NG'} 枠 {len(frames)} 個（{', '.join(n for n, _ in frames)}）"
                   f" 水密={mesh.is_watertight}")

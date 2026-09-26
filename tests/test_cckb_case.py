@@ -76,6 +76,24 @@ def g(asm):
     return asm.groups()
 
 
+# **プレートを戻したときの組み立て**（spec.PLATE の逆の形）。プレートは 2026-09-26 に使わないと決めたが
+# （決定記録 2026-09-26-plateless）、戻せるように、干渉・経路・押し切り・留め方を両方の形で毎回見る
+@pytest.fixture(scope="module")
+def asm_other(geo):
+    return A.Assembly(geo, plate=not load("cckb").spec.PLATE)
+
+
+@pytest.fixture(scope="module")
+def g_other(asm_other):
+    return asm_other.groups()
+
+
+@pytest.fixture(scope="module", params=["spec", "other"])
+def both(request, asm, g, asm_other, g_other):
+    """(組み立て, 群) を spec.PLATE の形と、その逆の形の 2 通りで。"""
+    return (asm, g) if request.param == "spec" else (asm_other, g_other)
+
+
 def slim(asm, names, pressed=False):
     """組み立ての一部だけ（壊す検査を速くする）。"""
     out = {}
@@ -85,7 +103,7 @@ def slim(asm, names, pressed=False):
             printed = printed or asm.printed()
             out[n] = printed[n]
         elif n in ("plate_L", "plate_R", "plate_frames"):
-            out[n] = asm.plates()[n]
+            out[n] = asm.plate_parts()[n]
         elif n == "keycaps":
             out[n] = A.Compound(asm.keycap_solids(pressed))
         elif n == "switches":
@@ -122,8 +140,9 @@ def test_every_case_constant_is_read():
 # ---------------------------------------------------------------------------
 
 def all_printed(asm):
+    """刷れる物の全部。**プレート（使わない間も戻せるように）も含める**——大きさと水密は毎回見る。"""
     parts = dict(asm.printed())
-    parts.update(asm.plates())
+    parts.update(asm.plate_parts())
     parts.update(KC.print_parts(asm.i))
     parts.update(coupons.parts(asm.i))
     return parts
@@ -139,6 +158,31 @@ def test_every_printed_part_fits_the_a1_mini(asm, printed_all):
     assert len(sizes) == 19, sorted(sizes)          # トレイ 2・ふた 2・プレート 2＋枠 1・キャップ 4＋並べた 2・小片 6
     bad = {n: v for n, v in sizes.items() if not v[2]}
     assert not bad, bad
+
+
+def test_the_print_set_has_the_plate_only_when_it_is_used(asm, asm_other):
+    """組み立てに入るプレート（plates）は spec.PLATE に従う。プレート無しの形ではプレートの部品が 1 つも無く、
+    ありの形では 3 つ（左右＋スペースの枠）。**プレートの立体そのもの（plate_parts）はどちらの形でも作れる**。"""
+    for a in (asm, asm_other):
+        got = set(a.plates())
+        assert got == (set(A.PLATE_PARTS) if a.plate else set()), (a.plate, got)
+        assert set(a.plate_parts()) == set(A.PLATE_PARTS)
+    assert asm.plate == load("cckb").spec.PLATE and asm_other.plate != asm.plate
+
+
+def test_the_plate_outputs_go_outside_the_print_set_when_unused(printed_all, monkeypatch):
+    """プレートを使わない（spec.PLATE = False）なら、プレートとプレートの小片は build/cckb/plate_optional/ に出る
+    （slice_check が拾う build/cckb/*.stl の外）。True に戻せば build/cckb/ に。PLATE を書いていない機種（HHKB）は使う。"""
+    from foundry.plate import plate_dir, uses_plate
+
+    p = load("cckb")
+    assert set(coupons.PLATE_COUPONS) <= set(printed_all)
+    assert plate_dir(p) == (p.build if p.spec.PLATE else p.build / "plate_optional")
+    monkeypatch.setattr(p.spec, "PLATE", True)
+    assert plate_dir(p) == p.build and uses_plate(p.spec)
+    monkeypatch.setattr(p.spec, "PLATE", False)
+    assert plate_dir(p) == p.build / "plate_optional"
+    assert uses_plate(types.SimpleNamespace())          # PLATE を書いていない機種（HHKB の spec）は使う
 
 
 def test_the_size_check_notices_a_long_tray(geo):
@@ -160,8 +204,10 @@ def test_case_parts_and_keycaps_are_single_watertight_solids(printed_all):
 # 干渉（B-rep の総当たり）
 # ---------------------------------------------------------------------------
 
-def test_every_part_declares_how_it_is_held(g):
-    assert set(g) == set(A.HELD_BY), (set(g) ^ set(A.HELD_BY))
+def test_every_part_declares_how_it_is_held(both):
+    asm, g = both
+    assert set(g) == set(A.held_by(asm)), (set(g) ^ set(A.held_by(asm)))
+    assert set(A.HELD_BY) - set(A.held_by(asm)) == (set() if asm.plate else set(A.PLATE_PARTS))
 
 
 def test_the_switches_on_the_board_sit_under_the_layout_keys(asm, geo):
@@ -217,7 +263,8 @@ def test_the_power_switch_pins_must_be_trimmed(asm, g):
 
 
 @pytest.mark.slow
-def test_nothing_interferes(g):
+def test_nothing_interferes(both):
+    _, g = both
     sl, failed = [], []
     bad = A.interference(g, skip=set(A.EXPECTED) | {("pads", "desk")}, slivers=sl, failures=failed)
     assert bad == {}, bad
@@ -290,8 +337,8 @@ def test_the_designed_overlap_check_notices_a_lost_captive_web(geo):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.slow
-def test_pressed_keycaps_hit_nothing(asm):
-    gp = asm.groups(pressed=True)
+def test_pressed_keycaps_hit_nothing(both):
+    gp = both[0].groups(pressed=True)
     bad = A.interference({"keycaps": gp["keycaps"]}, {k: v for k, v in gp.items() if k != "keycaps"})
     assert bad == {}, bad
 
@@ -305,7 +352,8 @@ def test_the_pressed_check_notices_caps_over_the_wall(geo):
 
 @pytest.mark.slow
 def test_the_pressed_check_notices_a_long_skirt(geo):
-    a = A.Assembly(geo, cs=cs_with(KEYCAP_SKIRT_H=3.5))      # 押し切った下端 6.5 < プレートの上面 7.2
+    # プレートの形で（プレートを戻したときの検査）。プレート無しの形の同じ壊し方は下の検査
+    a = A.Assembly(geo, cs=cs_with(KEYCAP_SKIRT_H=3.5), plate=True)   # 押し切った下端 6.5 < プレートの上面 7.2
     gp = slim(a, ["keycaps", "switches", "plate_L", "plate_R"], pressed=True)
     bad = A.interference({"keycaps": gp["keycaps"]}, {k: v for k, v in gp.items() if k != "keycaps"})
     assert ("keycaps", "plate_L") in bad, bad
@@ -316,14 +364,14 @@ def test_the_pressed_check_notices_a_long_skirt(geo):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.slow
-def test_every_part_can_be_put_in_and_taken_out(asm, g):
-    assert A.path_problems(asm, g) == {}
+def test_every_part_can_be_put_in_and_taken_out(both):
+    assert A.path_problems(*both) == {}
 
 
 @pytest.mark.slow
 @pytest.mark.parametrize("move,cs_over,path", [
     (("U_MCU", 1.5, 0.0), {}, "usb_plug"),                      # 板の XIAO が 1.5 奥 → プラグの樹脂が壁に入り込む
-    (("BT1", 0.0, 2.6), {}, "cell"),                            # 板のホルダが奥 → 電池がプレートの下
+    (("BT1", 0.0, 2.6), {}, "cell"),                            # 板のホルダが奥 → 電池がキャップ（プレートを使うならプレートも）の下
     (None, {"PSW_SLOT_CLEAR": -0.3}, "lid_R"),                  # レバーの穴が狭い（ふたが外れない）
     (None, {"DRIVER_D": 5.0}, "screws"),                        # ドライバーが座ぐりに入らない
 ])
@@ -333,8 +381,8 @@ def test_the_path_check_notices_a_blocked_path(geo, move, cs_over, path):
     assert path in bad, bad
 
 
-def test_the_parts_are_held(asm, g):
-    assert A.retention_problems(asm, g) == []
+def test_the_parts_are_held(both):
+    assert A.retention_problems(*both) == []
 
 
 @pytest.mark.parametrize("over", [{"RIM_ABOVE_PCB": 9.0}, {"SCREW_L": 4}])
@@ -425,7 +473,7 @@ def _thin(asm, parts):
 @pytest.mark.slow
 def test_every_wall_is_thick_enough(asm):
     parts = dict(asm.printed())
-    parts.update(asm.plates())
+    parts.update(asm.plate_parts())          # プレートは使わない間も見る（戻せるように）
     assert _thin(asm, parts) == []
 
 
@@ -450,6 +498,24 @@ def test_the_seam_does_not_cut_a_post(asm, g):
 def test_the_seam_check_notices_a_seam_through_a_post(geo):
     a = A.Assembly(geo, ifc_with(CASE_SEAM=(-19.18, 4.7625)))
     assert A.seam_problems(a, a.case.tray_halves())
+
+
+def test_the_nuts_can_be_held_from_above_without_the_plate(asm):
+    """プレートが無いとナットの回り止めが無い。上からピンセット・ナット回しで押さえられる空きが 9 個ともある
+    （2026-09-26 に測った: 胴まで 3.79〜6.62・つばまで 3.26〜6.09）。"""
+    got = A.nut_access(asm)
+    assert len(got) == 9
+    assert min(b for _, b, _, _ in got) > 3.7 and min(f for _, _, f, _ in got) > 3.2, got
+    assert A.nut_access_problems(asm) == []
+
+
+def test_the_nut_access_check_notices_a_crowded_nut(geo):
+    """**壊して落ちることを示す。**取付 H9（右の端）をスイッチの胴へ 1.5 寄せると、押さえる道具が入らない。"""
+    s = load("cckb").spec
+    mounts = [list(m) for m in s.MOUNTS["main"]]
+    mounts[-1][0] -= 1.5
+    a = A.Assembly(geo, ifc_with(MOUNTS={"main": [tuple(m) for m in mounts]}))
+    assert A.nut_access_problems(a), A.nut_access(a)
 
 
 def test_the_antislip_pads_keep_clear_of_the_screw_seats(asm):

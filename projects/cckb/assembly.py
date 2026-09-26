@@ -3,7 +3,7 @@
 **製品として存在する物を全部置く**（HHKB の教訓: USB が挿さらなかったのは、利用者が挿す
 ケーブルがモデルに入っていなかったから）。入っていない物は検査していない。
 
-  印刷する物: トレイ 2・ふた 2・プレート 2・キーキャップ 62
+  印刷する物: トレイ 2・ふた 2・キーキャップ 62（spec.PLATE が True ならプレート 2＋スペースの枠。いまは使わない）
   基板: **発注する配線済みの板**（pcb/cckb_main.kicad_pcb を KiCad の Python で読む）。外形と
         スタビの逃げ穴は Edge.Cuts、穴はパッドの穴（取付 10・ふたの柱の穴・スイッチの足・ビア入りの
         パッド）。XIAO・電池ホルダ・電源スイッチは**板の上のフットプリントの位置と向き**に、
@@ -229,18 +229,20 @@ HELD_BY = {
     "tray_R": "下からの M2×6 皿 4 本（H6〜H9）で基板の上面のナットへ",
     "lid_L": "下からの M2×6 皿（H3）がトレイ・基板を抜けて、ふたのボスのインサートへ。ボスの下面が基板の上面に締まる",
     "lid_R": "上からの M2×6 皿 1 本（膜で捕まえてあり、外してもふたから落ちない）が、トレイの柱のインサートへ",
+    # プレート（spec.PLATE が True のときだけ組み立てに入る。決定記録 2026-09-26-plateless）
     "plate_L": "スイッチ（はんだ付け）の爪。プレートはスイッチで基板に留まる（D11）",
     "plate_R": "同上",
     "plate_frames": "スペース 2 キーのスイッチの枠（別に刷る）。スイッチの ±x の辺の爪 4 つとつばが挟む（プレートと同じ）",
     "pcb": "取付 10 本（ナット）と、ボス・柱に載る",
-    "switches": "基板にはんだ付け（足 2 本）＋プレートの爪",
+    "switches": "基板にはんだ付け（足 2 本）。中心の突起と位置決めの突起が基板の穴で位置を決める（プレートを戻せばその爪も）",
     "stabs": "基板に裏からねじ 1 本（箱のナット）と爪（基板の穴に掛かる）",
     "bottom_parts": "基板にはんだ付け（JLC の実装）",
     "xiao": "基板の表にはんだ付け（キャステレーション）",
     "holder": "基板の表にはんだ付け",
     "cell": "ホルダの＋のクリップが上から押さえ、右のふたが上を塞ぐ",
     "psw": "基板の表に差し、裏から利用者がはんだ付け（スルーホールの足 3 本）。足は切る（spec.PSW_PIN_TRIM）",
-    "nuts": "下からのネジが締める。回り止めはプレートの六角の穴",
+    "nuts": "下からのネジが締める。回り止めは、プレートが無い（いま）なら締める・緩めるときに上からナット回しかピンセットで押さえる"
+            "（プレートを戻せばその六角の穴）",
     "screws": "ナット（キーの下 9）とインサート（H3）へねじ込み",
     "screw_lid": "柱のインサートへねじ込み。ふたの膜が抜け落ちを止める",
     "inserts": "熱圧入（下穴 INSERT_HOLE_D が外径より小さい）",
@@ -251,6 +253,14 @@ HELD_BY = {
 }
 
 # 設計どおりに重なる組（名前の組 → 理由）。**見ない組には代わりの検査を置く**（下の EXPECTED_CHECKS）
+PLATE_PARTS = ("plate_L", "plate_R", "plate_frames")
+
+
+def held_by(asm):
+    """この組み立てに入る部品の HELD_BY（プレートを使わなければ PLATE_PARTS を除く）。"""
+    return {k: v for k, v in HELD_BY.items() if asm.plate or k not in PLATE_PARTS}
+
+
 EXPECTED = {
     ("inserts", "tray_R"): "熱圧入（下穴は外径より小さい）",
     ("inserts", "lid_L"): "熱圧入（同上）",
@@ -294,9 +304,12 @@ class Assembly:
     **配線済みの板のフットプリント**に置き換えた物（XIAO・ホルダ・電池・電源スイッチ・プラグはこれで置く）。
     """
 
-    def __init__(self, geo, ifc=None, cs=CS):
+    def __init__(self, geo, ifc=None, cs=CS, plate=None):
         self.i = ifc or I.Interface()
         self.s = self.i.s
+        # プレートを置くか。既定は spec.PLATE（いまは False）。True/False を渡すと spec によらずその形で組む
+        # （プレートを戻したときに組み立てが壊れていないことを、使わない間も検査が見るため）
+        self.plate = bool(getattr(self.s, "PLATE", True)) if plate is None else plate
         self.c = cs
         self.z = self.i.z()
         self.case = Case(self.i, cs)
@@ -308,6 +321,13 @@ class Assembly:
         return self.case.parts()
 
     def plates(self):
+        """プレート（左右＋スペースの枠）。**self.plate が False なら空**（組み立てに入れない）。"""
+        if not self.plate:
+            return {}
+        return self.plate_parts()
+
+    def plate_parts(self):
+        """プレートの立体（self.plate によらず作る。戻すときの検査と、プレート無しの検査の比べに使う）。"""
         from foundry.plate import build_plate, plate_frames, split_plate
 
         p = self.i.p
@@ -590,7 +610,7 @@ BOARD_SET = ("pcb", "plate_L", "plate_R", "plate_frames", "switches", "stabs", "
 
 # どうやって入れるか（据わった位置から外への平行移動）。検査は sweep でたどる
 INSERT_PATH = {
-    "board": (0, 0, 30),              # 基板＋プレート＋部品は上から落とす（トレイだけ置いた状態）
+    "board": (0, 0, 30),              # 基板＋部品（＋プレートを使うならプレート）は上から落とす（トレイだけ置いた状態）
     "lid_L": (0, 0, 30),              # H3 を下へ抜いてから真上へ
     "lid_R": (0, 0, 30),              # ネジごと真上へ（ネジはふたに捕まっている）
     "cell": (0, 0, 30),               # 右のふたを外して真上へ（実物は＋のクリップの下から斜めに）
@@ -610,7 +630,7 @@ def path_problems(asm, g):
         if bad:
             out[name] = {b: v for (_, b), v in bad.items()}
 
-    board = [s for k in BOARD_SET for s in solids_of(g[k])]
+    board = [s for k in BOARD_SET if k in g for s in solids_of(g[k])]   # プレートは使うときだけ g にある
     check("board", board, ["tray_L", "tray_R"])
     everything = [k for k in g if k != "desk"]
     rest = lambda *ex: [k for k in everything if k not in ex]  # noqa: E731
@@ -968,6 +988,33 @@ def psw_tip_margin(asm):
     return (rim - hi, rim - tip, rim - lo)
 
 
+# プレートが無いとナットの回り止めが無い（決定記録 2026-09-26-plateless・open-gaps P15）。締める・緩めるときは上から
+# ナット回しかピンセットで押さえる。そのために、ナットの外接円の外に残す平面の空き（スイッチの胴・スタビの箱まで）
+# の下限。ピンセットの先（厚さ約 0.5〜1.0）が入る目安（道具は決めていない。手順書 手順 8）
+NUT_HOLD_CLEAR = 1.0
+
+
+def nut_access(asm):
+    """キーの下のナット 9 個それぞれの、中心から胴（スイッチの開口の角）・つば（SW_FLANGE 角）・スタビの箱までの
+    平面の距離 [(取付, 胴, つば, スタビ)]。つばは基板の上 2.2〜（ナットの上面 1.6 より上）。"""
+    def gap(p, r):
+        return math.hypot(max(r[0] - p[0], 0, p[0] - r[2]), max(r[1] - p[1], 0, p[1] - r[3]))
+    bodies = asm.i.switch_bodies()
+    flanges = [I.rect(x, y, asm.c.SW_FLANGE, asm.c.SW_FLANGE) for x, y in asm.i.positions]
+    stabs = []
+    for h in asm.i.stab_housings():
+        xs, ys = [q[0] for q in h], [q[1] for q in h]
+        stabs.append((min(xs), min(ys), max(xs), max(ys)))
+    return [(m, min(gap(m, r) for r in bodies), min(gap(m, r) for r in flanges), min(gap(m, r) for r in stabs))
+            for m in asm.key_mounts()]
+
+
+def nut_access_problems(asm):
+    """上からナットを押さえる道具が入らない取付（胴・スタビまでが外接円 ＋ NUT_HOLD_CLEAR 未満）。"""
+    need = asm.s.NUT_AF / math.sqrt(3) + NUT_HOLD_CLEAR
+    return [(m, round(b, 2), round(st, 2)) for m, b, _, st in nut_access(asm) if min(b, st) < need]
+
+
 def pad_problems(asm):
     """滑り止めのくぼみとネジの座ぐりの**面の取り合い**（体積では見えない。矩形と円で数える）。"""
     s, c = asm.s, asm.c
@@ -1070,7 +1117,8 @@ def render_all(asm, g, out):
         ("section_stab_across_pressed", ("y", space[0][1]), across,
          "同じ所を押し切った所: 台が箱の上面の口へ入る"),
         ("section_stab_pivot", ("x", pivot_x), (space[0][1] - 14, space[0][1] + 14),
-         "左のスペースのスタビの支点（縦）: ボス・箱・肩・爪・ワイヤ・プレートの羽と枠・止まり穴"),
+         "左のスペースのスタビの支点（縦）: ボス・箱・肩・爪・ワイヤ・止まり穴"
+         + ("・プレートの羽と枠" if asm.plate else "（プレート無し）")),
         ("section_left_corner_usb", ("y", s.XIAO_AT[1]), (-152, -108), "左の角: XIAO・USB-C のメスとプラグ・左のふた（舌）"),
         ("section_left_corner_h3", ("x", mx), (-53, -18), "左の角: H3 のネジ・インサート・ふたのボス"),
         ("section_right_corner_cell", ("y", py), (92, 150), "右の角: 電池・ホルダ・柱・捕まえたネジ"),
@@ -1080,7 +1128,8 @@ def render_all(asm, g, out):
         ("section_seam_front", ("y", -30.3), (front - 20, front + 20), "継ぎ目（手前）"),
         ("section_seam_wall", ("x", (back + front) / 2), (-52, 52), "継ぎ目の段（y=0）を横から"),
         ("section_stab_space", ("y", -38.1), (-65, -25), "スタビのキー（左のスペース）: ハウジング・逃げ穴・床"),
-        ("section_mount_h0", ("y", m0[1]), (m0[0] - 12, m0[0] + 12), "取付 H0: 皿ネジ・ボス・基板・ナット・プレートの六角の穴"),
+        ("section_mount_h0", ("y", m0[1]), (m0[0] - 12, m0[0] + 12), "取付 H0: 皿ネジ・ボス・基板・ナット"
+         + ("・プレートの六角の穴" if asm.plate else "（プレート無し: ナットの回り止めは上から押さえる）")),
         ("section_antislip_island", ("x", pad_x), (18, 52),
          "左奥の滑り止め: 床 1.2・くぼみの所だけ島（上面 1.6）・上下の段のスイッチの足"),
         ("section_antislip_island_front_right", ("y", pad_fr_y), (112, 150),
@@ -1128,15 +1177,21 @@ def export_blend(g, out):
     return blend, png
 
 
-def main():
+def main(plate=None):
+    """plate: None なら spec.PLATE の形。spec と違う形（--plate / --no-plate）で組んだときは、絵を
+    build/cckb/with_plate/（か without_plate/）に出し、Blender の模型は作らない（本番の模型を上書きしない）。"""
     import time
 
     t0 = time.time()
     geo = board_geometry()
-    asm = Assembly(geo)
+    asm = Assembly(geo, plate=plate)
     g = asm.groups()
     out = asm.i.p.build
+    default = asm.plate == bool(getattr(asm.s, "PLATE", True))
+    if not default:
+        out = out / ("with_plate" if asm.plate else "without_plate")
     out.mkdir(parents=True, exist_ok=True)
+    print(f"プレート: {'あり' if asm.plate else '無し'}（spec.PLATE = {getattr(asm.s, 'PLATE', True)}）")
     print(f"組み立て {len(g)} 群・立体 {sum(len(solids_of(v)) for v in g.values())}  ({time.time() - t0:.0f}s)")
     sl, failed = [], []
     bad = interference(g, skip=set(EXPECTED) | {("pads", "desk")}, slivers=sl, failures=failed)
@@ -1153,11 +1208,14 @@ def main():
     ng = bool(bad or failed or paths_bad or overlaps_bad or islands_bad or fit_bad)
     for p in render_all(asm, g, out):
         print("   ", p)
-    b = export_blend(g, out)
-    print("Blender:", *(b or ["無い（BLENDER の場所: foundry/paths.py）"]))
+    if default:
+        b = export_blend(g, out)
+        print("Blender:", *(b or ["無い（BLENDER の場所: foundry/paths.py）"]))
     return asm, g, ng
 
 
 if __name__ == "__main__":
     # NG を print だけにしない（CI・スクリプトから判定できるように。最終レビュー M5）
-    sys.exit(1 if main()[2] else 0)
+    #   --plate / --no-plate: spec.PLATE によらずプレートあり／無しで組む（戻すときの確かめ）
+    flag = True if "--plate" in sys.argv[1:] else (False if "--no-plate" in sys.argv[1:] else None)
+    sys.exit(1 if main(flag)[2] else 0)
