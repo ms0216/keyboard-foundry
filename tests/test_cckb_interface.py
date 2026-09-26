@@ -723,7 +723,8 @@ def floor_pocket_problems(ifc, geo):
             hb = I.poly_box(h)
             if I.rect_gap(b["box"], hb) < 0 and not I.inside(b["box"], hb, 0.3):
                 out.append(f"{b['ref']} の穴が箱 {hb} を 0.3 以上の余裕で含まない")
-    # スタビのねじの頭: 板のスタビ（ST\d+）の小さい方の穴（ねじ）の真下に、頭 φSTAB_SCREW_HEAD_D ＋ 片側 0.3 以上
+    # スタビのねじの頭: 板のスタビ（ST\d+）の小さい方の穴（ねじ）の真下に、頭 φSTAB_SCREW_HEAD_D ＋ 片側
+    # （頭の位置のずれ STAB_HEAD_SHIFT ＋ ずれた後に残す STAB_HEAD_LEFT）以上（2 回目の V2 監査 E-6）
     screws = []
     for ref in sorted({p["ref"] for p in geo["pads"] if re.fullmatch(r"ST\d+", p["ref"])}):
         hs = [p for p in geo["pads"] if p["ref"] == ref]
@@ -734,9 +735,16 @@ def floor_pocket_problems(ifc, geo):
         out.append(f"ねじの穴 {len(screws)} / 頭の止まり穴 {len(heads)}（8）")
     for h in screws:
         if not any(math.hypot(p["pos"][0] - h["x"], p["pos"][1] - h["y"]) < 1e-3
-                   and p["d"] >= ifc.s.STAB_SCREW_HEAD_D + 0.6 - 1e-9 for p in heads):
+                   and p["d"] >= ifc.s.STAB_SCREW_HEAD_D + 2 * (STAB_HEAD_SHIFT + STAB_HEAD_LEFT) - 1e-9 for p in heads):
             out.append(f"{h['ref']} のねじ ({h['x']:.2f}, {h['y']:.2f}) の頭の下に止まり穴が無い（か狭い）")
     return out
+
+
+# スタビのねじの頭の位置のずれ: ねじの穴 φ3.0（公差 +0.13）の中のナットの胴 φ2.78 で ±0.175（決定記録 §10-9）＋
+# 基板のずれ ±0.1（取付の穴 2.2・ネジ 2.0）。ずれた後に残す 0.2 は刷った穴の縮み（監査 E-6 の下限）。
+# **spec の値とは比べず、外の事実から足した数**（前の片側 0.4 の穴〔φ3.7 ＋ 0.8〕に φ3.85 の頭では 0.05 しか残らない）
+STAB_HEAD_SHIFT = 0.175 + 0.1
+STAB_HEAD_LEFT = 0.2
 
 
 def test_the_floor_pockets_sit_under_every_hole_of_the_switches(ifc, geo):
@@ -744,7 +752,7 @@ def test_the_floor_pockets_sit_under_every_hole_of_the_switches(ifc, geo):
 
 
 def test_the_pocket_check_notices_a_tight_pocket(geo):
-    bad = floor_pocket_problems(ifc_with(FLOOR_POCKET_CLEAR=0.1), geo)
+    bad = floor_pocket_problems(ifc_with(FLOOR_POCKET_CLEAR=0.1, STAB_SCREW_POCKET_CLEAR=0.4), geo)
     assert any("突起" in b for b in bad) and any("箱" in b for b in bad) and any("足の穴" in b for b in bad) \
         and any("頭" in b for b in bad), bad
 

@@ -639,6 +639,40 @@ def test_the_stab_grip_refuses_a_boss_that_hits_the_slider():
         KC.stab_grip(load("cckb").spec, cs_with(STAB_SOCKET_BOSS_D=5.3))
 
 
+def stab_coupon_slots(width, spec):
+    """coupon_stem のスタビの板（幅 width）を台の高さの真ん中で切り、台の断面 [(x, 外径, 面積)]。"""
+    from build123d import Face, Plane
+
+    part = coupons.stab_cap_coupon(width, 0, CS, spec)          # 天板がベッド（z ≦ 0）・台が上（z 0〜掴む深さ）
+    sec = part & (Plane.XY.offset(KC.stab_grip(spec) / 2) * Face.make_rect(200, 200))
+    return sorted((round(f.center().X, 2), round(f.bounding_box().size.X, 3), f.area) for f in sec.faces()
+                  if abs(f.center().X) > 5)
+
+
+def test_the_stab_coupon_compares_the_slot_widths_at_the_real_pivot():
+    """coupon_stem のスタビの板は、本番の支点 ±11.9・台 φ5.1 で、十字の穴の幅だけが 1.31 / 1.36 / 1.41（本番の幅を挟む）。
+    **軸が戻らなければまず幅を締める**ための板（2 回目の V2 監査 E-3）。長さは本番の 4.10 のまま（台との端の肉 0.5）。"""
+    spec = load("cckb").spec
+    widths = CS.COUPON_STAB_SLOT_WIDTHS
+    assert CS.STAB_CROSS_SLOT[1] in widths and min(widths) < CS.STAB_CROSS_SLOT[1] < max(widths)
+    assert (CS.STAB_SOCKET_BOSS_D - CS.STAB_CROSS_SLOT[0]) / 2 >= 0.5 - 1e-9
+    L = CS.STAB_CROSS_SLOT[0]
+    for w in widths:
+        faces = stab_coupon_slots(w, spec)
+        assert [x for x, _, _ in faces] == [-11.9, 11.9], faces
+        for _, d, a in faces:
+            assert abs(d - CS.STAB_SOCKET_BOSS_D) < 0.01
+            assert abs(a - (math.pi / 4 * CS.STAB_SOCKET_BOSS_D ** 2 - (2 * L * w - w * w))) < 0.02, (w, a)
+
+
+def test_the_stab_coupon_check_notices_a_slot_of_the_wrong_width():
+    """幅 1.31 と書いた板の穴を 1.41 で開けた物（取り違え）は、面積で見分けられる。"""
+    spec = load("cckb").spec
+    L = CS.STAB_CROSS_SLOT[0]
+    (_, _, a), _ = stab_coupon_slots(1.41, spec)
+    assert abs(a - (math.pi / 4 * CS.STAB_SOCKET_BOSS_D ** 2 - (2 * L * 1.31 - 1.31 ** 2))) > 0.05
+
+
 def test_the_keycap_clears_the_silent_collar(asm):
     """押し切ったとき、天板の下面（つばの窪みの所）が静音のつばの上面より KEYCAP_COLLAR_CLEAR 上に残る。"""
     z = asm.z

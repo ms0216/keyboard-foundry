@@ -993,9 +993,8 @@ def island_problems(asm):
         if re.fullmatch(r"SW\d+|SW_PWR", p["ref"]) or (p["back"] and p["drill"] == 0):
             obs.append((f"{p['ref']} のパッド", p["box"]))
     for f in asm.geo["footprints"]:
-        cy = f["courtyard"].get("back")
-        if cy and not re.fullmatch(r"H\d+", f["ref"]):
-            obs.append((f"{f['ref']} の裏のコートヤード", cy))
+        if not re.fullmatch(r"H\d+", f["ref"]):
+            obs += [(f"{f['ref']} の裏のコートヤード", cy) for cy in I.courtyard_parts(f, "back")]
     for k, h in enumerate(asm.i.stab_housings()):
         xs, ys = [q[0] for q in h], [q[1] for q in h]
         obs.append((f"スタビ {k}", (min(xs), min(ys), max(xs), max(ys))))
@@ -1057,9 +1056,19 @@ def render_all(asm, g, out):
     key = next(pos for pos, k in zip(asm.i.positions, asm.i.keys) if k.w_u == 1.0 and abs(pos[1] - 19.05) < 0.1)
     space = next((pos, k) for pos, k in zip(asm.i.positions, asm.i.keys) if k.w_u == 2.25 and pos[1] < -30)
     pivot_x = space[0][0] - asm.i.sw.stab_offset_for(2.25)
+    # 押し切った状態（キャップ・スイッチ・スタビだけ作り直す）。「押す」の付く絵はこれを切る
+    gp = dict(g, switches=Compound(asm.switch_solids(True)), stabs=Compound(asm.stab_solids(True)),
+              keycaps=Compound(asm.keycap_solids(True)))
+    across = (space[0][0] - 17, space[0][0] + 17)
     shots = [
         ("section_keycap_socket", ("y", key[1]), (key[0] - 11, key[0] + 11),
          "キャップの受け口（y = キーの中心）: 筒・十字・静音のつば・天板の窪み・止まり穴"),
+        ("section_keycap_socket_pressed", ("y", key[1]), (key[0] - 11, key[0] + 11),
+         "キャップの受け口を押し切った所（y = キーの中心）: 天板の窪みと静音のつば"),
+        ("section_stab_across", ("y", space[0][1]), across,
+         "左のスペースのスタビを横に（y = キーの中心）: 両端の軸・キャップの台と十字の穴・箱・ねじ・止まり穴"),
+        ("section_stab_across_pressed", ("y", space[0][1]), across,
+         "同じ所を押し切った所: 台が箱の上面の口へ入る"),
         ("section_stab_pivot", ("x", pivot_x), (space[0][1] - 14, space[0][1] + 14),
          "左のスペースのスタビの支点（縦）: ボス・箱・肩・爪・ワイヤ・プレートの羽と枠・止まり穴"),
         ("section_left_corner_usb", ("y", s.XIAO_AT[1]), (-152, -108), "左の角: XIAO・USB-C のメスとプラグ・左のふた（舌）"),
@@ -1079,7 +1088,7 @@ def render_all(asm, g, out):
     ]
     paths_ = []
     for name, plane, span, title in shots:
-        sec = {k: v for k, v in g.items() if k != "desk"}
+        sec = {k: v for k, v in (gp if name.endswith("_pressed") else g).items() if k != "desk"}
         paths_.append(section_png(sec, out / f"{name}.png", plane, (span[0], span[1], *zs), title))
     lift = {"tray_L": 0, "tray_R": 0, "pads": -10, "screws": -22, "pcb": 22, "bottom_parts": 22,
             "psw": 22, "xiao": 22, "holder": 22, "cell": 50, "switches": 36, "stabs": 36, "nuts": 36,

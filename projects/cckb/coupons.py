@@ -9,8 +9,8 @@
                  （スタビはプレートに掛からない。基板に留めたスタビの本体・ワイヤが開口に触れないかを見る）
   coupon_stem    キャップの受け口（十字の筒）。1 段目: 十字の穴の幅 1.35〜1.50（列・手前の切り欠き 1〜4 本）×
                  長さ 4.10〜4.20（行・左の切り欠き 1〜3 本）の格子 12 本。2 段目: 筒の外径 5.3 / 5.4 / 5.5 の小さな
-                 天板 3 枚（切り欠き 1〜3 本。こじって外し、腕の先が割れないか）と、スタビの受け口の板 2 枚
-                 （支点の間 24.0 = 切り欠き 1 本・23.8 = 2 本。届いたスタビの軸に同時に挿さる方。本番は 23.8）
+                 天板 3 枚（切り欠き 1〜3 本。こじって外し、腕の先が割れないか）と、スタビの受け口の板 3 枚
+                 （支点 23.8・十字の穴の幅 1.31 / 1.36 / 1.41 = 切り欠き 1〜3 本。本番は 1.36。軸が戻らなければ締めた方）
   coupon_stab_return  **スタビの軸がキャップと一緒に戻るか**（2026-09-26・監査 E 重要 1）。基板の代わりの板（厚さ
                  spec.PCB_T・本番の基板と同じ穴の位置。刷った穴は COUPON_BOARD_HOLE_CLEAR だけ広げる）と、本番の
                  2.25u のキャップ 1 個。板にスタビをねじで留め、スイッチを挿し、キャップを挿して押し切って離す。
@@ -127,8 +127,9 @@ def stem_coupon(od, idx, cs=CS, spec=None):
     return Rot(180, 0, 0) * part.clean()
 
 
-def stab_cap_coupon(pivot, idx, cs=CS, spec=None):
-    """スタビの受け口 2 つ（±pivot）とスイッチの筒を 1 枚の天板に（2.25u のキャップの中央の帯）。"""
+def stab_cap_coupon(width, idx, cs=CS, spec=None, pivot=CHOC_V2.stab_offset[2.25]):
+    """スタビの受け口 2 つ（±pivot。本番の支点）とスイッチの筒を 1 枚の天板に（2.25u のキャップの中央の帯）。
+    スタビの十字の穴は長さ STAB_CROSS_SLOT[0]・幅 width（本番の幅と、締めた・緩めた物を比べる）。"""
     import keycaps
 
     t = spec.KEYCAP_TOP_T
@@ -136,7 +137,7 @@ def stab_cap_coupon(pivot, idx, cs=CS, spec=None):
     xs = (-pivot, pivot)
     part = fuse([box(-w / 2, -d / 2, 0, w / 2, d / 2, t), keycaps.switch_socket(cs)]
                 + keycaps.stab_bosses(xs, spec, cs))
-    part = part - fuse(keycaps.socket_holes(spec, cs, stab_xs=xs))
+    part = part - fuse(keycaps.socket_holes(spec, cs, stab_xs=xs, stab_slot=(cs.STAB_CROSS_SLOT[0], width)))
     part = notches(part, idx + 1, -w / 2 + 1.5, -d / 2, t)
     return Rot(180, 0, 0) * part.clean()
 
@@ -231,7 +232,7 @@ def parts(ifc=None, cs=CS):
                             for i, k in enumerate(cs.COUPON_STAB_KERFS)], cs.COUPON_GAP),
         "coupon_stem": stack([row([stem_grid(cs, s)], cs.COUPON_GAP),
                               row([stem_coupon(od, i, cs, s) for i, od in enumerate(cs.COUPON_TUBE_ODS)]
-                                  + [stab_cap_coupon(pv, i, cs, s) for i, pv in enumerate(cs.COUPON_STAB_PIVOTS)],
+                                  + [stab_cap_coupon(sw, i, cs, s) for i, sw in enumerate(cs.COUPON_STAB_SLOT_WIDTHS)],
                                   cs.COUPON_GAP)], cs.COUPON_GAP),
         "coupon_stab_return": stab_return_coupon(ifc, cs),
         "coupon_nut": nut_coupon(cs, ifc.sw),

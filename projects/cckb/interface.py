@@ -302,7 +302,8 @@ class Interface:
           pin       端子の足（基板の穴 φ1.2 の中を通る。穴の径で包む）×2
           locator   位置決めの穴 φ2.1 の下（穴の中に来る下面の突起を穴の径で包む。2026-09-26 に長穴 1.6 × 2.0 から）
           stab_box  スタビの箱（stab_housings）
-          stab_screw  スタビのねじの頭 φSTAB_SCREW_HEAD_D（ねじの穴の真下。基板の下面から STAB_SCREW_HEAD_H 出る。
+          stab_screw  スタビのねじの頭 φSTAB_SCREW_HEAD_D ＋ 片側 STAB_SCREW_POCKET_CLEAR（頭の位置のずれ ±0.275 の後に 0.2 残す。
+                    2 回目の V2 監査 E-6）（ねじの穴の真下。基板の下面から STAB_SCREW_HEAD_H 出る。
                     2026-09-26 に足した: 監査 E 重要 2 で頭が 1.15 でなく 1.5 と分かり、床との隙が 0.3 しかない）
         足の穴は 2026-09-26 に足した: 足の先（最悪 基板 1.44・足 3.2）が床の上面から 0.04 しか離れず、
         V1 で決めた余裕 0.1 を割っていた（決定記録 2026-09-25-choc-v2 §10-5 の V5）。
@@ -321,7 +322,7 @@ class Interface:
         for n, poly in enumerate(self.stab_housings()):
             out.append(dict(kind="stab_box", ref=f"STAB{n}", box=grow(poly_box(poly), c)))
         for n, (kind, pos, _) in enumerate(h for h in self.stab_holes() if h[0] == "screw"):
-            out.append(dict(kind="stab_screw", ref=f"STAB{n}", pos=pos, d=s.STAB_SCREW_HEAD_D + 2 * c))
+            out.append(dict(kind="stab_screw", ref=f"STAB{n}", pos=pos, d=s.STAB_SCREW_HEAD_D + 2 * s.STAB_SCREW_POCKET_CLEAR))
         return out
 
     def matrix_positions(self):
@@ -644,7 +645,7 @@ def mount_problems(ifc, geo, p, corner_ok=False, cache=None):
         cy = fp["courtyard"]
         if "front" in cy and circle_rect_gap(p, HOLE_CRTYD_R, cy["front"]) < 0:
             out.append(f"表のコートヤード {fp['ref']}")
-        if "back" in cy and circle_rect_gap(p, r_boss, cy["back"]) < 0:
+        if "back" in cy and any(circle_rect_gap(p, r_boss, b) < 0 for b in courtyard_parts(fp, "back")):
             out.append(f"裏のコートヤード {fp['ref']}")
     # 5. 配線の通り道
     keep = r_hole + COPPER_GAP + TRACK_HALF
@@ -660,6 +661,13 @@ def mount_problems(ifc, geo, p, corner_ok=False, cache=None):
     if any(abs(p[1] - yb) < keep + BAND_HALF for yb in band_ys(ifc)):
         out.append("段の境目の帯")
     return out
+
+
+def courtyard_parts(fp, side):
+    """フットプリントのコートヤード（side = "front" | "back"）の、閉じた形ごとの外接矩形の一覧
+    （board_geometry の <side>_parts。1 つの形なら全体の外接矩形 1 つ）。"""
+    cy = fp["courtyard"]
+    return cy.get(side + "_parts") or ([cy[side]] if side in cy else [])
 
 
 def support_problems(ifc, geo, p):
@@ -682,7 +690,7 @@ def support_problems(ifc, geo, p):
             out.append(f"{pad['ref']} のパッド")
     for fp in geo["footprints"]:
         if "back" in fp["courtyard"] and not re.fullmatch(r"H\d+", fp["ref"]) \
-                and circle_rect_gap(p, r, fp["courtyard"]["back"]) < 0:
+                and any(circle_rect_gap(p, r, b) < 0 for b in courtyard_parts(fp, "back")):
             out.append(f"裏のコートヤード {fp['ref']}")
     for poly in ifc.stab_reliefs():
         if circle_poly_gap(p, r, poly) < COPPER_GAP:
