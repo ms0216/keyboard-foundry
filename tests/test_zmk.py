@@ -70,3 +70,18 @@ def test_scaffold_never_overwrites_what_the_user_edited(shields):
     km.write_text(km.read_text() + "\n// 利用者が直した\n")
     made, _ = zmk.scaffold(p)
     assert made == [] and "利用者が直した" in km.read_text()
+
+
+def test_a_row_on_the_xiao_i2c_pins_needs_the_i2c_turned_off():
+    """D4・D5 は XIAO の既定で有効な i2c1 のピン。行に使うなら overlay で &xiao_i2c を切る（CCKB の監査 A 軽微 1）。
+    壊して落ちることも: 切る行を消した写しで見つける。本物の overlay は通る。"""
+    from foundry.paths import ROOT
+
+    real = (ROOT / "config/boards/shields/cckb/cckb.overlay").read_text(encoding="utf-8")
+    assert check_zmk_config.xiao_pin_conflicts(real) == []
+    broken = real.replace('&xiao_i2c {\n\tstatus = "disabled";\n};', "")
+    assert broken != real
+    assert check_zmk_config.xiao_pin_conflicts(broken) == [("xiao_i2c", 4), ("xiao_i2c", 5)]
+    # コメントの中の &xiao_i2c は数えない
+    assert check_zmk_config.xiao_pin_conflicts(
+        "/* &xiao_i2c { status = \"disabled\"; }; */ row-gpios = <&xiao_d 4 0>;") == [("xiao_i2c", 4)]
