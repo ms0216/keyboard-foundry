@@ -224,7 +224,16 @@ class Case:
         holes = [self.screw_seat(x, y, z["screw_head"]) for x, y in i.mounts()]
         top = self.pillar_top()
         holes.append(cyl(px, py, top - c.INSERT_L - c.INSERT_HOLE_EXTRA, top + 1, c.INSERT_HOLE_D))
+        holes += self.floor_pockets()
         return (body - fuse(holes)).clean()
+
+    def floor_pockets(self):
+        """床の内側の止まり穴（interface.floor_pockets。**削る側の立体**）。外の底面は平らのまま
+        （穴の底 pocket_floor の下に床が残る）。柱・ボス・島と重ならないことは tests/test_cckb_case.py が見る。"""
+        z = self.z
+        z0, z1 = z["pocket_floor"], z["floor_top"] + 0.01
+        return [cyl(p["pos"][0], p["pos"][1], z0, z1, p["d"]) if "d" in p else rbox(p["box"], z0, z1)
+                for p in self.i.floor_pockets()]
 
     def tray_halves(self, tray=None):
         tray = tray or self.tray()

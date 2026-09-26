@@ -175,7 +175,10 @@ class Interface:
             plate_bottom=plate_top - self.sw.plate_t, plate_top=plate_top,
             switch_top=top + s.SWITCH_TOP_ABOVE_PCB, stem_top=top + s.SWITCH_STEM_ABOVE_PCB,
             keycap_top=top + s.SWITCH_STEM_ABOVE_PCB + s.KEYCAP_TOP_T,
-            keycap_bottomed=top + s.SWITCH_TOP_ABOVE_PCB + s.KEYCAP_TOP_T,
+            # 押し切ったキャップの上面: 静音の全行程の最大（SWITCH_TRAVEL ＋ TOL）だけ沈む。キャップはつばの上で
+            # 窪ませてあり、つば・ハウジングには当たらない（keycaps.py・tests/test_cckb_case.py）
+            keycap_bottomed=top + s.SWITCH_STEM_ABOVE_PCB + s.KEYCAP_TOP_T - s.SWITCH_TRAVEL - s.SWITCH_TRAVEL_TOL,
+            collar_top=top + s.SWITCH_COLLAR_ABOVE_PCB,
             rim=rim, lid_bottom=rim - s.LID_T,
             pin_tip=top - s.SWITCH_PIN_L,
             # V2 の中心の突起・スタビの箱・爪の下端（名目）と、ねじの頭の下端。床の止まり穴の底
@@ -259,17 +262,53 @@ class Interface:
         box = (min(dxs) - w / 2, -d / 2, max(dxs) + w / 2, d / 2)
         return [self._pivot_rect(px, py, sd, box) for px, py, sd in self.stab_pivots()]
 
+    def switch_holes(self):
+        """スイッチの足跡（lib/keyswitch.pretty の mech の fp。**板に置いた物と同じファイル**）の穴を、
+        キーマップ順の各スイッチの位置に置いた物（CAD）。[(ref, kind, (x, y), (X 幅, Y 幅))]。
+
+        kind: "stud"（中心の非めっき φ5.05）・"pin"（端子 φ1.2 ×2）・"locator"（位置決めの長穴 1.6 × 2.0）。
+        KiCad の足跡は Y 下向きなので y を反転する（スイッチは回さずに置く。tests/test_cckb_interface.py が
+        発注する板の穴と突き合わせる）。
+        """
+        import re
+        fp = ROOT / "lib" / "keyswitch.pretty" / f"{self.sw.footprint(1.0)}.kicad_mod"
+        pads = []
+        for m in re.finditer(r"\(pad \S+ (thru_hole|np_thru_hole) (circle|oval) \(at ([-\d.]+) ([-\d.]+)\)"
+                             r" \(size [-\d.]+ [-\d.]+\) \(drill (?:oval )?([-\d.]+)(?: ([-\d.]+))?\)",
+                             fp.read_text()):
+            plated, shape, x, y, dx, dy = m.groups()
+            w, h = float(dx), float(dy or dx)
+            kind = "pin" if plated == "thru_hole" else ("stud" if w > 3 else "locator")
+            pads.append((kind, float(x), -float(y), w, h))
+        kinds = sorted(k for k, *_ in pads)
+        if kinds != ["locator", "pin", "pin", "stud"]:
+            raise RuntimeError(f"{fp.name}: 穴の種類 {kinds}（中心・端子 2・位置決め 1 のはず）")
+        return [(f"SW{i}", kind, (x + dx, y + dy), (w, h))
+                for i, (x, y) in enumerate(self.matrix_positions(), start=1)
+                for kind, dx, dy, w, h in pads]
+
     def floor_pockets(self):
         """床の内側（上面）に掘る止まり穴（spec.FLOOR_POCKET_DEPTH 深さ）。**ケースの段はここから読む。**
 
-        [dict(kind, ref, pos, d)（丸・中心の突起）| dict(kind, ref, box)（矩形・スタビの箱）]。
-        丸は各スイッチの中心（= 基板の中心穴 φ5.05。tests/test_cckb_pcb.py が板の穴と突き合わせる）に
-        突起 φSWITCH_STUD_D ＋ 片側 FLOOR_POCKET_CLEAR。矩形は stab_housings ＋ FLOOR_POCKET_CLEAR。
+        [dict(kind, ref, pos, d)（丸）| dict(kind, ref, box)（矩形）]。どれも物の外形 ＋ 片側 FLOOR_POCKET_CLEAR。
+          stud      各スイッチの中心の突起 φSWITCH_STUD_D（基板の中心穴 φ5.05 の中）
+          pin       端子の足（基板の穴 φ1.2 の中を通る。穴の径で包む）×2
+          locator   位置決めの足（長穴 1.6 × 2.0 の中。長穴の形で包む）
+          stab_box  スタビの箱（stab_housings）
+        足の穴は 2026-09-26 に足した: 足の先（最悪 基板 1.44・足 3.2）が床の上面から 0.04 しか離れず、
+        V1 で決めた余裕 0.1 を割っていた（決定記録 2026-09-25-choc-v2 §10-5 の V5）。
+        tests/test_cckb_interface.py が発注する板の穴（母数 62 × 4）と突き合わせる。
         """
         s = self.s
         c = s.FLOOR_POCKET_CLEAR
-        out = [dict(kind="stud", ref=f"SW{i}", pos=pos, d=s.SWITCH_STUD_D + 2 * c)
-               for i, pos in enumerate(self.matrix_positions(), start=1)]
+        out = []
+        for ref, kind, (x, y), (w, h) in self.switch_holes():
+            if kind == "stud":
+                out.append(dict(kind="stud", ref=ref, pos=(x, y), d=s.SWITCH_STUD_D + 2 * c))
+            elif kind == "pin":
+                out.append(dict(kind="pin", ref=ref, pos=(x, y), d=w + 2 * c))
+            else:
+                out.append(dict(kind="locator", ref=ref, box=grow(rect(x, y, w, h), c)))
         for n, poly in enumerate(self.stab_housings()):
             out.append(dict(kind="stab_box", ref=f"STAB{n}", box=grow(poly_box(poly), c)))
         return out
@@ -639,7 +678,17 @@ def support_problems(ifc, geo, p):
     for m in ifc.mounts():
         if math.hypot(p[0] - m[0], p[1] - m[1]) < r + ifc.s.MOUNT_BOSS_D / 2 + COPPER_GAP:
             out.append("取付のボス")
+    # 床の止まり穴（interface.floor_pockets）が柱の根元を削らない。肉 POCKET_WALL（線 1 本）
+    for pk in ifc.floor_pockets():
+        g = (math.hypot(p[0] - pk["pos"][0], p[1] - pk["pos"][1]) - r - pk["d"] / 2) if "d" in pk \
+            else circle_rect_gap(p, r, pk["box"])
+        if g < POCKET_WALL:
+            out.append(f"{pk['ref']} の床の穴（{pk['kind']}）")
     return out
+
+
+# 床の止まり穴と、床から立つ柱・ボス・島の間に残す肉（線 1 本・0.4 ノズル）
+POCKET_WALL = 0.4
 
 
 # ---------------------------------------------------------------------------

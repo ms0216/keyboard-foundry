@@ -289,8 +289,10 @@ def z_problems(ifc):
     # 基板の下へ出る物の最悪（基板が −10%・長さは公差の上限）。**床の止まり穴の上の物は穴の底と比べる**
     thin = z["pcb_bottom"] + s.PCB_T * (1 - s.PCB_T_TOL)           # 最悪の基板の上面
     worst_tip = thin - (s.SWITCH_PIN_L + s.SWITCH_PIN_TOL)
-    if worst_tip < s.CASE_FLOOR + 0.1:
-        out.append(f"足の先（最悪 {worst_tip:.2f}）が床 {s.CASE_FLOOR} に 0.1 未満")
+    # 足（端子 2・位置決め 1）の下にも止まり穴がある（2026-09-26。穴が板の足の穴の下にあることは
+    # test_the_floor_pockets_sit_under_every_hole_of_the_switches が見る）
+    if worst_tip < z["pocket_floor"] + 0.1:
+        out.append(f"足の先（最悪 {worst_tip:.2f}）が床の穴の底 {z['pocket_floor']:.2f} に 0.1 未満")
     stud = thin - (s.SWITCH_STUD_L + s.SWITCH_STUD_TOL)
     if stud < z["pocket_floor"] + 0.1:
         out.append(f"中心の突起（最悪 {stud:.2f}）が床の穴の底 {z['pocket_floor']:.2f} に 0.1 未満")
@@ -334,7 +336,7 @@ def test_the_z_stack_holds(ifc):
 
 
 @pytest.mark.parametrize("over, expect", [
-    (dict(UNDER_PCB=1.5), "足の先"),
+    (dict(UNDER_PCB=1.4), "足の先"),
     (dict(BOTTOM_PART_H=1.7), "裏の部品の包絡"),
     (dict(PSW_PIN_TRIM=1.7), "電源スイッチの切った足"),
     (dict(STAB_BOX_L=3.6), "スタビの箱"),
@@ -358,20 +360,35 @@ def test_the_z_check_notices_a_break(over, expect):
     assert any(expect in b for b in bad), bad
 
 
+def stiffness_margins(ifc):
+    """基板が下へたわんだとき、裏に出る物の先と、その下の床（止まり穴の底・床の上面）の最悪の隙 {物: 隙}。"""
+    s, z = ifc.s, ifc.z()
+    thin = z["pcb_bottom"] + s.PCB_T * (1 - s.PCB_T_TOL)
+    return {"足": thin - (s.SWITCH_PIN_L + s.SWITCH_PIN_TOL) - z["pocket_floor"],
+            "中心の突起": thin - (s.SWITCH_STUD_L + s.SWITCH_STUD_TOL) - z["pocket_floor"],
+            "スタビの箱": thin - s.STAB_BOX_L - z["pocket_floor"],
+            "裏の部品": z["pcb_bottom"] - s.BOTTOM_PART_H - s.CASE_FLOOR}
+
+
 def test_the_pcb_thickness_is_stiff_enough(ifc):
     """O3。キーの中心から最寄りの支え（柱・取付）までの最大距離 d で、両端支持の梁
-    （幅 1u・スパン 2d）に中央 10N（手のひら）をかけたたわみ。足の先の最悪の余裕
-    （0.14）より小さいこと。FR4 の曲げ弾性率は保守側 18.6GPa。"""
+    （幅 1u・スパン 2d）に中央 10N（手のひら）をかけたたわみ。裏に出る物の最悪の余裕
+    （V2 では中心の突起と止まり穴の底の 0.24）より小さいこと。FR4 の曲げ弾性率は保守側 18.6GPa。"""
     s = ifc.s
     sup = list(s.SUPPORTS) + ifc.mounts()
     d = max(min(math.hypot(x - a, y - b) for a, b in sup) for x, y in ifc.positions)
     L, b, E, F = 2 * d, 19.05, 18600.0, 10.0
     defl = lambda t: F * L ** 3 / (48 * E * b * t ** 3 / 12)
-    z = ifc.z()
-    margin = z["pcb_bottom"] + s.PCB_T * (1 - s.PCB_T_TOL) - (s.SWITCH_PIN_L + s.SWITCH_PIN_TOL) \
-        - s.CASE_FLOOR
-    print(f"d={d:.1f} L={L:.1f} 1.6: {defl(1.6):.3f} 1.2: {defl(1.2):.3f} 余裕 {margin:.2f}")
+    m = stiffness_margins(ifc)
+    margin = min(m.values())
+    print(f"d={d:.1f} L={L:.1f} 1.6: {defl(1.6):.3f} 1.2: {defl(1.2):.3f} 余裕 {m}")
     assert s.PCB_T == 1.6 and defl(s.PCB_T) < margin
+
+
+def test_the_stiffness_check_notices_a_shallow_pocket():
+    """止まり穴を 0.2 に浅くすると、中心の突起の余裕が 0.04 になり、たわみ 0.136 に負ける。"""
+    m = stiffness_margins(ifc_with(FLOOR_POCKET_DEPTH=0.2))
+    assert min(m.values()) < 0.136
 
 
 # ---------------------------------------------------------------------------
@@ -653,11 +670,34 @@ def test_the_relief_check_notices_the_old_diode_place(ifc, geo):
 
 def floor_pocket_problems(ifc, geo):
     """床の止まり穴（interface.floor_pockets・ケースの段が読む）が、**発注する板の実物**の
-    スイッチの中心穴（非めっき φ5.05・母数 62）とスタビの箱の穴（Edge.Cuts・4 キー × 2）に揃っているか。"""
+    スイッチの中心穴（非めっき φ5.05・母数 62）・端子の穴（φ1.2・62 × 2）・位置決めの長穴（62）と
+    スタビの箱の穴（Edge.Cuts・4 キー × 2）に揃っているか。"""
     out = []
     pk = ifc.floor_pockets()
     studs = [p for p in pk if p["kind"] == "stud"]
     boxes = [p for p in pk if p["kind"] == "stab_box"]
+    # 端子と位置決め: 板の穴ごとに、同じスイッチの穴で、中心が同じ・穴の外形 ＋ 片側 0.3 以上を含む物があるか
+    feet = [p for p in geo["pads"] if re.fullmatch(r"SW\d+", p["ref"]) and p["drill"] > 0
+            and not (p["npth"] and p.get("round"))]
+    if len(feet) != 62 * 3:
+        out.append(f"板の足の穴 {len(feet)}（62 × 3 のはず）")
+    for h in feet:
+        cx, cy = h["x"], h["y"]
+        need = I.grow((cx - (h["box"][2] - h["box"][0]) / 2, cy - (h["box"][3] - h["box"][1]) / 2,
+                       cx + (h["box"][2] - h["box"][0]) / 2, cy + (h["box"][3] - h["box"][1]) / 2), 0.3) \
+            if h["npth"] else I.rect(cx, cy, h["drill"] + 0.6, h["drill"] + 0.6)
+        ok = False
+        for p in pk:
+            if p["ref"] != h["ref"] or p["kind"] not in ("pin", "locator"):
+                continue
+            if "d" in p and math.hypot(p["pos"][0] - cx, p["pos"][1] - cy) < 1e-3:
+                ok = p["d"] >= h["drill"] + 0.6 - 1e-9
+            elif "box" in p and I.inside(p["box"], need):
+                ok = True
+            if ok:
+                break
+        if not ok:
+            out.append(f"{h['ref']} の足の穴 ({cx:.2f}, {cy:.2f}) の下に止まり穴が無い（か狭い）")
     holes = {p["ref"]: p for p in geo["pads"] if re.fullmatch(r"SW\d+", p["ref"]) and p["npth"]
              and p.get("round") and abs(p["drill"] - 5.05) < 1e-6}
     if len(studs) != 62 or len(holes) != 62:
@@ -679,13 +719,22 @@ def floor_pocket_problems(ifc, geo):
     return out
 
 
-def test_the_floor_pockets_sit_under_the_studs_and_the_stab_boxes(ifc, geo):
+def test_the_floor_pockets_sit_under_every_hole_of_the_switches(ifc, geo):
     assert floor_pocket_problems(ifc, geo) == []
 
 
 def test_the_pocket_check_notices_a_tight_pocket(geo):
     bad = floor_pocket_problems(ifc_with(FLOOR_POCKET_CLEAR=0.1), geo)
-    assert any("突起" in b for b in bad) and any("箱" in b for b in bad), bad
+    assert any("突起" in b for b in bad) and any("箱" in b for b in bad) and any("足の穴" in b for b in bad), bad
+
+
+def test_the_pocket_check_notices_pins_without_pockets(ifc, geo):
+    """足の止まり穴を外す（前の形）と、62 × 3 の足の穴が全部見つかる。"""
+    i2 = ifc_with()
+    base = i2.floor_pockets
+    i2.floor_pockets = lambda: [p for p in base() if p["kind"] not in ("pin", "locator")]
+    bad = [b for b in floor_pocket_problems(i2, geo) if "足の穴" in b]
+    assert len(bad) == 62 * 3, len(bad)
 
 
 def test_the_pocket_check_notices_a_moved_switch(ifc, geo):

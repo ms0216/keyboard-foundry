@@ -1,12 +1,14 @@
 """CCKB のキーキャップ（無刻印・自分で刷る・D14）。**寸法は持たない**（spec / case_spec / mech）。
 
-形: 平らな天板（KEYCAP_TOP_T）＋まわりのスカート＋Choc V1 のステムに挿す脚 2 本。
-2.25u は Choc スタビの軸（mech の支点の半間隔 ±12.0）にも脚 2 本ずつ。
+形: 平らな天板（KEYCAP_TOP_T）＋まわりのスカート＋ **Choc V2 静音の十字に挿す筒**（2026-09-26 に V1 の脚 2 本から）。
+2.25u はスタビ（遊舎工房 A050001-01-1）の軸の受け口も（支点の半間隔 mech の ±12.0）。
 
   - 平面: キーの幅 × 1u から、四周 KEYCAP_GAP ずつ引く（1u は 18.0 角）
-  - 高さ: 天板の下面 = ステムの上面（interface.z()["stem_top"]）。上面 = keycap_top（13.8。2026-09-24 に床を 1.2 にして 14.2 から）
-  - 脚: Kailh CPG135001D01-16 の穴 1.20 × 3.00・中心間 5.70（case_spec）から STEM_POST_FIT 細く
-  - 刷る向き: 天板をベッドに（上下を返す）。脚とスカートが上に立ち、サポート無し
+  - 高さ: 天板の下面 = ステムの上面（interface.z()["stem_top"]）。上面 = keycap_top（14.4）
+  - 筒: 外径 STEM_TUBE_OD・長さ STEM_TUBE_L・十字の穴 STEM_CROSS_SLOT（静音の窪み φ5.70 の中に入る）
+  - つばの窪み: 天板の下面を輪（KEYCAP_COLLAR_RELIEF）に彫り、押し切りで静音のつば（5.70）に当たらない
+  - スタビの受け口: 天板の下の台（高さ = 押し切りで箱の上面に当たらない高さ）に十字の穴。穴は天板の中まで
+  - 刷る向き: 天板をベッドに（上下を返す）。筒・台・スカートが上に立ち、サポート無し
 
 局所座標: 原点 = キーの中心・天板の下面（z=0）。上が +Z。
 """
@@ -23,33 +25,73 @@ if str(HERE) not in sys.path:
 from build123d import Axis, chamfer  # noqa: E402
 
 import case_spec as CS  # noqa: E402
-from case import box, fuse  # noqa: E402
+from case import box, cyl, fuse  # noqa: E402
 from foundry.layout import UNIT  # noqa: E402
+from foundry.mech import CHOC_V2_STAB_SOURCES  # noqa: E402
 
 # 刷る種類（幅 u → 名前）。数は配列から数える（print_counts）
 NAMES = {1.0: "keycap_1u", 1.5: "keycap_1u5", 1.75: "keycap_1u75", 2.25: "keycap_2u25"}
 
 
-def stem_xs(w_u, sw):
-    """脚を立てる x（キーの中心から）。スタビのキーは支点にも。"""
-    s = sw.stab_offset_for(w_u)
-    return (0.0,) if s is None else (-s, 0.0, s)
+def travel_max(spec):
+    """押し切りでキャップが沈む最大（静音の全行程 2.8 ＋ 0.25）。"""
+    return spec.SWITCH_TRAVEL + spec.SWITCH_TRAVEL_TOL
 
 
-def posts(xs, fit, cs=CS, z_top=0.0):
-    """脚（ステムの穴 2 つに入る角柱）を xs の各位置に。"""
-    sx, sy = cs.STEM_SLOT
-    px, py = (sx - fit) / 2, (sy - fit) / 2
-    out = []
-    for x in xs:
-        for d in (-cs.STEM_PITCH / 2, cs.STEM_PITCH / 2):
-            out.append(box(x + d - px, -py, z_top - cs.STEM_POST_L, x + d + px, py, z_top + 0.01))
+def collar_relief_depth(spec, cs=CS):
+    """天板の下面のつばの窪みの深さ: 押し切ったとき天板の下面がつばの上面より KEYCAP_COLLAR_CLEAR 上に残る。"""
+    return max(0.0, travel_max(spec) - (spec.SWITCH_STEM_ABOVE_PCB - spec.SWITCH_COLLAR_ABOVE_PCB)
+               + cs.KEYCAP_COLLAR_CLEAR)
+
+
+def stab_pad_h(spec, cs=CS):
+    """スタビの受け口の台の高さ（天板の下面から下へ）: 押し切ったとき台の下端がスタビの箱の上面より
+    KEYCAP_COLLAR_CLEAR 上に残る。"""
+    d = CHOC_V2_STAB_SOURCES["drawing"]
+    return d["stem_top"] - d["box_top"] - travel_max(spec) - cs.KEYCAP_COLLAR_CLEAR
+
+
+def cross(x, z0, z1, size):
+    """十字（長さ × 幅、2 方向）の角柱 2 本（x はキーの中心から）。"""
+    ln, w = size
+    return [box(x - ln / 2, -w / 2, z0, x + ln / 2, w / 2, z1), box(x - w / 2, -ln / 2, z0, x + w / 2, ln / 2, z1)]
+
+
+def switch_socket(cs=CS, od=None, slot=None, length=None):
+    """スイッチの十字に挿す筒（削る十字の穴は socket_holes）。"""
+    od = cs.STEM_TUBE_OD if od is None else od
+    length = cs.STEM_TUBE_L if length is None else length
+    return cyl(0.0, 0.0, -length, 0.01, od)
+
+
+def socket_holes(spec, cs=CS, slot=None, length=None, stab_xs=(), stab_slot=None):
+    """削る側: スイッチの十字の穴（筒の下端から天板の下面まで）・つばの窪み・スタビの十字の穴（台の下端から天板の中まで）。"""
+    slot = cs.STEM_CROSS_SLOT if slot is None else slot
+    stab_slot = cs.STAB_CROSS_SLOT if stab_slot is None else stab_slot
+    length = cs.STEM_TUBE_L if length is None else length
+    out = cross(0.0, -length - 1.0, 0.0, slot)
+    d = collar_relief_depth(spec, cs)
+    if d > 0:
+        r0, r1 = cs.KEYCAP_COLLAR_RELIEF
+        out.append(cyl(0, 0, -1.0, d, r1) - cyl(0, 0, -2.0, d + 1.0, r0))
+    top = spec.KEYCAP_TOP_T - cs.STAB_SOCKET_TOP_KEEP
+    for x in stab_xs:
+        out += cross(x, -stab_pad_h(spec, cs) - 1.0, top, stab_slot)
     return out
 
 
-def keycap(w_u, spec, sw, cs=CS, fit=None):
+def stab_pads(xs, spec, cs=CS):
+    return [cyl(x, 0.0, -stab_pad_h(spec, cs), 0.01, cs.STAB_SOCKET_PAD_D) for x in xs]
+
+
+def stab_xs(w_u, sw):
+    """スタビの受け口の x（キーの中心から）。スタビの無い幅は空。"""
+    s = sw.stab_offset_for(w_u)
+    return () if s is None else (-s, s)
+
+
+def keycap(w_u, spec, sw, cs=CS):
     """1 個のキーキャップ（局所座標）。"""
-    fit = cs.STEM_POST_FIT if fit is None else fit
     g = spec.KEYCAP_GAP
     w, d = w_u * UNIT - 2 * g, UNIT - 2 * g
     t = spec.KEYCAP_TOP_T
@@ -58,7 +100,9 @@ def keycap(w_u, spec, sw, cs=CS, fit=None):
     k = cs.KEYCAP_SKIRT_T
     skirt = box(-w / 2, -d / 2, -cs.KEYCAP_SKIRT_H, w / 2, d / 2, 0.01) \
         - box(-w / 2 + k, -d / 2 + k, -cs.KEYCAP_SKIRT_H - 1, w / 2 - k, d / 2 - k, 1)
-    return fuse([top, skirt] + posts(stem_xs(w_u, sw), fit, cs)).clean()
+    xs = stab_xs(w_u, sw)
+    body = fuse([top, skirt, switch_socket(cs)] + stab_pads(xs, spec, cs))
+    return (body - fuse(socket_holes(spec, cs, stab_xs=xs))).clean()
 
 
 def print_counts(keys):

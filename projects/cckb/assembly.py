@@ -46,6 +46,7 @@ import keycaps as KC  # noqa: E402
 from case import Case, box, cone, cyl, fuse, hex_prism, prism, rbox  # noqa: E402
 from foundry import paths  # noqa: E402
 from foundry.layout import UNIT  # noqa: E402
+from foundry.mech import CHOC_V2_STAB_SOURCES  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -230,9 +231,10 @@ HELD_BY = {
     "lid_R": "上からの M2×6 皿 1 本（膜で捕まえてあり、外してもふたから落ちない）が、トレイの柱のインサートへ",
     "plate_L": "スイッチ（はんだ付け）の爪。プレートはスイッチで基板に留まる（D11）",
     "plate_R": "同上",
+    "plate_frames": "スペース 2 キーのスイッチの枠（別に刷る）。スイッチの ±x の辺の爪 4 つとつばが挟む（プレートと同じ）",
     "pcb": "取付 10 本（ナット）と、ボス・柱に載る",
     "switches": "基板にはんだ付け（足 2 本）＋プレートの爪",
-    "stabs": "プレートの開口に爪で",
+    "stabs": "基板に裏からねじ 1 本（箱のナット）と爪（基板の穴に掛かる）",
     "bottom_parts": "基板にはんだ付け（JLC の実装）",
     "xiao": "基板の表にはんだ付け（キャステレーション）",
     "holder": "基板の表にはんだ付け",
@@ -306,7 +308,7 @@ class Assembly:
         return self.case.parts()
 
     def plates(self):
-        from foundry.plate import build_plate, split_plate
+        from foundry.plate import build_plate, plate_frames, split_plate
 
         p = self.i.p
         keys = p.pieces()["main"]
@@ -314,10 +316,13 @@ class Assembly:
         out = {}
         for name, part in split_plate(self.s, whole, "main", keys):
             out["plate_" + name.split("_")[-1]] = Pos(0, 0, self.z["plate_bottom"]) * part
+        frames = plate_frames(self.s, keys, "main")
+        if frames:
+            out["plate_frames"] = Compound([Pos(0, 0, self.z["plate_bottom"]) * f for _, f in frames])
         return out
 
     def keycap_solids(self, pressed=False):
-        z0 = self.z["switch_top" if pressed else "stem_top"]
+        z0 = self.z["stem_top"] - (self.travel() if pressed else 0.0)
         out = []
         cache = {}
         for (x, y), k in zip(self.i.positions, self.i.keys):
@@ -340,49 +345,92 @@ class Assembly:
         assert len(o["holes"]) == len(self.i.stab_pivots()), len(o["holes"])   # スタビの逃げ穴 8 だけ
         return slab - fuse(holes)
 
-    def switch_solids(self, pressed=False):
-        """スイッチ（図面の外形）。足・突起は**基板の穴の位置から**（穴より 0.2 細い）。
+    def travel(self):
+        """押し切りの沈み（静音の全行程の最大 2.8 ＋ 0.25）。キャップ・ステム・スタビの軸が一緒に沈む。"""
+        return KC.travel_max(self.s)
 
-        ハウジングの上面にはステムの入る穴（ステムの外形 × ストローク 3.0）を開けておく。
-        押し切るとステムはその中へ沈み、キャップの脚もステムの穴ごと沈む。
+    def switch_solids(self, pressed=False):
+        """スイッチ（静音の V2 の図面の外形・包絡）。足・突起は**基板の穴の位置から**。
+
+        胴（開口 13.95 角・プレートの上面まで）＋つば 15.0 角＋上の胴（ハウジングの上面 5.30 まで）＋静音のつば
+        φSWITCH_COLLAR_D（5.70 まで）。ステム φ6.50 の中に窪み φ5.70（底 SW_RECESS_FLOOR）と十字 4.00 × 1.30。
+        押し切るとステムは travel だけ沈む（胴にはその分の穴）。
+        足: 中心の突起 φ4.80・端子（穴 φ1.2 より 0.2 細い）・位置決め（長穴 1.6 より 0.2 細い）。長さは公差の上限と
+        **基板の厚さの公差（薄い側）**を足す: 板は下面でボスに載るので、薄い板では足の先がその分下がる。
         """
         s, c, z = self.s, self.c, self.z
         cut = self.i.sw.cutout
-        travel = z["stem_top"] - z["switch_top"]
+        travel = self.travel()
         fps = {f["ref"]: f for f in self.geo["footprints"] if re.fullmatch(r"SW\d+", f["ref"])}
         pads = {}
         for p in self.geo["pads"]:
             if re.fullmatch(r"SW\d+", p["ref"]) and p["drill"] > 0:
                 pads.setdefault(p["ref"], []).append(p)
         out = []
-        sx, sy = c.SW_STEM_BLOCK
-        slot_x, slot_y = c.STEM_SLOT
         dz = -travel if pressed else 0.0
+        thin = s.PCB_T_TOL_ABS
         for ref, f in sorted(fps.items()):
             x, y = f["x"], f["y"]
             h = cut / 2
             f2 = c.SW_FLANGE / 2
             housing = fuse([box(x - h, y - h, z["pcb_top"], x + h, y + h, z["plate_top"]),
                             box(x - f2, y - f2, z["plate_top"], x + f2, y + f2, z["plate_top"] + c.SW_FLANGE_T),
-                            box(x - h, y - h, z["plate_top"] + c.SW_FLANGE_T, x + h, y + h, z["switch_top"])])
-            housing = housing - box(x - sx / 2, y - sy / 2, z["switch_top"] - travel,
-                                    x + sx / 2, y + sy / 2, z["switch_top"] + 1)
+                            box(x - h, y - h, z["plate_top"] + c.SW_FLANGE_T, x + h, y + h, z["switch_top"]),
+                            cyl(x, y, z["switch_top"] - 0.01, z["collar_top"], s.SWITCH_COLLAR_D)])
+            housing = housing - cyl(x, y, z["switch_top"] - travel - 0.1, z["collar_top"] + 1, c.SW_STEM_D + 0.1)
             parts = [housing]
-            stem = box(x - sx / 2, y - sy / 2, z["switch_top"] + dz, x + sx / 2, y + sy / 2, z["stem_top"] + dz)
-            for d in (-c.STEM_PITCH / 2, c.STEM_PITCH / 2):
-                stem = stem - box(x + d - slot_x / 2, y - slot_y / 2, z["switch_top"] + dz,
-                                  x + d + slot_x / 2, y + slot_y / 2, z["stem_top"] + dz + 1)
+            recess_floor = z["pcb_top"] + c.SW_RECESS_FLOOR
+            stem = cyl(x, y, z["switch_top"] + dz, z["stem_top"] + dz, c.SW_STEM_D) \
+                - cyl(x, y, recess_floor + dz, z["stem_top"] + dz + 1, c.SW_RECESS_D)
+            stem = fuse([stem] + [Pos(x, y, 0) * q for q in KC.cross(0.0, recess_floor + dz - 0.01,
+                                                                    z["stem_top"] + dz, c.STEM_CROSS)])
             parts.append(stem)
             for p in pads[ref]:
-                length = c.SW_POST_BELOW if p["npth"] else s.SWITCH_PIN_L + s.SWITCH_PIN_TOL
-                parts.append(cyl(p["x"], p["y"], z["pcb_top"] - length, z["pcb_top"] + 0.01,
-                                 p["drill"] - 0.2))
+                if p["npth"] and p.get("round"):
+                    length, d = s.SWITCH_STUD_L + s.SWITCH_STUD_TOL, s.SWITCH_STUD_D
+                else:
+                    length, d = s.SWITCH_PIN_L + s.SWITCH_PIN_TOL, p["drill"] - 0.2
+                parts.append(cyl(p["x"], p["y"], z["pcb_top"] - length - thin, z["pcb_top"] + 0.01, d))
             out.append(fuse(parts))
         return out
 
-    def stab_solids(self):
-        z = self.z
-        return [prism(poly, z["stab_bottom"], z["plate_top"]) for poly in self.i.stab_housings()]
+    def stab_solids(self, pressed=False):
+        """スタビ（遊舎工房 A050001-01-1・非公式の図 mech.CHOC_V2_STAB_SOURCES["drawing"]）を支点ごとに。
+
+        支点（キーの中心 ± stab_offset 12.0）から、基板の上面を高さ 0 として（y はキーの中心から・ワイヤ = 奥 = +y）:
+          ねじのボス   y −8.50〜−3.65（丸い端 r 2.90）・幅 5.80・高さ 2.85
+          箱           y ±3.65・幅 5.80・下 −3.30（基板の穴を通る。薄い板の分 0.16 さらに下）〜上 5.00
+          肩           y 3.65〜7.90・幅 5.80・高さ STAB_SHOULDER_H（縮尺で読んだ）
+          爪           φ3.50 を y 8.50 に・下 −2.65〜上 STAB_CLAW_TOP
+          ねじの頭     φ2.78 を y −6.20 に・基板の下面から 1.15
+          軸           十字 3.95 × 1.26・箱の上面から 8.60（押し切ると travel 沈む）
+        ワイヤ φ1.20 はキーごとに左右の爪の間を y 8.50・高さ STAB_WIRE_Z（角の包絡）。
+        """
+        s, c, z = self.s, self.c, self.z
+        d = CHOC_V2_STAB_SOURCES["drawing"]
+        T = z["pcb_top"]
+        w2 = d["part"][0] / 2
+        half = d["part"][1] / 2
+        front = d["length"] - (d["claw"][0] + d["ring"] / 2)            # 8.50
+        dz = -self.travel() if pressed else 0.0
+        out = []
+        piv = self.i.stab_pivots()
+        for px, py, _ in piv:
+            thin = s.PCB_T_TOL_ABS          # 薄い板では下へ出る物の先がその分下がる（switch_solids と同じ）
+            parts = [box(px - w2, py - half, T - s.STAB_BOX_L - thin, px + w2, py + half, T + d["box_top"]),
+                     box(px - w2, py - front + w2, T, px + w2, py - half + 0.01, T + d["boss_top"]),
+                     cyl(px, py - front + w2, T, T + d["boss_top"], 2 * w2),
+                     box(px - w2, py + half - 0.01, T, px + w2, py + d["claw"][0] - 0.6, T + c.STAB_SHOULDER_H),
+                     cyl(px, py + d["claw"][0], T - s.STAB_CLAW_L - thin, T + c.STAB_CLAW_TOP, d["ring"]),
+                     cyl(px, py + d["screw"][0], z["pcb_bottom"] - s.STAB_SCREW_HEAD_H, z["pcb_bottom"] + 0.01, 2.78)]
+            parts += [Pos(px, py, 0) * q for q in KC.cross(0.0, T + d["box_top"] - 0.01,
+                                                          T + d["stem_top"] + dz, d["slider"])]
+            out.append(fuse(parts))
+        for (xl, yl, _), (xr, _, _) in zip(piv[0::2], piv[1::2]):
+            r = d["wire"] / 2
+            out.append(box(xl, yl + d["claw"][0] - r, T + c.STAB_WIRE_Z - r, xr, yl + d["claw"][0] + r,
+                           T + c.STAB_WIRE_Z + r))
+        return out
 
     def bottom_refs(self):
         """裏に付く部品（板で**裏返したフットプリント**）のうち、図面の形で別に置かない物。
@@ -510,7 +558,7 @@ class Assembly:
         g.update(self.plates())
         g["pcb"] = self.pcb()
         g["switches"] = Compound(self.switch_solids(pressed))
-        g["stabs"] = Compound(self.stab_solids())
+        g["stabs"] = Compound(self.stab_solids(pressed))
         g["bottom_parts"] = Compound(self.bottom_parts())
         g["xiao"] = self.xiao()
         g["holder"] = self.holder()
@@ -528,7 +576,7 @@ class Assembly:
 
 
 # 基板と一緒に上から落とす物（はんだ付け・ナットを置いた状態。キャップはまだ）
-BOARD_SET = ("pcb", "plate_L", "plate_R", "switches", "stabs", "bottom_parts", "xiao", "holder",
+BOARD_SET = ("pcb", "plate_L", "plate_R", "plate_frames", "switches", "stabs", "bottom_parts", "xiao", "holder",
              "cell", "psw", "nuts")
 
 # どうやって入れるか（据わった位置から外への平行移動）。検査は sweep でたどる
@@ -591,7 +639,7 @@ def expected_overlaps_ok(asm, g):
 # ---------------------------------------------------------------------------
 
 COLORS = {"tray_L": "#9fb6d4", "tray_R": "#88a6cc", "lid_L": "#f0b27a", "lid_R": "#eb984e",
-          "plate_L": "#bbbbbb", "plate_R": "#a9a9a9", "pcb": "#27ae60", "switches": "#555555",
+          "plate_L": "#bbbbbb", "plate_R": "#a9a9a9", "plate_frames": "#7fb3d5", "pcb": "#27ae60", "switches": "#555555",
           "stabs": "#8e44ad", "bottom_parts": "#1e8449", "xiao": "#2c3e50", "holder": "#7f8c8d",
           "cell": "#d4ac0d", "psw": "#c0392b", "nuts": "#34495e", "screws": "#17202a",
           "screw_lid": "#17202a", "inserts": "#b7950b", "keycaps": "#f4f6f7", "pads": "#e74c3c",
@@ -766,15 +814,17 @@ def measure_probes(asm, meshes):
 
 
 def keycap_probes(asm):
-    """キーキャップ（1u・局所座標）の肉: 天板・スカート・脚。"""
+    """キーキャップ（1u・局所座標）の肉: 天板・スカート・筒の腕の先（十字の穴の腕の先と筒の外の間）・つばの窪みの上の天板。"""
     c, s = asm.c, asm.s
     m = mesh_of(KC.keycap(1.0, s, asm.i.sw, c))
     d = UNIT / 2 - s.KEYCAP_GAP
-    px = c.STEM_PITCH / 2
-    res = [("キャップの天板", material_runs(m, (3.3, 3.3, 10), (0, 0, -1)), s.KEYCAP_TOP_T),
+    r0, r1 = c.KEYCAP_COLLAR_RELIEF
+    res = [("キャップの天板", material_runs(m, (3.6, 5.5, 10), (0, 0, -1)), s.KEYCAP_TOP_T),
            ("キャップのスカート", material_runs(m, (d + 3, 0.3, -0.5), (-1, 0, 0)), c.KEYCAP_SKIRT_T),
-           ("キャップの脚（幅）", material_runs(m, (px + 3, 0.0, -1.0), (-1, 0, 0)),
-            c.STEM_SLOT[0] - max(c.STEM_FIT_STEPS))]
+           # 腕の先の肉は 0.675（0.4 ノズル 2 本より薄い）。下限は「0.4 未満は無い」（case-and-print.md）。刷れるかは coupon_stem
+           ("キャップの筒の腕の先", material_runs(m, (5.0, 0.0, -1.5), (-1, 0, 0)), 0.4),
+           ("つばの窪みの上の天板", material_runs(m, ((r0 + r1) / 4, 0.3, 10), (0, 0, -1)),
+            s.KEYCAP_TOP_T - KC.collar_relief_depth(s, c))]
     return [(n, "keycap_1u", r[0][1] - r[0][0] if r else 0.0, need, "") for n, r, need in res]
 
 
@@ -810,8 +860,14 @@ def z_scan_skips(asm, name):
     (px, py), _ = asm.i.lid_pillar()
     r = c.SCREW_HEAD_D / 2 + c.SEAT_CLEAR + 0.2
     m = asm.case.psw_mark().bounding_box()
+    # 床の止まり穴（わざと 0.8。下限は z_problems の「床の穴の底の肉 0.8」と test_the_floor_under_the_pockets_is_0_8）
+    pockets = []
+    for p in asm.i.floor_pockets():
+        b = I.rect(*p["pos"], p["d"], p["d"]) if "d" in p else p["box"]
+        pockets.append(I.grow(b, 0.05))
     return {"lid_R": [(px - r, py - r, px + r, py + r),                   # 捕まえる膜
-                      (m.min.X - 0.2, m.min.Y - 0.2, m.max.X + 0.2, m.max.Y + 0.2)]    # 入の刻印
+                      (m.min.X - 0.2, m.min.Y - 0.2, m.max.X + 0.2, m.max.Y + 0.2)],   # 入の刻印
+            "tray_L": pockets, "tray_R": pockets,
             }.get(name, [])
 
 
@@ -945,6 +1001,39 @@ def island_problems(asm):
     return bad
 
 
+# 床の止まり穴と、床から立つ柱・ボス・島の間に残す肉（interface.POCKET_WALL・線 1 本）。
+# 穴が柱の根元を削らない・島の中に空洞を作らない
+POCKET_WALL = I.POCKET_WALL
+
+
+def pocket_problems(asm):
+    """床の止まり穴（case.floor_pockets の元の interface.floor_pockets）と、床から立つ物（取付のボス・支えの柱・
+    右のふたの柱）・滑り止めの島の平面の隙が POCKET_WALL 未満の組。[(穴, 相手, 隙)]。"""
+    s = asm.s
+    posts = [(f"ボス {m}", m, s.MOUNT_BOSS_D / 2) for m in asm.i.mounts()]
+    posts += [(f"支え {p}", p, s.SUPPORT_D / 2) for p in s.SUPPORTS]
+    posts.append(("ふたの柱", s.LID_PILLAR_AT, s.LID_PILLAR_D / 2))
+    bad = []
+    for p in asm.i.floor_pockets():
+        name = f"{p['ref']} の {p['kind']}"
+        if "d" in p:
+            r = p["d"] / 2
+            b = (p["pos"][0] - r, p["pos"][1] - r, p["pos"][0] + r, p["pos"][1] + r)
+            gap_c = lambda c, rr: math.hypot(p["pos"][0] - c[0], p["pos"][1] - c[1]) - r - rr  # noqa: E731
+        else:
+            b = p["box"]
+            gap_c = lambda c, rr: I.circle_rect_gap(c, rr, b)  # noqa: E731
+        for pname, c, rr in posts:
+            g = gap_c(c, rr)
+            if g < POCKET_WALL:
+                bad.append((name, pname, round(g, 3)))
+        for k, isl in enumerate(asm.case.antislip_islands()):
+            g = I.rect_gap(b, isl)
+            if g < POCKET_WALL:
+                bad.append((name, f"島 {k}", round(g, 3)))
+    return bad
+
+
 def render_all(asm, g, out):
     """断面と分解図を out/ に書く。返り値は書いた絵のパス。"""
     s, z = asm.s, asm.z
@@ -978,7 +1067,7 @@ def render_all(asm, g, out):
         paths_.append(section_png(sec, out / f"{name}.png", plane, (span[0], span[1], *zs), title))
     lift = {"tray_L": 0, "tray_R": 0, "pads": -10, "screws": -22, "pcb": 22, "bottom_parts": 22,
             "psw": 22, "xiao": 22, "holder": 22, "cell": 50, "switches": 36, "stabs": 36, "nuts": 36,
-            "plate_L": 36, "plate_R": 36, "inserts": 70, "lid_L": 70, "lid_R": 70, "screw_lid": 86,
+            "plate_L": 36, "plate_R": 36, "plate_frames": 36, "inserts": 70, "lid_L": 70, "lid_R": 70, "screw_lid": 86,
             "keycaps": 56, "usb_plug": 22}
     ex = {k: mesh_of(v) for k, v in g.items() if k in lift}
     paths_.append(exploded_png(ex, out / "assembly_exploded.png", lift))
