@@ -642,7 +642,7 @@ COLORS = {"tray_L": "#9fb6d4", "tray_R": "#88a6cc", "lid_L": "#f0b27a", "lid_R":
           "plate_L": "#bbbbbb", "plate_R": "#a9a9a9", "plate_frames": "#7fb3d5", "pcb": "#27ae60", "switches": "#555555",
           "stabs": "#8e44ad", "bottom_parts": "#1e8449", "xiao": "#2c3e50", "holder": "#7f8c8d",
           "cell": "#d4ac0d", "psw": "#c0392b", "nuts": "#34495e", "screws": "#17202a",
-          "screw_lid": "#17202a", "inserts": "#b7950b", "keycaps": "#f4f6f7", "pads": "#e74c3c",
+          "screw_lid": "#17202a", "inserts": "#b7950b", "keycaps": "#aed6f1", "pads": "#e74c3c",
           "usb_plug": "#5d6d7e", "desk": "#eeeeee"}
 
 
@@ -1045,7 +1045,14 @@ def render_all(asm, g, out):
     pad_x = (pads[0][0] + pads[0][2]) / 2
     pad_fr_y = (pads[3][1] + pads[3][3]) / 2
     zs = (-1.5, 16.0)
+    key = next(pos for pos, k in zip(asm.i.positions, asm.i.keys) if k.w_u == 1.0 and abs(pos[1] - 19.05) < 0.1)
+    space = next((pos, k) for pos, k in zip(asm.i.positions, asm.i.keys) if k.w_u == 2.25 and pos[1] < -30)
+    pivot_x = space[0][0] - asm.i.sw.stab_offset_for(2.25)
     shots = [
+        ("section_keycap_socket", ("y", key[1]), (key[0] - 11, key[0] + 11),
+         "キャップの受け口（y = キーの中心）: 筒・十字・静音のつば・天板の窪み・止まり穴"),
+        ("section_stab_pivot", ("x", pivot_x), (space[0][1] - 14, space[0][1] + 14),
+         "左のスペースのスタビの支点（縦）: ボス・箱・肩・爪・ワイヤ・プレートの羽と枠・止まり穴"),
         ("section_left_corner_usb", ("y", s.XIAO_AT[1]), (-152, -108), "左の角: XIAO・USB-C のメスとプラグ・左のふた（舌）"),
         ("section_left_corner_h3", ("x", mx), (-53, -18), "左の角: H3 のネジ・インサート・ふたのボス"),
         ("section_right_corner_cell", ("y", py), (92, 150), "右の角: 電池・ホルダ・柱・捕まえたネジ"),
