@@ -136,7 +136,7 @@ def printed_all(asm):
 
 def test_every_printed_part_fits_the_a1_mini(asm, printed_all):
     sizes = A.print_sizes(printed_all, LIMIT)
-    assert len(sizes) == 18, sorted(sizes)          # トレイ 2・ふた 2・プレート 2＋枠 1・キャップ 4＋並べた 2・小片 5
+    assert len(sizes) == 19, sorted(sizes)          # トレイ 2・ふた 2・プレート 2＋枠 1・キャップ 4＋並べた 2・小片 6
     bad = {n: v for n, v in sizes.items() if not v[2]}
     assert not bad, bad
 
@@ -583,7 +583,8 @@ def test_the_floor_under_the_pockets_is_0_8(asm):
 
 def test_the_keycap_socket_follows_the_silent_v2_drawing(asm):
     """キャップの筒（z = −1.5 で切る）: 外径 STEM_TUBE_OD（静音の窪み φ5.70 より 0.2 細い）で、中に十字の穴
-    STEM_CROSS_SLOT（図の十字 4.00 × 1.30 より広い）。2.25u は ±12.0 にスタビの受け口の台（押し切りで箱に当たらない高さ）。"""
+    STEM_CROSS_SLOT（図の十字 4.00 × 1.30 より広い）。2.25u は ±11.9（販売者の足跡の支点）にスタビの受け口の細い台
+    （φ STAB_SOCKET_BOSS_D・高さ STAB_SOCKET_GRIP）があり、その中に十字の穴が台の下端から天板の中まで通る。"""
     from build123d import Face, Plane
 
     cap = KC.keycap(2.25, asm.s, asm.i.sw, asm.c)
@@ -598,12 +599,44 @@ def test_the_keycap_socket_follows_the_silent_v2_drawing(asm):
     slot_area = 2 * CS.STEM_CROSS_SLOT[0] * CS.STEM_CROSS_SLOT[1] - CS.STEM_CROSS_SLOT[1] ** 2
     assert abs(tube[0].area - (math.pi / 4 * CS.STEM_TUBE_OD ** 2 - slot_area)) < 0.05
     assert all(a > b for a, b in zip(CS.STEM_CROSS_SLOT, CS.STEM_CROSS))
-    # スタビの台: 押し切り（3.05）で台の下端が箱の上面（5.00）より上
-    h = KC.stab_pad_h(asm.s)
-    assert 0.3 < h and 8.60 - h - KC.travel_max(asm.s) >= 5.00 + 0.1 - 1e-9
-    sec2 = cap & (Plane.XY.offset(-h / 2) * Face.make_rect(100, 100))
-    xs = sorted(round(f.center().X, 2) for f in sec2.faces() if abs(f.center().Y) < 1 and abs(f.center().X) > 5)
-    assert xs == [-12.0, 12.0], xs
+    # スタビの台: 掴む深さ 1.5 以上（前は 0.45・監査 E 重要 1）。台の下端とスライダーの胴の上面は押しても離れたまま
+    h = KC.stab_grip(asm.s)
+    assert h >= 1.5 and 8.60 - h >= 5.00 + CS.KEYCAP_COLLAR_CLEAR - 1e-9
+    stab_slot_area = 2 * CS.STAB_CROSS_SLOT[0] * CS.STAB_CROSS_SLOT[1] - CS.STAB_CROSS_SLOT[1] ** 2
+    for z in (-0.2, -h / 2, -h + 0.2):                  # 台の上・中・下で、台の中に十字の穴が通っている
+        sec2 = cap & (Plane.XY.offset(z) * Face.make_rect(100, 100))
+        bosses = [f for f in sec2.faces() if abs(f.center().Y) < 1 and abs(f.center().X) > 5
+                  and f.bounding_box().size.X < 6]
+        assert sorted(round(f.center().X, 2) for f in bosses) == [-11.9, 11.9], (z, bosses)
+        for f in bosses:
+            assert abs(f.bounding_box().size.X - CS.STAB_SOCKET_BOSS_D) < 0.01
+            assert abs(f.area - (math.pi / 4 * CS.STAB_SOCKET_BOSS_D ** 2 - stab_slot_area)) < 0.05, (z, f.area)
+
+
+def test_the_stab_boss_enters_the_slider_opening_when_pressed(asm):
+    """押し切ると台は箱の上面より 1.45 下へ入る。箱の口（スライダーの胴が沈んで空いた所）に当たらない。"""
+    from build123d import Compound
+
+    caps = Compound([c for c, k in zip(asm.keycap_solids(True), asm.i.keys) if k.w_u == 2.25])
+    assert A.interference({"keycaps": caps}, {"stabs": Compound(asm.stab_solids(True))}) == {}
+    z = asm.z
+    assert z["stem_top"] - KC.travel_max(asm.s) - KC.stab_grip(asm.s) < z["pcb_top"] + 5.00 - 1.0
+
+
+def test_the_stab_boss_check_notices_a_wide_boss(geo):
+    """台を箱の口より太くすると（φ5.9・口 5.5）、押し切りで箱に当たる。"""
+    from build123d import Compound
+
+    a = A.Assembly(geo, cs=cs_with(STAB_SOCKET_BOSS_D=5.9, STAB_SOCKET_CLEAR=-0.2))
+    caps = Compound([c for c, k in zip(a.keycap_solids(True), a.i.keys) if k.w_u == 2.25])
+    assert A.interference({"keycaps": caps}, {"stabs": Compound(a.stab_solids(True))})
+
+
+def test_the_stab_grip_refuses_a_boss_that_hits_the_slider():
+    with pytest.raises(ValueError):
+        KC.stab_grip(load("cckb").spec, cs_with(STAB_SOCKET_GRIP=3.6))
+    with pytest.raises(ValueError):
+        KC.stab_grip(load("cckb").spec, cs_with(STAB_SOCKET_BOSS_D=5.3))
 
 
 def test_the_keycap_clears_the_silent_collar(asm):

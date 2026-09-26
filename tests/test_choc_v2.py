@@ -246,23 +246,6 @@ def test_the_nub_check_notices_a_small_hole(tmp_path, monkeypatch):
 # スタビ（遊舎工房 A050001-01-1）
 # ---------------------------------------------------------------------------
 
-def _source_shapes(src):
-    """出典 1 つの穴の形を、公称の支点 12.0 から・外向き X・ワイヤ +Y で。
-    [(種類, 中心, (X 幅, Y 幅))]。box は矩形、screw・claw は長円（丸は同じ幅の長円）。"""
-    s = mech.CHOC_V2_STAB_SOURCES[src]
-    dx = s["pivot"] - SWITCHES["choc_v2"].stab_offset[2.25]
-    # 箱の穴: x は推奨の穴、y は箱そのもの（図の推奨 8.00 は、ねじの穴との橋が細るので採らない。
-    # mech.CHOC_V2_STAB_HOLES のコメント）。サリチル酸さんの足跡は穴の値をそのまま
-    bw, bh = s["box"]
-    if "part" in s:
-        bh = s["part"][1]
-    out = [("box", (dx, 0.0), (bw, bh))]
-    for k in ("screw", "claw"):
-        cy, w, h = s[k]
-        out.append((k, (dx, cy), (w, h)))
-    return out
-
-
 def test_the_stab_sources_are_what_the_drawing_and_salicylic_say():
     """生の値を出典と照合する。図の値は画像（chocv2-stab-guide 2026-05-16）から読んだ 24.00・8.00×6.00・
     φ3.00 を 6.20・φ4.00 を 8.50。サリチル酸さんの値は保存したファイルから読み直す。"""
@@ -287,44 +270,96 @@ def test_the_stab_sources_are_what_the_drawing_and_salicylic_say():
     assert round((max(right) + min(right)) / 2, 3) == s["pivot"]
 
 
-@pytest.mark.parametrize("src", sorted(mech.CHOC_V2_STAB_SOURCES))
-def test_the_stab_holes_take_each_sources_part(src):
-    """開ける穴（mech.CHOC_V2_STAB_HOLES）が、どちらの出典の形（支点 24.0 でも 23.8 でも）も含む。"""
-    H = mech.CHOC_V2_STAB_HOLES
-    for kind, c, size in _source_shapes(src):
-        if kind == "box":
-            x0, y0, x1, y1 = H["box"]
-            w, h = size
-            assert x0 <= c[0] - w / 2 + 1e-9 and c[0] + w / 2 <= x1 + 1e-9 \
-                and y0 <= c[1] - h / 2 + 1e-9 and c[1] + h / 2 <= y1 + 1e-9, (src, kind, c, size)
-        else:
-            hc, hs = H[kind]
-            for p in _stadium_rim(c, size):
-                assert _in_stadium(p, hc, hs), (src, kind, p)
+def stab_hole_problems(H=None, pivot=None):
+    """開ける穴（mech.CHOC_V2_STAB_HOLES・支点 mech.CHOC_V2_STAB_PIVOT）が、2026-09-26 に利用者と決めた形か。
+    **正は販売者の足跡（実物の実測）**、図は参照。穴は**きつい側**（発注後に広げられる）:
+      支点 = 足跡の 11.9。ねじ・爪の中心 y = 足跡（−6.2・+8.24）。どちらも**丸**（JLC の長円の比を満たさない長円を開けない）。
+      ねじ φ = 図の φ3.00。足跡の長円 3.2 × 3.4 の短い幅より小さい（ゆるい側に倒さない）。ナットの胴（spec.STAB_NUT_D）が
+      JLC の丸穴の公差の最悪（−0.08）でも入る。
+      爪 φ = 図の φ4.00 = 足跡の長円 3.0 × 4.0 の長い幅。
+      箱の穴 x = 足跡の 6.0（支点 ± 3.0）・y = 図の推奨 8.00（±4.0）。図の箱 5.80 × 7.30 を含む。"""
+    from foundry.project import load
+
+    H = mech.CHOC_V2_STAB_HOLES if H is None else H
+    pivot = mech.CHOC_V2_STAB_PIVOT if pivot is None else pivot
+    sal, drw = mech.CHOC_V2_STAB_SOURCES["salicylic"], mech.CHOC_V2_STAB_SOURCES["drawing"]
+    nut = load("cckb").spec.STAB_NUT_D
+    out = []
+    if pivot != sal["pivot"] or SWITCHES["choc_v2"].stab_offset[2.25] != pivot:
+        out.append(f"支点 {pivot}（足跡 {sal['pivot']}）")
+    for k in ("screw", "claw"):
+        c, d = H[k]
+        if not isinstance(d, (int, float)):
+            out.append(f"{k} が丸でない {d}")
+            return out
+        if c != (0.0, sal[k][0]):
+            out.append(f"{k} の中心 {c}（足跡 (0, {sal[k][0]})）")
+        if d != drw[k][1] or drw[k][1] != drw[k][2]:
+            out.append(f"{k} の径 {d}（図 φ{drw[k][1]}）")
+    if H["screw"][1] >= min(sal["screw"][1:]):
+        out.append(f"ねじの穴 φ{H['screw'][1]} が足跡の長円の幅 {min(sal['screw'][1:])} 以上（ゆるい側）")
+    if H["screw"][1] - 0.08 < nut + 0.1:
+        out.append(f"ねじの穴 φ{H['screw'][1]} の最悪 −0.08 にナットの胴 φ{nut} が片側 0.05 で入らない")
+    if H["claw"][1] != max(sal["claw"][1:]):
+        out.append(f"爪の穴 φ{H['claw'][1]} が足跡の長円の長い幅 {max(sal['claw'][1:])} と違う")
+    x0, y0, x1, y1 = H["box"]
+    if (x1 - x0, -x0, x1) != (sal["box"][0], sal["box"][0] / 2, sal["box"][0] / 2):
+        out.append(f"箱の穴の x {x0}〜{x1}（足跡 ±{sal['box'][0] / 2}）")
+    if (y1 - y0, -y0, y1) != (drw["box"][1], drw["box"][1] / 2, drw["box"][1] / 2):
+        out.append(f"箱の穴の y {y0}〜{y1}（図 ±{drw['box'][1] / 2}）")
+    pw, pd = drw["part"]
+    if not (x0 < -pw / 2 and pw / 2 < x1 and y0 < -pd / 2 and pd / 2 < y1):
+        out.append(f"箱の穴が箱 {drw['part']} を含まない")
+    return out
+
+
+def test_the_stab_holes_are_what_we_decided():
+    assert stab_hole_problems() == []
+
+
+@pytest.mark.parametrize("key, value", [
+    ("pivot", 12.0),                                       # 図の支点に戻す
+    ("screw", ((0.0, -6.2), (3.2, 3.4))),                  # 足跡の長円（前の板）
+    ("screw", ((0.0, -6.2), 3.2)),                         # ゆるい側の丸
+    ("screw", ((0.0, -6.2), 2.9)),                         # ナットの胴が公差の最悪で入らない
+    ("claw", ((0.0, 8.37), 4.0)),                          # 前の板の爪の位置
+    ("claw", ((0.0, 8.24), 4.4)),                          # ゆるい側
+    ("box", (-3.1, -4.0, 3.0, 4.0)),                       # 前の板の箱の穴（支点 24.0 も含めた和）
+    ("box", (-3.0, -3.75, 3.0, 3.75)),                     # 足跡の y 7.5
+])
+def test_the_stab_hole_check_notices_a_break(key, value):
+    if key == "pivot":
+        assert stab_hole_problems(pivot=value)
+    else:
+        H = dict(mech.CHOC_V2_STAB_HOLES)
+        H[key] = value
+        assert stab_hole_problems(H), (key, value)
 
 
 def test_the_stab_footprint_is_the_holes():
-    """フットプリント（KiCad・Y 下向き）の非めっきの穴 4 つ = mech.CHOC_V2_STAB_HOLES を左右に、
+    """フットプリント（KiCad・Y 下向き）の非めっきの丸穴 4 つ = mech.CHOC_V2_STAB_HOLES を左右に、
     ワイヤを奥（KiCad の −y）に置いた物。"""
     s = SWITCHES["choc_v2"].stab_offset[2.25]
     H = mech.CHOC_V2_STAB_HOLES
     want = set()
     for side in (-1, 1):
         for k in ("screw", "claw"):
-            (hx, hy), (w, h) = H[k]
-            want.add((round(side * (s + hx), 3), round(-hy, 3), w, h))
+            (hx, hy), d = H[k]
+            want.add((round(side * (s + hx), 3), round(-hy, 3), d, d))
     pads = _pads(STAB_FP)
     got = {(round(p["x"], 3), round(p["y"], 3), *p["drill"]) for p in pads}
-    assert len(pads) == 4 and all(p["kind"] == "np_thru_hole" and p["size"] == p["drill"] for p in pads)
+    assert len(pads) == 4 and all(p["kind"] == "np_thru_hole" and p["shape"] == "circle"
+                                  and p["size"] == p["drill"] for p in pads), pads
     assert got == want, (got, want)
     assert SWITCHES["choc_v2"].stab_fp == {s: STAB_FP.stem}
 
 
 @pytest.mark.parametrize("old, new", [
     ("(at 11.9 6.2)", "(at 12.0 6.2)"),                  # ねじを 0.1
-    ("(at -11.95 -8.37)", "(at -11.95 -8.27)"),          # 爪を 0.1
-    ("(at -11.95 -8.37) (size 4.2 4.4) (drill oval 4.2 4.4)",
-     "(at -11.95 -8.37) (size 4.1 4.4) (drill oval 4.1 4.4)"),                      # 爪の幅を 0.1
+    ("(at -11.9 -8.24)", "(at -11.9 -8.14)"),            # 爪を 0.1
+    ("(size 4 4) (drill 4)", "(size 4.2 4.2) (drill 4.2)"),                     # 爪の径を 0.2
+    ("np_thru_hole circle (at 11.9 6.2) (size 3 3) (drill 3)",
+     "np_thru_hole oval (at 11.9 6.2) (size 3.2 3.4) (drill oval 3.2 3.4)"),     # 前の長円
 ])
 def test_the_stab_checker_notices_a_break(tmp_path, monkeypatch, old, new):
     import test_choc_v2
@@ -332,21 +367,6 @@ def test_the_stab_checker_notices_a_break(tmp_path, monkeypatch, old, new):
     _break(tmp_path, monkeypatch, old, new, target="STAB_FP")
     with pytest.raises(AssertionError):
         test_choc_v2.test_the_stab_footprint_is_the_holes()
-
-
-def test_the_stab_hole_checker_notices_a_hole_that_misses_a_source(monkeypatch):
-    """開ける穴を 0.1 狭めると、どちらかの出典の形がはみ出して落ちる。"""
-    import test_choc_v2
-
-    for k, v in (("box", (-3.0, -3.75, 3.0, 3.75)),                # 支点 23.8 の箱の内の辺
-                 ("screw", ((-0.1, -6.2), (3.1, 3.4))),
-                 ("claw", ((-0.05, 8.47), (4.2, 4.4)))):
-        H = dict(mech.CHOC_V2_STAB_HOLES)
-        H[k] = v
-        monkeypatch.setattr(mech, "CHOC_V2_STAB_HOLES", H)
-        with pytest.raises(AssertionError):
-            for src in sorted(mech.CHOC_V2_STAB_SOURCES):
-                test_choc_v2.test_the_stab_holes_take_each_sources_part(src)
 
 
 # --- プレートの開口 -----------------------------------------------------------
@@ -377,11 +397,10 @@ def _in_poly(p, poly, eps=1e-6):
     return ins
 
 
-@pytest.mark.parametrize("shift", (0.0, 0.1))
-def test_the_plate_stab_opening_contains_salicylics(shift):
-    """プレートの開口（kerf 0）は、サリチル酸さんの開口（支点 11.9）と、それを支点 12.0 へ 0.1 外へ
-    ずらした物を含む。**CHOC_V2_STAB_PLATE の座標は CAD でワイヤが +y**（KiCad でワイヤ +y の
-    サリチル酸さんの図をそのまま使える: CAD は Y を反転し、さらにワイヤを奥へ 180° 回すので y は同じ）。"""
+def test_the_plate_stab_opening_contains_salicylics():
+    """プレートの開口（kerf 0）は、サリチル酸さんの開口（支点 11.90625）を含む。**CHOC_V2_STAB_PLATE の座標は CAD で
+    ワイヤが +y**（KiCad でワイヤ +y のサリチル酸さんの図をそのまま使える: CAD は Y を反転し、さらにワイヤを奥へ
+    180° 回すので y は同じ）。"""
     from foundry.plate import choc_v2_stab_polygons
 
     polys = choc_v2_stab_polygons()
@@ -393,9 +412,37 @@ def test_the_plate_stab_opening_contains_salicylics(shift):
         # PLATE_MIN_WEB に保つために 0.13 詰めた。詰めてよい根拠は下の test_the_plate_stab_back_clears_the_drawing
         y = min(y, mech.CHOC_V2_STAB_PLATE_BACK) if y > mech.CHOC_V2_STAB_PLATE_BACK else y
         trimmed += y == mech.CHOC_V2_STAB_PLATE_BACK
-        p = (x + math.copysign(shift, x), y)
-        assert any(_in_poly(p, poly) for poly in polys), p
+        assert any(_in_poly((x, y), poly) for poly in polys), (x, y)
     assert 0 < trimmed and 10.85 - mech.CHOC_V2_STAB_PLATE_BACK <= 0.13 + 1e-9
+
+
+def plate_extent_problems(poly=None):
+    """開口（kerf 0）の羽が**サリチル酸さんの開口の値のまま**か（外接する矩形の辺）。足跡から変えてよいのは
+    奥の端（CHOC_V2_STAB_PLATE_BACK）と、穴が大きくなる向きの丸め（左右の和・円弧 → 矩形）だけ。
+    前は支点 24.0 のために羽の外の辺を +0.1 広げていた（15.0375）。"""
+    poly = mech.CHOC_V2_STAB_PLATE if poly is None else poly
+    outer = max(abs(x) for x, _ in _sal_plate_points())   # 14.9375（右）/ 14.93375（左）
+    wing_x = sorted({x for x, _ in poly if x > 8.8})
+    ys = [y for _, y in poly]
+    out = []
+    if abs(max(wing_x) - outer) > 1e-9:
+        out.append(f"羽の外の辺 {max(wing_x)}（足跡 {outer}）")
+    if abs(min(wing_x) - 8.87125) > 1e-9:
+        out.append(f"羽の内の辺 {min(wing_x)}（足跡の左右の和 8.87125）")
+    if abs(min(ys) + 9.45) > 1e-9 or abs(max(ys) - mech.CHOC_V2_STAB_PLATE_BACK) > 1e-9:
+        out.append(f"羽の y {min(ys)}〜{max(ys)}")
+    if (8.375, 9.85) not in poly:
+        out.append("ワイヤの帯（|x| < 8.375・y 9.85 まで）")
+    return out
+
+
+def test_the_plate_stab_opening_is_salicylics_but_the_listed_changes():
+    assert plate_extent_problems() == []
+
+
+def test_the_plate_extent_check_notices_the_old_widening():
+    old = tuple((15.0375 if x == 14.9375 else x, y) for x, y in mech.CHOC_V2_STAB_PLATE)
+    assert plate_extent_problems(old)
 
 
 def test_the_plate_stab_back_clears_the_drawing():
@@ -424,7 +471,7 @@ def test_the_plate_checker_notices_a_shrunk_lobe(monkeypatch):
     import foundry.mech as mech_mod
     import test_choc_v2
 
-    shrunk = tuple((14.9375 if x == 15.0375 else x, y) for x, y in mech.CHOC_V2_STAB_PLATE)
+    shrunk = tuple((14.8375 if x == 14.9375 else x, y) for x, y in mech.CHOC_V2_STAB_PLATE)
     monkeypatch.setattr(mech_mod, "CHOC_V2_STAB_PLATE", shrunk)
     with pytest.raises(AssertionError):
-        test_choc_v2.test_the_plate_stab_opening_contains_salicylics(0.1)
+        test_choc_v2.test_the_plate_stab_opening_contains_salicylics()

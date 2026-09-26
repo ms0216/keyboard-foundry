@@ -5,12 +5,17 @@
 **どの穴かは縁の切り欠きの数で見分ける**（1 本目 = 表の最初の値）。
 
   coupon_switch  プレート 1.2 にスイッチの開口 13.90 / 13.95 / 14.00 / 14.05（V2 の爪が掛かって抜けないか）
-  coupon_stab    プレート 1.2 に V2 のスタビの U 字の開口（±12.0）＋スイッチの開口。広げ 0.05 / 0.15 / 0.25 の 3 枚
+  coupon_stab    プレート 1.2 に V2 のスタビの U 字の開口（支点 ±11.9）＋スイッチの開口。広げ 0.05 / 0.15 / 0.25 の 3 枚
                  （スタビはプレートに掛からない。基板に留めたスタビの本体・ワイヤが開口に触れないかを見る）
   coupon_stem    キャップの受け口（十字の筒）。1 段目: 十字の穴の幅 1.35〜1.50（列・手前の切り欠き 1〜4 本）×
                  長さ 4.10〜4.20（行・左の切り欠き 1〜3 本）の格子 12 本。2 段目: 筒の外径 5.3 / 5.4 / 5.5 の小さな
                  天板 3 枚（切り欠き 1〜3 本。こじって外し、腕の先が割れないか）と、スタビの受け口の板 2 枚
-                 （支点の間 24.0 = 切り欠き 1 本・23.8 = 2 本。届いたスタビの軸に同時に挿さる方）
+                 （支点の間 24.0 = 切り欠き 1 本・23.8 = 2 本。届いたスタビの軸に同時に挿さる方。本番は 23.8）
+  coupon_stab_return  **スタビの軸がキャップと一緒に戻るか**（2026-09-26・監査 E 重要 1）。基板の代わりの板（厚さ
+                 spec.PCB_T・本番の基板と同じ穴の位置。刷った穴は COUPON_BOARD_HOLE_CLEAR だけ広げる）と、本番の
+                 2.25u のキャップ 1 個。板にスタビをねじで留め、スイッチを挿し、キャップを挿して押し切って離す。
+                 スタビの両端の軸が、スイッチのばねで戻るキャップと一緒に上まで戻るか（10 回）。台が箱の口に
+                 当たらないか（押し切りで擦れる音・引っ掛かり）
   coupon_nut     プレート 1.2 に M2 ナットの六角の穴 4.1 / 4.2 / 4.3（落ちて入り、回らないか）
   coupon_insert  インサートの柱 φ5.2（下穴 2.9 / 3.0 / 3.1）と、ネジを捕まえる膜（穴 1.4 / 1.6 / 1.8）
 """
@@ -127,13 +132,47 @@ def stab_cap_coupon(pivot, idx, cs=CS, spec=None):
     import keycaps
 
     t = spec.KEYCAP_TOP_T
-    w, d = 2 * pivot + cs.STAB_SOCKET_PAD_D + 4.0, 10.0
+    w, d = 2 * pivot + cs.STAB_SOCKET_BOSS_D + 4.0, 10.0
     xs = (-pivot, pivot)
     part = fuse([box(-w / 2, -d / 2, 0, w / 2, d / 2, t), keycaps.switch_socket(cs)]
-                + keycaps.stab_pads(xs, spec, cs))
+                + keycaps.stab_bosses(xs, spec, cs))
     part = part - fuse(keycaps.socket_holes(spec, cs, stab_xs=xs))
     part = notches(part, idx + 1, -w / 2 + 1.5, -d / 2, t)
     return Rot(180, 0, 0) * part.clean()
+
+
+def board_standin(ifc, cs=CS):
+    """基板の代わりの板（2.25u のキー 1 つ分・厚さ spec.PCB_T）。穴は**発注する基板と同じ位置**:
+    スイッチの中心・端子 2・位置決め（lib の足跡を interface.switch_holes が読んだ物）、スタビの箱の穴・ねじ・爪
+    （interface.stab_reliefs・stab_holes をキーの中心へ戻した物）。刷った穴は締まるので COUPON_BOARD_HOLE_CLEAR だけ広げる。"""
+    from interface import poly_box
+
+    s = ifc.s
+    t = s.PCB_T
+    c = cs.COUPON_BOARD_HOLE_CLEAR
+    kx, ky = next((x, y) for (x, y), k in zip(ifc.positions, ifc.keys) if k.w_u == 2.25)
+    w = 2.25 * UNIT
+    part = box(-w / 2, -UNIT / 2 - 1.0, 0, w / 2, UNIT / 2 + 3.5, t)
+    x0, y0 = ifc.matrix_positions()[0]
+    holes = [cyl(hx - x0, hy - y0, -1, t + 1, max(hw, hh) + 2 * c)
+             for ref, _, (hx, hy), (hw, hh) in ifc.switch_holes() if ref == "SW1"]
+    for kind, (hx, hy), d in ifc.stab_holes():
+        if abs(hy - ky) < UNIT / 2 and abs(hx - kx) < w / 2:
+            holes.append(cyl(hx - kx, hy - ky, -1, t + 1, d + 2 * c))
+    for poly in ifc.stab_reliefs():
+        bx0, by0, bx1, by1 = poly_box(poly)
+        if abs((by0 + by1) / 2 - ky) < 1e-6 and abs((bx0 + bx1) / 2 - kx) < w / 2:
+            holes.append(box(bx0 - kx - c, by0 - ky - c, -1, bx1 - kx + c, by1 - ky + c, t + 1))
+    assert len(holes) == 4 + 4 + 2, len(holes)
+    return (part - fuse(holes)).clean()
+
+
+def stab_return_coupon(ifc, cs=CS):
+    """基板の代わりの板と、本番の 2.25u のキャップ（天板をベッドに）を並べた物。"""
+    import keycaps
+
+    cap = Rot(180, 0, 0) * keycaps.keycap(2.25, ifc.s, ifc.sw, cs)
+    return row([board_standin(ifc, cs), cap], cs.COUPON_GAP)
 
 
 def stack(rows, gap):
@@ -194,6 +233,7 @@ def parts(ifc=None, cs=CS):
                               row([stem_coupon(od, i, cs, s) for i, od in enumerate(cs.COUPON_TUBE_ODS)]
                                   + [stab_cap_coupon(pv, i, cs, s) for i, pv in enumerate(cs.COUPON_STAB_PIVOTS)],
                                   cs.COUPON_GAP)], cs.COUPON_GAP),
+        "coupon_stab_return": stab_return_coupon(ifc, cs),
         "coupon_nut": nut_coupon(cs, ifc.sw),
         "coupon_insert": insert_coupon(s, cs),
     }

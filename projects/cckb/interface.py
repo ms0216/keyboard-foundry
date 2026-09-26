@@ -244,23 +244,30 @@ class Interface:
         return out
 
     def stab_reliefs(self):
-        """基板の箱の穴（mech.CHOC_V2_STAB_HOLES の box ＋ STAB_RELIEF_MARGIN）。**pcb_extra が Edge.Cuts に描く。**
+        """基板の箱の穴（mech.CHOC_V2_STAB_HOLES の box。支点 ± 3.0 × ±4.0）。**pcb_extra が Edge.Cuts に描く。**
 
-        ねじ・爪の穴は非めっきの穴としてフットプリント（mech.CHOC_V2_STAB_FP）が開ける。
+        ねじ・爪の穴は非めっきの丸穴としてフットプリント（mech.CHOC_V2_STAB_FP）が開ける（stab_holes）。
         """
-        mx, my = self.s.STAB_RELIEF_MARGIN
-        x0, y0, x1, y1 = CHOC_V2_STAB_HOLES["box"]
-        return [self._pivot_rect(px, py, sd, (x0 - mx, y0 - my, x1 + mx, y1 + my))
-                for px, py, sd in self.stab_pivots()]
+        return [self._pivot_rect(px, py, sd, CHOC_V2_STAB_HOLES["box"]) for px, py, sd in self.stab_pivots()]
+
+    def stab_holes(self):
+        """スタビのねじ・爪の丸穴（CAD）。[(kind, (x, y), 径)]。kind は "screw" / "claw"。支点ごとに 1 つずつ。"""
+        out = []
+        for px, py, sd in self.stab_pivots():
+            for kind in ("screw", "claw"):
+                (hx, hy), d = CHOC_V2_STAB_HOLES[kind]
+                out.append((kind, (px + sd * hx, py + hy), d))
+        return out
+
+    def stab_hole_keepouts(self):
+        """ねじ・爪の穴の中心から spec.STAB_HOLE_KEEPOUT_R の円（GND のベタのほかに銅を置かない）。[((x, y), r)]。"""
+        return [(c, self.s.STAB_HOLE_KEEPOUT_R) for _, c, _ in self.stab_holes()]
 
     def stab_housings(self):
-        """箱（基板を貫いて下へ出る部分）の平面。mech.CHOC_V2_STAB_SOURCES の図の part（5.80 × 7.30）を、**支点が 2 つの出典のどちらでも**
-        （24.0 / 23.8）入るように両方の位置の和で包む。"""
+        """箱（基板を貫いて下へ出る部分）の平面。mech.CHOC_V2_STAB_SOURCES の図（参照）の part（5.80 × 7.30）を、
+        支点（販売者の足跡の 11.9）を中心に置いた物。"""
         w, d = CHOC_V2_STAB_SOURCES["drawing"]["part"]
-        nominal = self.sw.stab_offset[2.25]
-        dxs = [src["pivot"] - nominal for src in CHOC_V2_STAB_SOURCES.values()]
-        box = (min(dxs) - w / 2, -d / 2, max(dxs) + w / 2, d / 2)
-        return [self._pivot_rect(px, py, sd, box) for px, py, sd in self.stab_pivots()]
+        return [self._pivot_rect(px, py, sd, (-w / 2, -d / 2, w / 2, d / 2)) for px, py, sd in self.stab_pivots()]
 
     def switch_holes(self):
         """スイッチの足跡（lib/keyswitch.pretty の mech の fp。**板に置いた物と同じファイル**）の穴を、
@@ -295,6 +302,8 @@ class Interface:
           pin       端子の足（基板の穴 φ1.2 の中を通る。穴の径で包む）×2
           locator   位置決めの穴 φ2.1 の下（穴の中に来る下面の突起を穴の径で包む。2026-09-26 に長穴 1.6 × 2.0 から）
           stab_box  スタビの箱（stab_housings）
+          stab_screw  スタビのねじの頭 φSTAB_SCREW_HEAD_D（ねじの穴の真下。基板の下面から STAB_SCREW_HEAD_H 出る。
+                    2026-09-26 に足した: 監査 E 重要 2 で頭が 1.15 でなく 1.5 と分かり、床との隙が 0.3 しかない）
         足の穴は 2026-09-26 に足した: 足の先（最悪 基板 1.44・足 3.2）が床の上面から 0.04 しか離れず、
         V1 で決めた余裕 0.1 を割っていた（決定記録 2026-09-25-choc-v2 §10-5 の V5）。
         tests/test_cckb_interface.py が発注する板の穴（母数 62 × 4）と突き合わせる。
@@ -311,6 +320,8 @@ class Interface:
                 out.append(dict(kind="locator", ref=ref, pos=(x, y), d=max(w, h) + 2 * c))
         for n, poly in enumerate(self.stab_housings()):
             out.append(dict(kind="stab_box", ref=f"STAB{n}", box=grow(poly_box(poly), c)))
+        for n, (kind, pos, _) in enumerate(h for h in self.stab_holes() if h[0] == "screw"):
+            out.append(dict(kind="stab_screw", ref=f"STAB{n}", pos=pos, d=s.STAB_SCREW_HEAD_D + 2 * c))
         return out
 
     def matrix_positions(self):
@@ -555,7 +566,8 @@ def corridors(ifc, geo):
     m = matrix_routes.plan(ifc.p, geo["pads"])
     e, _ = matrix_routes.escape(ifc.p, geo["pads"], others=m)
     pw = matrix_routes.power_runs(ifc.p, geo["pads"], others=m + e)
-    return [(a, b) for _, _, a, b in m + e + pw]
+    fx, _ = matrix_routes.fixed_runs(ifc.p, geo["pads"], others=m + e + pw)
+    return [(a, b) for _, _, a, b in m + e + pw] + [(a, b) for _, _, a, b, _ in fx]
 
 
 def band_ys(ifc):

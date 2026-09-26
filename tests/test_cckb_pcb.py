@@ -954,6 +954,141 @@ def test_the_stab_reliefs_are_cut_in_the_routed_board(facts, ifc):
     assert n == 8 * 4                        # V2 の箱の穴は矩形 8 つ（Enter・左 Shift・スペース 2 つの左右）
 
 
+# スタビ（遊舎工房 A050001-01-1）の基板の穴。**2026-09-26 に利用者と決めた値**（販売者の足跡〔実物の実測〕が正・
+# 仕入れ先の図は参照。決定記録 2026-09-25-choc-v2 §10-9）。スタビの座標（支点・箱の中心から。y はワイヤ〔爪〕の側が +。
+# 板ではワイヤは奥 = CAD の +y）。生成器の定数（mech.CHOC_V2_STAB_HOLES）とは比べず、決めた数そのものと板を比べる
+STAB_DECIDED = dict(pivot=11.9, screw=(-6.2, 3.0), claw=(8.24, 4.0), box=(3.0, 4.0), keepout=2.6)
+
+
+def stab_board_problems(facts, ifc, decided=STAB_DECIDED):
+    """発注する板のスタビ 4 つ（ST\\d+）が決めた形か:
+      (1) ねじ・爪の穴が**丸い非めっき**で、支点（キーの中心 ± 11.9）の x に揃い、y と径が決めた値（長円は 0）
+      (2) 箱の穴（Edge.Cuts）が支点 ± 3.0 × ±4.0 の矩形で、ほかの Edge.Cuts の線がスタビの周りに無い
+      (3) 穴の中心から半径 2.6 の中に、線・ビア・パッド（その穴のほか）が無い（両面）。塗ったベタは GND だけ
+    """
+    D = decided
+    out = []
+    stabs = [f for f in facts["footprints"] if re.fullmatch(r"ST\d+", f["ref"])]
+    keys = {(round(x, 3), round(y, 3)) for x, y in
+            (((a[0] + b[0]) / 2, a[1]) for a, b in zip(ifc.stab_pivots()[::2], ifc.stab_pivots()[1::2]))}
+    if len(stabs) != 4 or {(round(f["pos"][0], 3), round(f["pos"][1], 3)) for f in stabs} != keys:
+        out.append(f"スタビ {len(stabs)} 個・位置 {[f['pos'] for f in stabs]}（2.25u のキー 4 つ {sorted(keys)}）")
+    sws = {(round(f["pos"][0], 3), round(f["pos"][1], 3)) for f in facts["footprints"] if re.fullmatch(r"SW\d+", f["ref"])}
+    centres = []
+    for f in stabs:
+        fx, fy = f["pos"]
+        if (round(fx, 3), round(fy, 3)) not in sws:
+            out.append(f"{f['ref']} がスイッチの中心に無い")
+        pads = [p for p in facts["pads"] if p["ref"] == f["ref"]]
+        want = sorted((round(sd * D["pivot"], 3), round(D[k][0], 3), D[k][1])
+                      for sd in (-1, 1) for k in ("screw", "claw"))
+        got = sorted((round(p["pos"][0] - fx, 3), round(p["pos"][1] - fy, 3), p["drill"]) for p in pads)
+        if got != want:
+            out.append(f"{f['ref']} の穴 {got}（決めた値 {want}）")
+        for p in pads:
+            if not p["npth"] or p["slot"] or p["drill_wh"][0] != p["drill_wh"][1] or not p["round"]:
+                out.append(f"{f['ref']} の穴 {p['pos']} が丸い非めっきでない（{p['drill_wh']}・slot {p['slot']}）")
+            centres.append((f["ref"], p["pos"], p["drill"]))
+        # 箱の穴: 矩形 4 辺が Edge.Cuts にあり、スタビの周り（キーの中心 ±17 × ±11）の Edge.Cuts はそれだけ
+        segs = [(tuple(e["a"]), tuple(e["b"])) for e in facts["edge"]
+                if e["shape"] == "Line" and abs(e["a"][0] - fx) < 17 and abs(e["a"][1] - fy) < 11
+                and abs(e["b"][0] - fx) < 17 and abs(e["b"][1] - fy) < 11]
+        want_e = set()
+        for sd in (-1, 1):
+            x0, x1 = sorted((fx + sd * (D["pivot"] - D["box"][0]), fx + sd * (D["pivot"] + D["box"][0])))
+            y0, y1 = fy - D["box"][1], fy + D["box"][1]
+            c = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+            want_e |= {frozenset(((round(a[0], 3), round(a[1], 3)), (round(b[0], 3), round(b[1], 3))))
+                       for a, b in zip(c, c[1:] + c[:1])}
+        got_e = {frozenset(((round(a[0], 3), round(a[1], 3)), (round(b[0], 3), round(b[1], 3)))) for a, b in segs}
+        if got_e != want_e:
+            out.append(f"{f['ref']} の箱の穴（Edge.Cuts）が違う: 余分 {len(got_e - want_e)}・足りない {len(want_e - got_e)}")
+    if len(centres) != 16:
+        out.append(f"スタビの穴 {len(centres)}（16 のはず）")
+    r = D["keepout"]
+    for ref, c, _ in centres:
+        for tr in facts["tracks"]:
+            g = seg_point_dist(c, tr["a"], tr["b"]) - tr["w"] / 2
+            if g < r:
+                out.append(f"{ref} の穴 {c} の {r} の中に線 {tr['net']} {tr['layer']}（{g:.3f}）")
+        for v in facts["vias"]:
+            g = math.dist(c, v["pos"]) - v["d"] / 2
+            if g < r:
+                out.append(f"{ref} の穴 {c} の {r} の中にビア {v['net']}（{g:.3f}）")
+        for p in facts["pads"]:
+            if p["pos"] == c and p["ref"] == ref:
+                continue
+            if I.circle_rect_gap(c, r, p["box"]) < 0:
+                out.append(f"{ref} の穴 {c} の {r} の中にパッド {p['ref']}.{p['num']} {p['net']}")
+    bad_zones = sorted({z["net"] for z in facts["zones"] if not z["rule"] and z["net"] != "GND"})
+    if bad_zones:
+        out.append(f"GND のほかのベタ {bad_zones}（穴の周りに入りうる）")
+    return out
+
+
+def seg_point_dist(p, a, b):
+    ax, ay = a
+    dx, dy = b[0] - ax, b[1] - ay
+    L = dx * dx + dy * dy
+    t = 0.0 if L == 0 else max(0.0, min(1.0, ((p[0] - ax) * dx + (p[1] - ay) * dy) / L))
+    return math.hypot(p[0] - ax - t * dx, p[1] - ay - t * dy)
+
+
+def test_the_stab_holes_are_what_we_decided(facts, ifc):
+    assert stab_board_problems(facts, ifc) == []
+
+
+def _stab_hole(f, kind="screw"):
+    st = next(x for x in f["footprints"] if x["ref"] == "ST42")
+    d = STAB_DECIDED[kind]
+    return next(p for p in f["pads"] if p["ref"] == "ST42" and
+                abs(p["pos"][1] - st["pos"][1] - d[0]) < 1e-3 and p["pos"][0] > st["pos"][0])
+
+
+def _stab_track(f):
+    c = _stab_hole(f)["pos"]
+    f["tracks"].append(dict(net="COL13", layer="F.Cu", a=[c[0] - 5, c[1] + 2.6], b=[c[0] + 5, c[1] + 2.6], w=0.2))
+
+
+def _stab_via(f):
+    c = _stab_hole(f, "claw")["pos"]
+    f["vias"].append(dict(net="GND", pos=[c[0] + 2.8, c[1]], d=0.6, drill=0.3))
+
+
+def _stab_move(f):
+    p = _stab_hole(f)
+    p["pos"] = [p["pos"][0] + 0.1, p["pos"][1]]
+
+
+def _stab_oval(f):
+    p = _stab_hole(f)
+    p.update(slot=True, drill_wh=[3.2, 3.4], drill=3.2)
+
+
+def _stab_big(f):
+    _stab_hole(f, "claw")["drill"] = 4.4
+
+
+def _stab_window(f):
+    """前の板の箱の穴（支点 12.0 から −3.1〜3.0 ＋ 片側 0.3）に戻す。"""
+    for e in f["edge"]:
+        for k in ("a", "b"):
+            if abs(e[k][0] - (121.44375 + 11.9 + 3.0)) < 1e-3:
+                e[k] = [e[k][0] + 0.4, e[k][1]]
+
+
+def _stab_zone(f):
+    f["zones"].append(dict(name="V3V3_F", net="V3V3", rule=False, layers=["F.Cu"], outline=[0, 0, 1, 1],
+                           area={"F.Cu": 1.0}, outlines={"F.Cu": 1}))
+
+
+@pytest.mark.parametrize("breaker", [_stab_track, _stab_via, _stab_move, _stab_oval, _stab_big, _stab_window, _stab_zone])
+def test_the_stab_hole_check_notices_a_break(facts, ifc, breaker):
+    f = copy.deepcopy(facts)
+    breaker(f)
+    assert stab_board_problems(f, ifc), breaker.__name__
+
+
 # JLC の PCB Capabilities（https://jlcpcb.com/capabilities/pcb-capabilities・2026-09-26 に読んだ）:
 # 「The length of the slot should be at least 2 times of the width」・非めっきの長円の最小幅 1.0・長円の公差は非めっき ±0.2。
 # 丸穴の公差は ±0.08 前後（JLC のブログ npth-design-guide）。**KiCad の DRC はこの比を見ない。**
@@ -964,18 +1099,12 @@ NPTH_SLOT_MIN_W = 1.0
 PTH_SLOT_MIN_W = 0.5
 
 
-# **保留している例外（数を固定）**: スタビのねじ・爪の長円 16 個（ST42・ST43・ST58・ST60 の各 4。3.2 × 3.4・4.2 × 4.4）。
-# スタビの品を選び直している最中（2026-09-26・Kailh 公式の CPG1353G24D01 はプレート留めで、選ぶと基板のねじの穴が無くなる）
-# なので、形はまだ直さない。**発注は止める**（open-gaps の ★ #6）。スタビが決まったらこの例外を消す
-HELD_STAB_SLOTS = 16
-
-
-def slot_problems(pads, held=()):
-    """長円の穴で、長さ/幅 < 2 か、幅が JLC の最小を割る物。pads は事実の pads（drill_wh・slot）。
-    held: 保留した参照名（その部品の長円は数えない。数は呼ぶ側が固定する）。"""
+def slot_problems(pads):
+    """長円の穴で、長さ/幅 < 2 か、幅が JLC の最小を割る物。pads は事実の pads（drill_wh・slot）。**例外は無い**
+    （2026-09-26 にスタビのねじ・爪の長円 16 を丸にして、保留していた例外 HELD_STAB_SLOTS を消した）。"""
     out = []
     for p in pads:
-        if not p["slot"] or p["ref"] in held:
+        if not p["slot"]:
             continue
         lo, hi = sorted(p["drill_wh"])
         if hi < SLOT_MIN_RATIO * lo - 1e-9:
@@ -992,11 +1121,7 @@ def test_every_slot_on_the_board_is_long_enough_or_round(facts):
     print(f"穴 {len(holes)}（非めっき {len(npth)}）・長円 {len(slots)}")
     # 母数: 非めっきはキーごとに中心 1・位置決め 1（62 × 2）、スタビのねじと爪 4 × 4、取付の穴・ふたの柱など
     assert len(npth) >= 62 * 2 + 4 * 4
-    stabs = {p["ref"] for p in facts["pads"] if re.fullmatch(r"ST\d+", p["ref"])}
-    held = [p for p in slots if p["ref"] in stabs]
-    print(f"保留したスタビの長円 {len(held)}（{sorted(stabs)}）")
-    assert len(held) == HELD_STAB_SLOTS and len(stabs) == 4
-    assert slot_problems(facts["pads"], held=stabs) == []
+    assert slot_problems(facts["pads"]) == []
 
 
 def test_the_slot_check_notices_the_first_v2_board(facts):
@@ -1005,6 +1130,15 @@ def test_the_slot_check_notices_the_first_v2_board(facts):
     p = next(p for p in f["pads"] if p["npth"] and p["ref"] == "SW1" and p["drill"] < 3)
     p.update(slot=True, drill_wh=[1.6, 2.0])
     assert slot_problems(f["pads"])
+
+
+def test_the_slot_check_notices_the_old_stab_slots(facts):
+    """前の板のスタビのねじ・爪の長円（3.2 × 3.4・4.2 × 4.4）を写しに戻すと、例外なしで落ちる。"""
+    f = copy.deepcopy(facts)
+    for p in f["pads"]:
+        if re.fullmatch(r"ST\d+", p["ref"]):
+            p.update(slot=True, drill_wh=[3.2, 3.4] if p["drill"] < 3.5 else [4.2, 4.4])
+    assert len(slot_problems(f["pads"])) == 16
 
 
 def drill_file_slots(text):
@@ -1049,8 +1183,8 @@ def test_the_drill_files_sent_to_jlc_have_no_short_slot(production_dir):
         slots = [s for n in names for s in drill_file_slots(z.read(n).decode())]
     print("ドリルのファイルの長円（径, 長さ）:", sorted(set(slots)))
     short = [s for s in slots if s[1] < SLOT_MIN_RATIO * s[0] - 1e-6]
-    # 保留したスタビの 16（工具 3.2 × 長さ 3.4・4.2 × 4.4）だけ。位置決めの 1.6 × 2.0 が戻れば数が増えて落ちる
-    assert len(short) == HELD_STAB_SLOTS and {(round(d, 2), round(n, 2)) for d, n in short} == {(3.2, 3.4), (4.2, 4.4)}, short
+    # 0（2026-09-26 にスタビの 16 も丸にした）。前の板は位置決め 1.6 × 2.0 ×62・スタビ 3.2 × 3.4・4.2 × 4.4 ×16
+    assert short == [], short
 
 
 def test_the_drill_file_reader_sees_a_short_slot():

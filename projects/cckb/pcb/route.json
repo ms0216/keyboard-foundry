@@ -1,14 +1,16 @@
 {
   "board": "cckb_main.kicad_pcb",
   "unrouted": "cckb_main.kicad_pcb",
-  "unrouted_fingerprint": "78d35eae3c50655c8c3b1165ab03c3406835c276daaad3228d0a582d40df0b88",
-  "unrouted_sha256": "e1f11a30f7c50f352eadb4955f0dc15e51d14e5aeb96aa992dac60d2faa6b49a",
+  "unrouted_fingerprint": "a4a344f9618f0dc2491c8ade2fca35f61f154d578e7a38865641e998dd9d7c1b",
+  "unrouted_sha256": "7c12fef846902e56792d430fa3fcdbef98e4bd0604c6bff802672a3541c1347b",
   "freerouting": "freerouting-2.3.0.jar",
   "passes": 100,
   "margin_um": null,
   "margins_tried": [],
   "matrix_segments": 451,
   "power_segments": 6,
+  "fixed_segments": 21,
+  "fixed_vias": 4,
   "gnd_fanout": 9,
   "ring": {
     "奥": [
@@ -29,14 +31,14 @@
     ]
   },
   "fence": 176,
-  "grid": 674,
-  "island_vias": 18,
-  "second_island_vias": 19,
+  "grid": 673,
+  "island_vias": 9,
+  "second_island_vias": 12,
   "single_via_islands": [
     {
       "layer": "F.Cu",
-      "area_mm2": 2.94,
-      "length_mm": 4.46
+      "area_mm2": 3.26,
+      "length_mm": 4.88
     },
     {
       "layer": "F.Cu",
@@ -45,34 +47,29 @@
     },
     {
       "layer": "B.Cu",
-      "area_mm2": 9.15,
-      "length_mm": 4.54
-    },
-    {
-      "layer": "B.Cu",
-      "area_mm2": 2.82,
-      "length_mm": 3.02
-    },
-    {
-      "layer": "B.Cu",
       "area_mm2": 4.9,
       "length_mm": 3.52
     }
   ],
   "rerouted_nets": [
-    "CS"
+    "COL14"
   ],
-  "cleared_box": null,
-  "cleared": 0,
+  "cleared_box": [
+    128.5,
+    -10.0,
+    130.5,
+    -8.5
+  ],
+  "cleared": 2,
   "pruned_dangling": 0,
-  "kept_from_sha256": "dae52e33a814918f8f4e6edfb3a896ca37c7ae4f975aa7fef6acf5771f37ea08",
-  "islands_removed": 27,
+  "kept_from_sha256": "bed3eb1608404ba596a2527e9e97a4163a6a61b4010c1e25e59e17abeffc6810",
+  "islands_removed": 25,
   "joined_vias": 0,
   "orphan_vias_removed": 0,
-  "islands_removed_mm2": 191.27,
+  "islands_removed_mm2": 181.65,
   "gnd_area_mm2": {
-    "F": 21783.2,
-    "B": 21076.7
+    "F": 21839.9,
+    "B": 21129.1
   },
   "unconnected": 0
 }

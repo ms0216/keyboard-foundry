@@ -36,6 +36,7 @@ TRACK_CLEAR = TRACK_W + CLEAR    # 線の中心どうし: 線幅 ＋ 間隔
 PAD_GAP = CLEAR + 0.05                    # パッド
 HOLE_GAP = JLC["edge_clearance"]          # 穴（NPTH・スルーホールの穴）。外形と同じ扱い
 EDGE_GAP = JLC["edge_clearance"] + 0.05   # 外形・スタビの逃げ穴
+KEEPOUT_GAP = 0.05                        # 禁止域（スタビの穴の周りの円）の縁から線の縁まで
 HALF_W = TRACK_W / 2                      # 線の半幅
 VIA_R = VIA_D / 2                         # ビアの半径
 
@@ -46,10 +47,16 @@ def _pads(pads):
 
 
 def _seg_box_dist(a, b, box):
-    """線分 ab（縦か横）と矩形の距離（交われば 0）。"""
+    """線分 ab と矩形の距離（交われば 0）。縦・横の線は外接矩形どうしで、斜めの線（決まった形の線 fixed_runs）は
+    矩形の 4 辺との線分の距離で測る（外接矩形どうしだと斜めの線が矩形の角の脇を通るのを当たりと見る）。"""
     x0, y0, x1, y1 = box
     lo_x, hi_x = min(a[0], b[0]), max(a[0], b[0])
     lo_y, hi_y = min(a[1], b[1]), max(a[1], b[1])
+    if a[0] != b[0] and a[1] != b[1]:
+        if any(x0 <= p[0] <= x1 and y0 <= p[1] <= y1 for p in (a, b)):
+            return 0.0
+        c = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+        return min(seg_seg_dist(a, b, p, q) for p, q in zip(c, c[1:] + c[:1]))
     dx = max(x0 - hi_x, lo_x - x1, 0.0)
     dy = max(y0 - hi_y, lo_y - y1, 0.0)
     return math.hypot(dx, dy)
@@ -58,7 +65,7 @@ def _seg_box_dist(a, b, box):
 class Obstacles:
     """板の上の物（パッド・穴・逃げ穴・外形）。**板から読んだ物**で作る（宣言からではない）。"""
 
-    def __init__(self, pads, reliefs, edge):
+    def __init__(self, pads, reliefs, edge, keepouts=()):
         self.items = []                       # (種類, 形, ネット, 層の集合)
         self.reliefs = [list(p) for p in reliefs]     # 穴の中も通れない（辺だけでなく面で塞ぐ: blocked_x）
         for p in pads:
@@ -70,10 +77,11 @@ class Obstacles:
                          (box[2] - box[0]) / 2)
             else:
                 shape = ("box", box)
-            # 長円の非めっきの穴（V2 の位置決め・スタビのねじと爪）は、pcb_extra が縁に配線禁止の帯
-            # （NPTH_KEEPOUT・外形と同じ EDGE_BAND）を置く。帯の外を通るよう外形と同じ EDGE_GAP で離す
-            gap = (HOLE_GAP if p.get("round") else EDGE_GAP) if p["npth"] else PAD_GAP
+            gap = HOLE_GAP if p["npth"] else PAD_GAP
             self.items.append((gap, shape, p["net"] if not p["npth"] else "", layers))
+        # スタビのねじ・爪の穴の周りの禁止域（pcb_extra の STAB_HOLE_KEEPOUT・両面）
+        for c, r in keepouts:
+            self.items.append((KEEPOUT_GAP, ("circle", c, r), "", {F, B}))
         for poly in reliefs:
             for i in range(len(poly)):
                 self.items.append((EDGE_GAP, ("seg", poly[i], poly[(i + 1) % len(poly)]), "", {F, B}))
@@ -108,7 +116,8 @@ class Obstacles:
                 out.append((min(xs) - need, max(xs) + need))
         return out
 
-    def problems(self, net, layer, a, b):
+    def problems(self, net, layer, a, b, half=HALF_W):
+        """線 ab（半幅 half）が近すぎる物 [(形, 距離)]。"""
         out = []
         for gap, shape, n, layers in self.items:
             if layer not in layers or (n and n == net):
@@ -119,9 +128,15 @@ class Obstacles:
                 d = seg_seg_dist(shape[1], shape[1], a, b) - shape[2]
             else:
                 d = seg_seg_dist(shape[1], shape[2], a, b)
-            if d < gap + HALF_W - 1e-9:
+            if d < gap + half - 1e-9:
                 out.append((shape, round(d, 3)))
         return out
+
+
+def stab_keepouts(project, pads):
+    """板から読んだスタビ（ST\\d+）の非めっきの穴の中心に、spec.STAB_HOLE_KEEPOUT_R の円。[((x, y), r)]。"""
+    r = project.spec.STAB_HOLE_KEEPOUT_R
+    return [((p["x"], p["y"]), r) for p in pads if p["npth"] and re.fullmatch(r"ST\d+", p["ref"])]
 
 
 def escape(project, pads, reliefs=None, edge=None, others=()):
@@ -135,7 +150,7 @@ def escape(project, pads, reliefs=None, edge=None, others=()):
         ifc = interface.Interface(project)
         reliefs = ifc.stab_reliefs() if reliefs is None else reliefs
         edge = ifc.pcb if edge is None else edge
-    obs = Obstacles(pads, reliefs, edge)
+    obs = Obstacles(pads, reliefs, edge, stab_keepouts(project, pads))
     # XIAO のパッド内ビア（スルーホールのパッド）の位置とネット
     vpad = {p["net"]: (p["x"], p["y"]) for p in pads
             if p["ref"] == "U_MCU" and not p["npth"] and p["front"] and p["back"] and p["net"]}
@@ -205,7 +220,7 @@ def power_runs(project, pads, reliefs=None, edge=None, others=()):
         ifc = interface.Interface(project)
         reliefs = ifc.stab_reliefs() if reliefs is None else reliefs
         edge = ifc.pcb if edge is None else edge
-    obs = Obstacles(pads, reliefs, edge)
+    obs = Obstacles(pads, reliefs, edge, stab_keepouts(project, pads))
     pd = _pads(pads)
     extra = s.POWER_TRACK_W / 2 - HALF_W          # 太い線の半幅の増し分
     out = []
@@ -226,6 +241,58 @@ def power_runs(project, pads, reliefs=None, edge=None, others=()):
     return out
 
 
+def fixed_runs(project, pads, reliefs=None, edge=None, others=()):
+    """決まった形の線とビア（spec.FIXED_RUNS）。([(net, layer, a, b, 幅)], [(net, (x, y))])。
+
+    1 本は層ごとの区間（(層, [点...])）と ("via", (x, y)) の並び。端は宣言したパッドの中心か（frm / to）、
+    None なら前の板から持ってきた配線の端（route_pcb の --reroute で繋がる。最後に net_pieces と DRC が見る）。
+    板の物（パッド・穴・逃げ穴・外形・スタビの穴の禁止域）との間隔は線の半幅で、先に決まった線（others）
+    との間隔も見る。**近ければ落とす。**
+    """
+    s = project.spec
+    if reliefs is None or edge is None:
+        import interface
+        ifc = interface.Interface(project)
+        reliefs = ifc.stab_reliefs() if reliefs is None else reliefs
+        edge = ifc.pcb if edge is None else edge
+    obs = Obstacles(pads, reliefs, edge, stab_keepouts(project, pads))
+    pd = _pads(pads)
+    segs, vias = [], []
+    for net, how in sorted(getattr(s, "FIXED_RUNS", {}).items()):
+        w = how["w"]
+        pts_all = [pt for kind, pts in how["path"] if kind != "via" for pt in pts]
+        for end, ref in ((pts_all[0], how.get("frm")), (pts_all[-1], how.get("to"))):
+            if ref is None:
+                continue
+            x, y, n = pd[tuple(ref)]
+            if n != net or math.hypot(x - end[0], y - end[1]) > 1e-3:
+                raise ValueError(f"{net}: 端 {end} が {ref} のパッド ({x}, {y}, {n}) でない")
+        for kind, pts in how["path"]:
+            if kind == "via":
+                p = tuple(pts)
+                for layer in (F, B):
+                    bad = obs.problems(net, layer, p, p, half=VIA_R)
+                    if bad:
+                        raise ValueError(f"{net} のビア {p} が板の物に近い: {bad[:3]}")
+                vias.append((net, (round(p[0], 4), round(p[1], 4))))
+                continue
+            for a, b in zip(pts, pts[1:]):
+                bad = obs.problems(net, kind, a, b, half=w / 2)
+                bad += [(m, p, q) for m, l, p, q in others
+                        if l == kind and m != net and seg_seg_dist(a, b, p, q) < TRACK_CLEAR + w / 2 - HALF_W - 1e-9]
+                if bad:
+                    raise ValueError(f"{net} {kind} {a}->{b} が近い: {bad[:3]}")
+                segs.append((net, kind, (round(a[0], 4), round(a[1], 4)), (round(b[0], 4), round(b[1], 4)), w))
+    for n, p in vias:
+        for m, l, a, b, w in segs:
+            if m != n and seg_seg_dist(p, p, a, b) < VIA_R + CLEAR + w / 2 - 1e-9:
+                raise ValueError(f"{n} のビア {p} が {m} の線 {a}->{b} に近い")
+        for m, l, a, b in others:
+            if m != n and seg_seg_dist(p, p, a, b) < VIA_R + CLEAR + HALF_W - 1e-9:
+                raise ValueError(f"{n} のビア {p} が {m} の線 {a}->{b} に近い")
+    return segs, vias
+
+
 def plan(project, pads, reliefs=None, edge=None):
     """[(net, layer, (x1, y1), (x2, y2))]。pads は板から読んだパッド（CAD 座標・
     board_geometry.dump と同じ形: ref, num, net, x, y, box, front, back, npth, round）。
@@ -242,7 +309,7 @@ def plan(project, pads, reliefs=None, edge=None):
         ifc = interface.Interface(project)
         reliefs = ifc.stab_reliefs() if reliefs is None else reliefs
         edge = ifc.pcb if edge is None else edge
-    obs = Obstacles(pads, reliefs, edge)
+    obs = Obstacles(pads, reliefs, edge, stab_keepouts(project, pads))
     pd = _pads(pads)
     segs = []
 

@@ -168,7 +168,7 @@ def test_the_choc_stab_openings_are_widened_by_the_kerf(plate):
 
     p, part, _, positions = plate
     sw = switch_of(p.spec)
-    outer = max(x for x, _ in CHOC_V2_STAB_PLATE)            # 15.0375（羽の外の辺）
+    outer = max(x for x, _ in CHOC_V2_STAB_PLATE)            # 14.9375（羽の外の辺）
     lobe = [y for x, y in CHOC_V2_STAB_PLATE if x == outer]
     ym = (min(lobe) + max(lobe)) / 2
     probed = 0

@@ -1,11 +1,12 @@
 """CCKB の基板に、キー以外の物を置く（foundry.pcb が呼ぶ `place(board, ctx)`）。**KiCad の Python。**
 
 置くもの（決定記録 decisions/2026-09-24-interface.md §5-5 の凍結した境界）:
-  - スタビの逃げ穴 8 つ（Edge.Cuts・interface.stab_reliefs）
+  - スタビの箱の穴 8 つ（Edge.Cuts・interface.stab_reliefs）
   - XIAO（表・平ら・キャステレーション）・電池ホルダ（表）・電源スイッチ（表・スルーホール）・右のふたの柱の穴
   - 裏の電子部品（74LVC595 ×2・パスコン・電源のショットキー D_PWR・分圧）
   - ルール領域: アンテナの銅の禁止域（全層）・XIAO の下の表の銅の禁止（XIAO の裏のパッドと短絡させない）・
-    基板の面に当たる金属（ナット・インサート・電源スイッチの枠の爪）の下の銅の禁止
+    基板の面に当たる金属（ナット・インサート・電源スイッチの枠の爪）の下の銅の禁止・
+    スタビのねじ・爪の穴の周りの線とビアの禁止（STAB_HOLE_KEEPOUT。ベタの GND は入る）
   - ネットクラス POWER
 
 **寸法は持たない**（spec.py・interface.py）。持つのは規則に足す余裕（EDGE_BAND の ＋0.02）と、
@@ -169,40 +170,6 @@ def circle_poly(c, r, n=24):
              c[1] + R * math.sin(2 * math.pi * (i + 0.5) / n)) for i in range(n)]
 
 
-def stadium_poly(c, w, h, grow, n=12):
-    """長円（中心 c・X 幅 w・Y 幅 h）を grow だけ広げ、**外に接する**多角形で（長円を必ず覆う）。CAD。"""
-    r = min(w, h) / 2 + grow
-    half = (max(w, h) - min(w, h)) / 2
-    R = r / math.cos(math.pi / (2 * n))
-    pts = []
-    for end in (1, -1):
-        ox, oy = (end * half, 0.0) if w >= h else (0.0, end * half)
-        base = 0.0 if w >= h else math.pi / 2
-        a0 = base - math.pi / 2 if end == 1 else base + math.pi / 2
-        for i in range(n + 1):
-            a = a0 + math.pi * (i + 0.5) / (n + 1)
-            pts.append((c[0] + ox + R * math.cos(a), c[1] + oy + R * math.sin(a)))
-    return pts
-
-
-def npth_ovals(board, origin):
-    """板の上の非めっきの**長円**の穴（V2 の位置決め・スタビのねじと爪）。[(ref, (x, y), w, h)]（CAD）。"""
-    out = []
-    for fp in board.GetFootprints():
-        for p in fp.Pads():
-            if p.GetAttribute() != pcbnew.PAD_ATTRIB_NPTH or p.GetDrillShape() != pcbnew.PAD_DRILL_SHAPE_OBLONG:
-                continue
-            ds = p.GetDrillSize()
-            w, h = _mm(ds.x), _mm(ds.y)
-            deg = round(p.GetOrientation().AsDegrees()) % 180
-            if deg == 90:
-                w, h = h, w
-            elif deg != 0:
-                raise RuntimeError(f"{fp.GetReference()} の長円の穴が {deg}° 回っている（軸に平行だけ扱う）")
-            out.append((fp.GetReference(), _cad(p.GetPosition(), origin), w, h))
-    return out
-
-
 # 外形・逃げ穴の縁の、配線・ビアを入れない帯の幅。JLC の銅と外形の規則に 0.02 足す。
 # 自分で引く行列（matrix_routes.EDGE_GAP・規則 ＋ 0.05）はこの外にいる
 EDGE_BAND = JLC["edge_clearance"] + 0.02
@@ -304,11 +271,12 @@ def place(board, ctx):
     for poly in ifc.stab_reliefs():
         rule_area(board, ctx, interface.poly_offset_axis(poly, w), both, "EDGE_KEEPOUT",
                   fills=False)
-    # 非めっきの長円の穴（スタビのねじと爪の穴 16。2026-09-26 に位置決めは丸 φ2.1 にした）の縁にも同じ帯。**Freerouting は
-    # 長円の穴を DSN で正しく避けず、穴と銅 0.3 を割った**（2026-09-25 の 1 回目: SPI_SCK が 0.216）。
-    # 丸い穴（中心 φ5.05 など）は割っていない
-    for _, c, ow, oh in npth_ovals(board, origin):
-        rule_area(board, ctx, stadium_poly(c, ow, oh, w), both, "NPTH_KEEPOUT", fills=False)
+    # スタビのねじ・爪の丸穴（16）の周り: 線・ビアを入れない（ベタは入れてよい。ベタは GND だけ）。
+    # 穴はきつい側に開けてあり、実物が入らなければ手で広げる。そのとき信号を切らない（spec.STAB_HOLE_KEEPOUT_R）。
+    # 前（2026-09-25〜26）は長円の穴の縁に NPTH_KEEPOUT の帯を置いていた（Freerouting が長円を正しく避けなかった）。
+    # 板の長円は 0 になったので消した
+    for c, r in ifc.stab_hole_keepouts():
+        rule_area(board, ctx, circle_poly(c, r), both, "STAB_HOLE_KEEPOUT", fills=False)
 
     # --- ネットクラス（**Recompute しないと割り当てが効かない**）---------------
     d = board.GetDesignSettings()

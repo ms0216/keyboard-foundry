@@ -299,12 +299,14 @@ def z_problems(ifc):
     box = thin - s.STAB_BOX_L
     if box < z["pocket_floor"] + 0.1:
         out.append(f"スタビの箱（最悪 {box:.2f}）が床の穴の底 {z['pocket_floor']:.2f} に 0.1 未満")
+    # スタビのねじの頭（基板の下面に着く。φ3.7 × 1.5・[暫定]）の下にも止まり穴（2026-09-26・監査 E 重要 2）
+    if z["stab_screw_head"] < z["pocket_floor"] + 0.1:
+        out.append(f"スタビのねじの頭（{z['stab_screw_head']:.2f}）が床の穴の底 {z['pocket_floor']:.2f} に 0.1 未満")
     if z["pocket_floor"] < 0.8 - 1e-9:
         out.append(f"床の穴の底の肉 {z['pocket_floor']:.2f} が 0.8（0.2 層で 4 層）未満")
     for name, h in (("BAT46W", 1.25), ("TSSOP-16", 1.2), ("裏の部品の包絡", s.BOTTOM_PART_H),
                     ("電源スイッチの切った足", s.PSW_PIN_TRIM),
-                    ("スタビの爪", s.STAB_CLAW_L - s.PCB_T * (1 - s.PCB_T_TOL)),
-                    ("スタビのねじの頭", s.STAB_SCREW_HEAD_H)):
+                    ("スタビの爪", s.STAB_CLAW_L - s.PCB_T * (1 - s.PCB_T_TOL))):
         if h > s.UNDER_PCB - 0.3:
             out.append(f"{name} が床に 0.3 未満")
     if abs(z["plate_top"] - z["plate_bottom"] - ifc.sw.plate_t) > 1e-9 or \
@@ -344,6 +346,7 @@ def test_the_z_stack_holds(ifc):
     (dict(FLOOR_POCKET_DEPTH=0.2), "中心の突起"),          # 穴が浅い
     (dict(FLOOR_POCKET_DEPTH=0.6), "床の穴の底の肉"),
     (dict(STAB_CLAW_L=3.2), "スタビの爪"),
+    (dict(STAB_SCREW_HEAD_H=2.2), "スタビのねじの頭"),
     (dict(SCREW_L=8), "皿の座ぐり"),          # 頭の沈めは先から導くので、長いネジは頭が机の下へ出る
     (dict(SCREW_L=5), "皿の座ぐり"),          # 短いネジは頭がボスの上の肉を食う
     (dict(SCREW_PAST_NUT=-0.2), "ネジの先"),
@@ -367,6 +370,7 @@ def stiffness_margins(ifc):
     return {"足": thin - (s.SWITCH_PIN_L + s.SWITCH_PIN_TOL) - z["pocket_floor"],
             "中心の突起": thin - (s.SWITCH_STUD_L + s.SWITCH_STUD_TOL) - z["pocket_floor"],
             "スタビの箱": thin - s.STAB_BOX_L - z["pocket_floor"],
+            "スタビのねじの頭": z["stab_screw_head"] - z["pocket_floor"],
             "裏の部品": z["pcb_bottom"] - s.BOTTOM_PART_H - s.CASE_FLOOR}
 
 
@@ -396,6 +400,9 @@ def test_the_stiffness_check_notices_a_shallow_pocket():
 # ---------------------------------------------------------------------------
 
 def stab_problems(ifc, geo=None):
+    """スタビの箱の穴（Edge.Cuts）: 箱（図の 5.80 × 7.30・参照）を x 片側 0.1・y 片側 0.35 以上の隙で含む
+    （x 6.0 は販売者の足跡〔実物の実測〕の値。外形の公差 ±0.2 できつければやすりで広げる・lessons K）。
+    箱の穴とねじ・爪の丸穴の間の基板の橋が 0.7 以上（ねじ: 6.2 − 1.5 − 4.0）。"""
     out = []
     reliefs, housings = ifc.stab_reliefs(), ifc.stab_housings()
     if len(reliefs) != 8 or len(housings) != 8:
@@ -403,23 +410,15 @@ def stab_problems(ifc, geo=None):
     for rel, hou in zip(reliefs, housings):
         r, h = I.poly_box(rel), I.poly_box(hou)
         gx, gy = min(h[0] - r[0], r[2] - h[2]), min(h[1] - r[1], r[3] - h[3])
-        # x は外形公差 0.2 ＋ 0.2。y はサリチル酸さんの実物の値 0.1（spec.STAB_RELIEF_MARGIN の理由）
-        if gx < 0.4 - 1e-9 or gy < 0.1 - 1e-9:
-            out.append(f"逃げ穴とハウジングの隙 x {gx:.2f}（0.4）・y {gy:.2f}（0.1）")
-    # 箱の穴（Edge.Cuts）とねじ・爪の穴（非めっき）の間の基板の橋。サリチル酸さんの足跡の 0.75 を下回らない
-    from foundry.mech import CHOC_V2_STAB_HOLES
-    for px, py, sd in ifc.stab_pivots():
-        rel = ifc._pivot_rect(px, py, sd, CHOC_V2_STAB_HOLES["box"])
-        mx, my = ifc.s.STAB_RELIEF_MARGIN
-        rb = I.poly_box(rel)
-        rb = (rb[0] - mx, rb[1] - my, rb[2] + mx, rb[3] + my)
-        for k in ("screw", "claw"):
-            (hx, hy), (w, hh) = CHOC_V2_STAB_HOLES[k]
-            c = (px + sd * hx, py + hy)
-            hole = (c[0] - w / 2, c[1] - hh / 2, c[0] + w / 2, c[1] + hh / 2)
-            web = I.rect_gap(rb, hole)
-            if web < 0.75 - 1e-9:
-                out.append(f"箱の穴と{k}の穴の橋 {web:.2f}（0.75 未満）")
+        if gx < 0.1 - 1e-9 or gy < 0.35 - 1e-9:
+            out.append(f"逃げ穴とハウジングの隙 x {gx:.2f}（0.1）・y {gy:.2f}（0.35）")
+    holes = ifc.stab_holes()
+    if len(holes) != 16:
+        out.append(f"ねじ・爪の穴 {len(holes)}（16）")
+    for kind, c, d in holes:
+        web = min(I.circle_poly_gap(c, d / 2, rel) for rel in reliefs)
+        if web < 0.7 - 1e-9:
+            out.append(f"箱の穴と{kind}の穴の橋 {web:.2f}（0.7 未満）")
     if geo is not None:
         for rel in reliefs:
             for pad in geo["pads"]:
@@ -435,13 +434,20 @@ def test_the_stab_relief_contains_the_housing(ifc):
     assert stab_problems(ifc) == []
 
 
-def test_the_stab_check_notices_a_thin_margin():
-    assert any("隙" in b for b in stab_problems(ifc_with(STAB_RELIEF_MARGIN=(0.1, 0.0))))
+def _holes_with(monkeypatch, **kw):
+    H = dict(I.CHOC_V2_STAB_HOLES)
+    H.update(kw)
+    monkeypatch.setattr(I, "CHOC_V2_STAB_HOLES", H)
+    return I.Interface()
 
 
-def test_the_stab_check_notices_a_thin_web():
-    """1 回目の板の穴（y にも 0.3 広げた）では、ねじの穴との橋が 0.2 になった。"""
-    assert any("橋" in b for b in stab_problems(ifc_with(STAB_RELIEF_MARGIN=(0.3, 0.3))))
+def test_the_stab_check_notices_a_thin_margin(monkeypatch):
+    assert any("隙" in b for b in stab_problems(_holes_with(monkeypatch, box=(-2.95, -4.0, 2.95, 4.0))))
+
+
+def test_the_stab_check_notices_a_thin_web(monkeypatch):
+    """1 回目の板の穴（y にも広げた）では、ねじの穴との橋が 0.2 になった。"""
+    assert any("橋" in b for b in stab_problems(_holes_with(monkeypatch, box=(-3.0, -4.5, 3.0, 4.5))))
 
 
 # ---------------------------------------------------------------------------
@@ -717,6 +723,19 @@ def floor_pocket_problems(ifc, geo):
             hb = I.poly_box(h)
             if I.rect_gap(b["box"], hb) < 0 and not I.inside(b["box"], hb, 0.3):
                 out.append(f"{b['ref']} の穴が箱 {hb} を 0.3 以上の余裕で含まない")
+    # スタビのねじの頭: 板のスタビ（ST\d+）の小さい方の穴（ねじ）の真下に、頭 φSTAB_SCREW_HEAD_D ＋ 片側 0.3 以上
+    screws = []
+    for ref in sorted({p["ref"] for p in geo["pads"] if re.fullmatch(r"ST\d+", p["ref"])}):
+        hs = [p for p in geo["pads"] if p["ref"] == ref]
+        small = min(p["drill"] for p in hs)
+        screws += [p for p in hs if p["drill"] == small]
+    heads = [p for p in pk if p["kind"] == "stab_screw"]
+    if len(screws) != 8 or len(heads) != 8:
+        out.append(f"ねじの穴 {len(screws)} / 頭の止まり穴 {len(heads)}（8）")
+    for h in screws:
+        if not any(math.hypot(p["pos"][0] - h["x"], p["pos"][1] - h["y"]) < 1e-3
+                   and p["d"] >= ifc.s.STAB_SCREW_HEAD_D + 0.6 - 1e-9 for p in heads):
+            out.append(f"{h['ref']} のねじ ({h['x']:.2f}, {h['y']:.2f}) の頭の下に止まり穴が無い（か狭い）")
     return out
 
 
@@ -726,7 +745,8 @@ def test_the_floor_pockets_sit_under_every_hole_of_the_switches(ifc, geo):
 
 def test_the_pocket_check_notices_a_tight_pocket(geo):
     bad = floor_pocket_problems(ifc_with(FLOOR_POCKET_CLEAR=0.1), geo)
-    assert any("突起" in b for b in bad) and any("箱" in b for b in bad) and any("足の穴" in b for b in bad), bad
+    assert any("突起" in b for b in bad) and any("箱" in b for b in bad) and any("足の穴" in b for b in bad) \
+        and any("頭" in b for b in bad), bad
 
 
 def test_the_pocket_check_notices_pins_without_pockets(ifc, geo):

@@ -129,6 +129,20 @@ def power_segments(board, others):
     return matrix_routes.power_runs(load(PROJ), geo["pads"], others=others)
 
 
+def fixed_segments(board, others):
+    """決まった形の線とビア（matrix_routes.fixed_runs・spec.FIXED_RUNS）。([(net, layer, a, b, 幅)], [(net, (x, y))])"""
+    geo = board_geometry.dump_board(board)
+    return matrix_routes.fixed_runs(load(PROJ), geo["pads"], others=others)
+
+
+def lay_fixed(board, segs):
+    """幅つきの決まった線を置く（幅ごとに lay_segments）。置いた数。"""
+    n = 0
+    for w in sorted({s[4] for s in segs}):
+        n += lay_segments(board, [s[:4] for s in segs if s[4] == w], width=w)
+    return n
+
+
 def power_ends(proj):
     """電源の決まった線の網 → DSN に残すピン名の集合から外すピン（線の to の端。from と線で繋がっている）。"""
     return {net: f"{how['to'][0]}-{how['to'][1]}" for net, how in getattr(proj.spec, "POWER_RUNS", {}).items()}
@@ -589,7 +603,7 @@ def restore_rule_areas(board):
     want = {"ANTENNA_KEEPOUT": (pcbnew.F_Cu, pcbnew.B_Cu), "XIAO_UNDERSIDE": (pcbnew.F_Cu,),
             "EDGE_KEEPOUT": (pcbnew.F_Cu, pcbnew.B_Cu), "METAL_KEEPOUT": (pcbnew.F_Cu,),
             "PSW_TAB_KEEPOUT": (pcbnew.F_Cu,),      # 電源スイッチの枠の爪の下（pcb_extra.psw_tab_keepouts）
-            "NPTH_KEEPOUT": (pcbnew.F_Cu, pcbnew.B_Cu)}  # 長円の非めっきの穴の縁（pcb_extra.npth_ovals）
+            "STAB_HOLE_KEEPOUT": (pcbnew.F_Cu, pcbnew.B_Cu)}  # スタビのねじ・爪の穴の周り（spec.STAB_HOLE_KEEPOUT_R）
     seen = set()
     for z in board.Zones():
         if not z.GetIsRuleArea():
@@ -602,12 +616,8 @@ def restore_rule_areas(board):
             ls.addLayer(lay)
         z.SetLayerSet(ls)
         seen.add(name)
-    # NPTH_KEEPOUT は長円の非めっきの穴があるときだけ（2026-09-26 に位置決めの長円 62 を丸にした。いまはスタビの 16 が残る）
-    ovals = any(p.GetAttribute() == pcbnew.PAD_ATTRIB_NPTH and p.GetDrillShape() == pcbnew.PAD_DRILL_SHAPE_OBLONG
-                for fp in board.GetFootprints() for p in fp.Pads())
-    need = set(want) if ovals else set(want) - {"NPTH_KEEPOUT"}
-    if not need <= seen:
-        raise SystemExit(f"ルール領域が足りない: {need - seen}")
+    if not set(want) <= seen:
+        raise SystemExit(f"ルール領域が足りない: {set(want) - seen}")
 
 
 def widen_thin(board):
@@ -1323,6 +1333,9 @@ def main():
     pw = power_segments(board, segs)
     n_pw = lay_segments(board, pw, width=pw_w)
     n_oe = lay_segments(board, oe_ties(board), width=0.3)   # GND のスタブと同じ太さ（SES 後の置き直しも 0.3）
+    fx, fvias = fixed_segments(board, segs + pw)
+    n_fx = lay_fixed(board, fx)
+    lay_vias(board, fvias)
     space = Space(board)
     fan = gnd_fanout(board, space)
     fan_tracks = [(t.GetNetname(), t.GetLayerName(), cad(t.GetStart()), cad(t.GetEnd()))
@@ -1330,7 +1343,8 @@ def main():
                   and t.GetNetname() == "GND"]
     fan_vias = [cad(t.GetPosition()) for t in board.GetTracks()
                 if t.GetClass() == "PCB_VIA" and t.GetNetname() == "GND"]
-    print(f"   行列 {n_mx} 区間 / 電源の決まった線 {n_pw} 区間 / OE と GND の線 {n_oe} 区間 / GND ファンアウト {len(fan)} 個")
+    print(f"   行列 {n_mx} 区間 / 電源の決まった線 {n_pw} 区間 / OE と GND の線 {n_oe} 区間 / 決まった形の線 {n_fx} 区間・ビア {len(fvias)}"
+          f" / GND ファンアウト {len(fan)} 個")
     if reroute is not None:
         bad = kept_in_rule_areas(board, k_tracks, k_vias)
         if bad:
@@ -1374,6 +1388,13 @@ def main():
             lay_segments(board, miss_pw, width=pw_w)
         if tracks_present(board, pw):
             raise SystemExit(f"電源の決まった線が置き直せない: {tracks_present(board, pw)[:5]}")
+        for w in sorted({s[4] for s in fx}):
+            miss_fx = tracks_present(board, [s[:4] for s in fx if s[4] == w])
+            if miss_fx:
+                lay_segments(board, miss_fx, width=w)
+        lay_vias(board, fvias)
+        if tracks_present(board, [s[:4] for s in fx]):
+            raise SystemExit(f"決まった形の線が置き直せない: {tracks_present(board, [s[:4] for s in fx])[:5]}")
         have_gnd = tracks_present(board, fan_tracks)
         if have_gnd:
             lay_segments(board, have_gnd, width=0.3)
@@ -1460,7 +1481,8 @@ def main():
                unrouted_sha256=hashlib.sha256(SRC.read_bytes()).hexdigest(),
                freerouting=JAR.name, passes=PASSES, margin_um=info["margin_um"],
                margins_tried=info["tried"],
-               matrix_segments=n_mx, power_segments=n_pw, gnd_fanout=len(fan), ring=n_ring, fence=n_fence,
+               matrix_segments=n_mx, power_segments=n_pw, fixed_segments=n_fx, fixed_vias=len(fvias),
+               gnd_fanout=len(fan), ring=n_ring, fence=n_fence,
                grid=n_grid, island_vias=n_is, second_island_vias=n_dbl,
                single_via_islands=[dict(layer="F.Cu" if lay == pcbnew.F_Cu else "B.Cu",
                                         area_mm2=round(a, 2), length_mm=round(L, 2))

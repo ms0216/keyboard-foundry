@@ -46,7 +46,7 @@ import keycaps as KC  # noqa: E402
 from case import Case, box, cone, cyl, fuse, hex_prism, prism, rbox  # noqa: E402
 from foundry import paths  # noqa: E402
 from foundry.layout import UNIT  # noqa: E402
-from foundry.mech import CHOC_V2_STAB_SOURCES  # noqa: E402
+from foundry.mech import CHOC_V2_STAB_HOLES, CHOC_V2_STAB_SOURCES  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -396,16 +396,18 @@ class Assembly:
         return out
 
     def stab_solids(self, pressed=False):
-        """スタビ（遊舎工房 A050001-01-1・非公式の図 mech.CHOC_V2_STAB_SOURCES["drawing"]）を支点ごとに。
+        """スタビ（遊舎工房 A050001-01-1）を支点ごとに。位置は販売者の足跡（実物の実測・mech.CHOC_V2_STAB_HOLES）、
+        足跡に無い形は仕入れ先の図（参照・mech.CHOC_V2_STAB_SOURCES["drawing"]）と縮尺の読み（case_spec）。
 
-        支点（キーの中心 ± stab_offset 12.0）から、基板の上面を高さ 0 として（y はキーの中心から・ワイヤ = 奥 = +y）:
+        支点（キーの中心 ± mech.CHOC_V2_STAB_PIVOT 11.9）から、基板の上面を高さ 0 として（y はキーの中心から・ワイヤ = 奥 = +y）:
           ねじのボス   y −8.50〜−3.65（丸い端 r 2.90）・幅 5.80・高さ 2.85
-          箱           y ±3.65・幅 5.80・下 −3.30（基板の穴を通る。薄い板の分 0.16 さらに下）〜上 5.00
-          肩           y 3.65〜7.90・幅 5.80・高さ STAB_SHOULDER_H（縮尺で読んだ）
-          爪           φ3.50 を y 8.50 に・下 −2.65〜上 STAB_CLAW_TOP
-          ねじの頭     φ2.78 を y −6.20 に・基板の下面から 1.15
+          箱           y ±3.65・幅 5.80・下 −3.30（基板の穴を通る。薄い板の分 0.16 さらに下）〜上 5.00。
+                       押したときは上面の口（スライダーの胴 STAB_SLIDER_W 角）が行程だけ空く（キャップの台が入る）
+          肩           y 3.65〜爪の手前・幅 5.80・高さ STAB_SHOULDER_H（縮尺で読んだ）
+          爪           φ3.50 を y 8.24（足跡の爪の穴の中心）に・下 −2.65〜上 STAB_CLAW_TOP
+          ねじの頭     φSTAB_SCREW_HEAD_D を y −6.20 に・基板の下面から STAB_SCREW_HEAD_H（2026-09-26 に φ2.78 × 1.15 から）
           軸           十字 3.95 × 1.26・箱の上面から 8.60（押し切ると travel 沈む）
-        ワイヤ φ1.20 はキーごとに左右の爪の間を y 8.50・高さ STAB_WIRE_Z（角の包絡）。
+        ワイヤ φ1.20 はキーごとに左右の爪の間を爪の y・高さ STAB_WIRE_Z（角の包絡）。
         """
         s, c, z = self.s, self.c, self.z
         d = CHOC_V2_STAB_SOURCES["drawing"]
@@ -413,23 +415,29 @@ class Assembly:
         w2 = d["part"][0] / 2
         half = d["part"][1] / 2
         front = d["length"] - (d["claw"][0] + d["ring"] / 2)            # 8.50
+        screw_y, claw_y = CHOC_V2_STAB_HOLES["screw"][0][1], CHOC_V2_STAB_HOLES["claw"][0][1]
         dz = -self.travel() if pressed else 0.0
         out = []
         piv = self.i.stab_pivots()
         for px, py, _ in piv:
             thin = s.PCB_T_TOL_ABS          # 薄い板では下へ出る物の先がその分下がる（switch_solids と同じ）
-            parts = [box(px - w2, py - half, T - s.STAB_BOX_L - thin, px + w2, py + half, T + d["box_top"]),
+            body = box(px - w2, py - half, T - s.STAB_BOX_L - thin, px + w2, py + half, T + d["box_top"])
+            if pressed:                     # スライダーの胴が沈んで空いた口
+                sw = c.STAB_SLIDER_W / 2
+                body = body - box(px - sw, py - sw, T + d["box_top"] + dz, px + sw, py + sw, T + d["box_top"] + 1)
+            parts = [body,
                      box(px - w2, py - front + w2, T, px + w2, py - half + 0.01, T + d["boss_top"]),
                      cyl(px, py - front + w2, T, T + d["boss_top"], 2 * w2),
-                     box(px - w2, py + half - 0.01, T, px + w2, py + d["claw"][0] - 0.6, T + c.STAB_SHOULDER_H),
-                     cyl(px, py + d["claw"][0], T - s.STAB_CLAW_L - thin, T + c.STAB_CLAW_TOP, d["ring"]),
-                     cyl(px, py + d["screw"][0], z["pcb_bottom"] - s.STAB_SCREW_HEAD_H, z["pcb_bottom"] + 0.01, 2.78)]
-            parts += [Pos(px, py, 0) * q for q in KC.cross(0.0, T + d["box_top"] - 0.01,
+                     box(px - w2, py + half - 0.01, T, px + w2, py + claw_y - 0.6, T + c.STAB_SHOULDER_H),
+                     cyl(px, py + claw_y, T - s.STAB_CLAW_L - thin, T + c.STAB_CLAW_TOP, d["ring"]),
+                     cyl(px, py + screw_y, z["pcb_bottom"] - s.STAB_SCREW_HEAD_H, z["pcb_bottom"],   # 頭は基板の下面に着く
+                         s.STAB_SCREW_HEAD_D)]
+            parts += [Pos(px, py, 0) * q for q in KC.cross(0.0, T + d["box_top"] - 0.01 + dz,
                                                           T + d["stem_top"] + dz, d["slider"])]
             out.append(fuse(parts))
         for (xl, yl, _), (xr, _, _) in zip(piv[0::2], piv[1::2]):
             r = d["wire"] / 2
-            out.append(box(xl, yl + d["claw"][0] - r, T + c.STAB_WIRE_Z - r, xr, yl + d["claw"][0] + r,
+            out.append(box(xl, yl + claw_y - r, T + c.STAB_WIRE_Z - r, xr, yl + claw_y + r,
                            T + c.STAB_WIRE_Z + r))
         return out
 
