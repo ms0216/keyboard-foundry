@@ -11,6 +11,10 @@
                  長さ 4.10〜4.20（行・左の切り欠き 1〜3 本）の格子 12 本。2 段目: 筒の外径 5.3 / 5.4 / 5.5 の小さな
                  天板 3 枚（切り欠き 1〜3 本。こじって外し、腕の先が割れないか）と、スタビの受け口の板 3 枚
                  （支点 23.8・十字の穴の幅 1.31 / 1.36 / 1.41 = 切り欠き 1〜3 本。本番は 1.36。軸が戻らなければ締めた方）
+  coupon_skin    **膜の抜き差しと縁の押し**（2026-09-28・天板をステムの上だけ膜 0.6 にした）。本番の 1u のキャップを膜
+                 0.6 / 0.8 / 1.0 で 3 個（スカートの切り欠き 1〜3 本）。静音のスイッチに挿し、天板の縁に爪をかけて 10 回抜き差し、
+                 縁の真ん中を押す。膜・つばの上の輪（0.6 なら 1 層 0.2）が割れないか・白くならないか・筒が膜から取れないか。
+                 割れなかった一番薄い物を spec.KEYCAP_TOP_T に
   coupon_stab_return  **スタビの軸がキャップと一緒に戻るか**（2026-09-26・監査 E 重要 1）。基板の代わりの板（厚さ
                  spec.PCB_T・本番の基板と同じ穴の位置。刷った穴は COUPON_BOARD_HOLE_CLEAR だけ広げる）と、本番の
                  2.25u のキャップ 1 個。板にスタビをねじで留め、スイッチを挿し、キャップを挿して押し切って離す。
@@ -118,12 +122,13 @@ def stem_grid(cs=CS, spec=None):
 
 
 def stem_coupon(od, idx, cs=CS, spec=None):
-    """筒の外径 od の小さな天板（14 角・本番の十字の穴・つばの窪み）。こじって外す試しにも使う。"""
+    """筒の外径 od の小さな天板（14 角・本番の十字の穴・本番と同じ場所ごとの厚さ〔膜・つばの上の輪〕）。"""
     import keycaps
 
     t = spec.KEYCAP_TOP_T
     a = 14.0
-    part = fuse([box(-a / 2, -a / 2, 0, a / 2, a / 2, t), keycaps.switch_socket(cs, od=od)])
+    plate = keycaps.cap_plate(a, a, spec, CHOC_V2, cs, chamfered=False)
+    part = fuse([plate, keycaps.switch_socket(cs, od=od)])
     part = part - fuse(keycaps.socket_holes(spec, cs))
     part = notches(part, idx + 1, -a / 2 + 1.5, -a / 2, t)
     return Rot(180, 0, 0) * part.clean()
@@ -137,11 +142,41 @@ def stab_cap_coupon(width, idx, cs=CS, spec=None, pivot=CHOC_V2.stab_offset[2.25
     t = spec.KEYCAP_TOP_T
     w, d = 2 * pivot + cs.STAB_SOCKET_BOSS_D + 4.0, 10.0
     xs = (-pivot, pivot)
-    part = fuse([box(-w / 2, -d / 2, 0, w / 2, d / 2, t), keycaps.switch_socket(cs)]
-                + keycaps.stab_bosses(xs, spec, cs))
+    plate = keycaps.cap_plate(w, d, spec, CHOC_V2, cs, chamfered=False)      # 本番と同じ場所ごとの厚さ（台の上は 1.0）
+    part = fuse([plate, keycaps.switch_socket(cs)] + keycaps.stab_bosses(xs, spec, cs))
     part = part - fuse(keycaps.socket_holes(spec, cs, stab_xs=xs, stab_slot=(cs.STAB_CROSS_SLOT[0], width)))
     part = notches(part, idx + 1, -w / 2 + 1.5, -d / 2, t)
     return Rot(180, 0, 0) * part.clean()
+
+
+class _Over:
+    """spec の一部の値だけ替えた物（小片で膜の厚さを変える）。"""
+
+    def __init__(self, base, **values):
+        self._base = base
+        self.__dict__.update(values)
+
+    def __getattr__(self, name):
+        return getattr(self._base, name)
+
+
+def skin_coupon(ifc, cs=CS):
+    """膜の抜き差しの小片: **本番の 1u のキャップ**を膜 COUPON_SKIN_TS（0.6 / 0.8 / 1.0）で 3 個。場所ごとの厚さは本番と
+    同じ式（keycaps.plate_levels）で膜から導く（つばの上の輪は 0.2 / 0.4 / 0.6）。スカートの手前の下端に切り欠き
+    1〜3 本（表の順）。天板をベッドに（本番と同じ向き）。"""
+    import keycaps
+
+    caps = []
+    g = ifc.s.KEYCAP_GAP
+    d = UNIT - 2 * g
+    zb = -cs.KEYCAP_SKIRT_H
+    for i, t in enumerate(cs.COUPON_SKIN_TS):
+        cap = keycaps.keycap(1.0, _Over(ifc.s, KEYCAP_TOP_T=t), ifc.sw, cs)
+        for k in range(i + 1):
+            x = -4.0 + 2.0 * k
+            cap = cap - box(x, -d / 2 - 1, zb - 1, x + 0.8, -d / 2 + 2, zb + 0.4)
+        caps.append(Rot(180, 0, 0) * cap.clean())
+    return row(caps, cs.COUPON_GAP)
 
 
 def board_standin(ifc, cs=CS):
@@ -242,6 +277,7 @@ def parts(ifc=None, cs=CS):
                                   + [stab_cap_coupon(sw, i, cs, s) for i, sw in enumerate(cs.COUPON_STAB_SLOT_WIDTHS)],
                                   cs.COUPON_GAP)], cs.COUPON_GAP),
         "coupon_stab_return": stab_return_coupon(ifc, cs),
+        "coupon_skin": skin_coupon(ifc, cs),
         "coupon_nut": nut_coupon(cs, ifc.sw),
         "coupon_insert": insert_coupon(s, cs),
     }

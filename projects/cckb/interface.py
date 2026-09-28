@@ -175,8 +175,9 @@ class Interface:
             plate_bottom=plate_top - self.sw.plate_t, plate_top=plate_top,
             switch_top=top + s.SWITCH_TOP_ABOVE_PCB, stem_top=top + s.SWITCH_STEM_ABOVE_PCB,
             keycap_top=top + s.SWITCH_STEM_ABOVE_PCB + s.KEYCAP_TOP_T,
-            # 押し切ったキャップの上面: 静音の全行程の最大（SWITCH_TRAVEL ＋ TOL）だけ沈む。キャップはつばの上で
-            # 窪ませてあり、つば・ハウジングには当たらない（keycaps.py・tests/test_cckb_case.py）
+            # 押し切ったキャップの上面: 静音の全行程の最大（SWITCH_TRAVEL ＋ TOL）だけ沈む。天板は場所ごとに
+            # 押し切りで当たらない厚さにしてあり、つば・ハウジング・スタビの箱には当たらない（keycaps.plate_levels・
+            # tests/test_cckb_case.py）。縁 rim より 0.85 低い（2026-09-28 に膜 0.6 にして。前は 0.25）
             keycap_bottomed=top + s.SWITCH_STEM_ABOVE_PCB + s.KEYCAP_TOP_T - s.SWITCH_TRAVEL - s.SWITCH_TRAVEL_TOL,
             collar_top=top + s.SWITCH_COLLAR_ABOVE_PCB,
             rim=rim, lid_bottom=rim - s.LID_T,

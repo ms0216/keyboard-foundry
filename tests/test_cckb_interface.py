@@ -326,10 +326,11 @@ def z_problems(ifc):
     if s.CASE_FLOOR < 1.2 - 1e-9 or z["island_top"] - s.ANTISLIP_RECESS < 1.2 - 1e-9 \
             or s.ANTISLIP_SHEET_T <= s.ANTISLIP_RECESS:
         out.append("滑り止め（床・島の残りか、シートが接地しない）")
-    # 全体の厚さ: V1 で利用者が決めた 13.8（O10）に、V2 の +0.6（ステム 8.0 → 8.6）を足した 14.4。
-    # 2026-09-25 利用者の決定（基板の下の空きは 1.8 のまま・床に止まり穴。決定記録 2026-09-25-choc-v2 §4-2 の案 2）
-    if z["keycap_top"] > 14.4 + 1e-9:
-        out.append(f"全体の厚さ {z['keycap_top']:.2f} が利用者の決めた 14.4 を超える（O10 ＋ V2）")
+    # 全体の厚さ: V1 で利用者が決めた 13.8（O10）に、V2 の +0.6（ステム 8.0 → 8.6）を足した 14.4
+    # （2026-09-25 利用者の決定。決定記録 2026-09-25-choc-v2 §4-2 の案 2）から、**2026-09-28 利用者の決定**で
+    # キャップの天板をステムの上だけ膜 0.6 にして −0.6 = 13.8（決定記録 2026-09-28-keycap-skin）
+    if z["keycap_top"] > 13.8 + 1e-9:
+        out.append(f"全体の厚さ {z['keycap_top']:.2f} が利用者の決めた 13.8 を超える（O10 ＋ V2 ＋ 膜）")
     return out
 
 
@@ -355,6 +356,7 @@ def test_the_z_stack_holds(ifc):
     (dict(CASE_FLOOR=1.0), "滑り止め"),
     (dict(CASE_FLOOR=1.6), "全体の厚さ"),
     (dict(SWITCH_STEM_ABOVE_PCB=8.7), "全体の厚さ"),
+    (dict(KEYCAP_TOP_T=0.8), "全体の厚さ"),     # 膜を 0.8 に戻すと（coupon_skin の控え）13.8 を超える
     (dict(ANTISLIP_SHEET_T=0.4), "滑り止め"),
     (dict(RIM_ABOVE_PCB=5.5), "縁"),
 ])

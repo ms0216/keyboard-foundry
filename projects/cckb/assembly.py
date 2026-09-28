@@ -246,7 +246,7 @@ HELD_BY = {
     "screws": "ナット（キーの下 9）とインサート（H3）へねじ込み",
     "screw_lid": "柱のインサートへねじ込み。ふたの膜が抜け落ちを止める",
     "inserts": "熱圧入（下穴 INSERT_HOLE_D が外径より小さい）",
-    "keycaps": "ステムの穴 2 つに脚を圧入",
+    "keycaps": "ステムの十字に筒を挿す（静音の窪み φ5.70 の中）",
     "pads": "くぼみに粘着",
     "usb_plug": "利用者が挿すケーブル（留める物ではない）",
     "desk": "机（基準）",
@@ -843,18 +843,25 @@ def measure_probes(asm, meshes):
 
 
 def keycap_probes(asm):
-    """キーキャップ（1u・局所座標）の肉: 天板・スカート・筒の腕の先（十字の穴の腕の先と筒の外の間）・つばの窪みの上の天板。"""
+    """キーキャップの肉（局所座標で刺す）: 1u の天板（ハウジングの上）・スカート・筒の腕の先・つばの上の輪・ステムの上の膜、
+    2.25u のステムから離れた天板（KEYCAP_PLATE_T）。要る厚さは keycaps.plate_levels（spec から導いた値）。"""
     c, s = asm.c, asm.s
+    lv = KC.plate_levels(s, c)
     m = mesh_of(KC.keycap(1.0, s, asm.i.sw, c))
+    wide = mesh_of(KC.keycap(2.25, s, asm.i.sw, c))
     d = UNIT / 2 - s.KEYCAP_GAP
     r0, r1 = c.KEYCAP_COLLAR_RELIEF
-    res = [("キャップの天板", material_runs(m, (3.6, 5.5, 10), (0, 0, -1)), s.KEYCAP_TOP_T),
-           ("キャップのスカート", material_runs(m, (d + 3, 0.3, -0.5), (-1, 0, 0)), c.KEYCAP_SKIRT_T),
+    res = [("キャップの天板（ハウジングの上）", "keycap_1u", material_runs(m, (3.6, 5.5, 10), (0, 0, -1)), lv["housing"]),
+           ("キャップのスカート", "keycap_1u", material_runs(m, (d + 3, 0.3, -0.5), (-1, 0, 0)), c.KEYCAP_SKIRT_T),
            # 腕の先の肉は 0.675（0.4 ノズル 2 本より薄い）。下限は「0.4 未満は無い」（case-and-print.md）。刷れるかは coupon_stem
-           ("キャップの筒の腕の先", material_runs(m, (5.0, 0.0, -1.5), (-1, 0, 0)), 0.4),
-           ("つばの窪みの上の天板", material_runs(m, ((r0 + r1) / 4, 0.3, 10), (0, 0, -1)),
-            s.KEYCAP_TOP_T - KC.collar_relief_depth(s, c))]
-    return [(n, "keycap_1u", r[0][1] - r[0][0] if r else 0.0, need, "") for n, r, need in res]
+           ("キャップの筒の腕の先", "keycap_1u", material_runs(m, (5.0, 0.0, -1.5), (-1, 0, 0)), 0.4),
+           # つばの上の輪（わざと 1 層 0.2。押し切りでつばに当たらない厚さを層で切り下げた。抜き差しは coupon_skin）
+           ("つばの上の輪", "keycap_1u", material_runs(m, ((r0 + r1) / 4, 0.3, 10), (0, 0, -1)), lv["collar"]),
+           # 筒（r 2.75）の外・ステム（r 3.25）の内（r 2.83・十字の穴の腕の外）
+           ("ステムの上の膜", "keycap_1u", material_runs(m, (2.0, 2.0, 10), (0, 0, -1)), lv["skin"]),
+           ("ステムから離れた天板", "keycap_2u25", material_runs(wide, (UNIT * 1.125 - s.KEYCAP_GAP - 2.5, 0.3, 10),
+                                                        (0, 0, -1)), lv["plate"])]
+    return [(n, part, r[0][1] - r[0][0] if r else 0.0, need, "") for n, part, r, need in res]
 
 
 def z_scan(mesh, need, step=0.7, skip=()):

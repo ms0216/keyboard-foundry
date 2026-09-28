@@ -15,6 +15,7 @@ import pytest
 
 from conftest import ROOT, require
 from foundry import paths, tags
+from foundry.mech import CHOC_V2_STAB_SOURCES
 from foundry.project import load
 
 sys.path.insert(0, str(ROOT / "projects" / "cckb"))
@@ -155,7 +156,7 @@ def printed_all(asm):
 
 def test_every_printed_part_fits_the_a1_mini(asm, printed_all):
     sizes = A.print_sizes(printed_all, LIMIT)
-    assert len(sizes) == 19, sorted(sizes)          # トレイ 2・ふた 2・プレート 2＋枠 1・キャップ 4＋並べた 2・小片 6
+    assert len(sizes) == 20, sorted(sizes)          # トレイ 2・ふた 2・プレート 2＋枠 1・キャップ 4＋並べた 2・小片 7
     bad = {n: v for n, v in sizes.items() if not v[2]}
     assert not bad, bad
 
@@ -667,9 +668,10 @@ def test_the_keycap_socket_follows_the_silent_v2_drawing(asm):
     assert all(a > b for a, b in zip(CS.STEM_CROSS_SLOT, CS.STEM_CROSS))
     # スタビの台: 掴む深さ 1.5 以上（前は 0.45・監査 E 重要 1）。台の下端とスライダーの胴の上面は押しても離れたまま
     h = KC.stab_grip(asm.s)
-    assert h >= 1.5 and 8.60 - h >= 5.00 + CS.KEYCAP_COLLAR_CLEAR - 1e-9
+    assert h >= 1.5 and 8.60 - h >= 5.00 + CS.KEYCAP_PRESS_CLEAR - 1e-9
     stab_slot_area = 2 * CS.STAB_CROSS_SLOT[0] * CS.STAB_CROSS_SLOT[1] - CS.STAB_CROSS_SLOT[1] ** 2
-    for z in (-0.2, -h / 2, -h + 0.2):                  # 台の上・中・下で、台の中に十字の穴が通っている
+    under = asm.s.KEYCAP_TOP_T - CS.KEYCAP_PLATE_T      # 台の上の天板の下面（ステムから離れた所の厚い天板）
+    for z in (under - 0.2, -h / 2, -h + 0.2):           # 台の上・中・下で、台の中に十字の穴が通っている
         sec2 = cap & (Plane.XY.offset(z) * Face.make_rect(100, 100))
         bosses = [f for f in sec2.faces() if abs(f.center().Y) < 1 and abs(f.center().X) > 5
                   and f.bounding_box().size.X < 6]
@@ -739,13 +741,63 @@ def test_the_stab_coupon_check_notices_a_slot_of_the_wrong_width():
     assert abs(a - (math.pi / 4 * CS.STAB_SOCKET_BOSS_D ** 2 - (2 * L * 1.31 - 1.31 ** 2))) > 0.05
 
 
-def test_the_keycap_clears_the_silent_collar(asm):
-    """押し切ったとき、天板の下面（つばの窪みの所）が静音のつばの上面より KEYCAP_COLLAR_CLEAR 上に残る。"""
-    z = asm.z
-    under = z["stem_top"] - KC.travel_max(asm.s) + KC.collar_relief_depth(asm.s)
-    assert under - z["collar_top"] >= CS.KEYCAP_COLLAR_CLEAR - 1e-9
+def test_the_keycap_plate_clears_the_housing_the_collar_and_the_stab_box(asm):
+    """押し切ったとき、天板の下面が、ハウジングの上面 5.30・静音のつば 5.70・スタビの箱の上面 5.00 より
+    KEYCAP_PRESS_CLEAR 上に残る（2026-09-28 利用者の決定の条件）。厚さは刷る層の倍数（刷った物が設計より厚くならない）。
+    **数は図の値から**（spec の図の値・mech のスタビの図）。形そのものは test_pressed_keycaps_hit_nothing が図の包絡で見る。"""
+    s, z = asm.s, asm.z
+    lv = KC.plate_levels(s)
+    top = z["stem_top"] + s.KEYCAP_TOP_T
+    bottomed = top - KC.travel_max(s)
+    stab_box = z["pcb_top"] + CHOC_V2_STAB_SOURCES["drawing"]["box_top"]
+    for name, obstacle in (("housing", z["switch_top"]), ("collar", z["collar_top"]), ("plate", stab_box)):
+        assert bottomed - lv[name] - obstacle >= CS.KEYCAP_PRESS_CLEAR - 1e-9, name
+    for name, t in lv.items():
+        assert abs(t / CS.PRINT_LAYER - round(t / CS.PRINT_LAYER)) < 1e-6, (name, t)
+    assert lv == dict(skin=0.6, housing=0.6, collar=0.2, plate=1.0), lv
     r0, r1 = CS.KEYCAP_COLLAR_RELIEF
     assert r0 <= asm.c.SW_STEM_D + 1e-9 and r1 >= asm.s.SWITCH_COLLAR_D + 0.6
+    # スタビの十字の穴の上端は、スタビの軸の上端（= ステムの上面）より上（軸がキャップを押し上げない）
+    assert s.KEYCAP_TOP_T - CS.STAB_SOCKET_TOP_KEEP >= 0.2 - 1e-9
+
+
+def test_the_plate_levels_refuse_what_cannot_clear_or_print():
+    spec = load("cckb").spec
+    with pytest.raises(ValueError):                 # 厚い天板はスタビの箱に当たる（上限 1.05）
+        KC.plate_levels(spec, cs_with(KEYCAP_PLATE_T=1.2))
+    spec.KEYCAP_TOP_T = 0.4                         # 膜 0.4 ではつばの上の輪が 0.15 → 1 層を割る
+    with pytest.raises(ValueError):
+        KC.plate_levels(spec)
+
+
+@pytest.mark.parametrize("over, hit", [
+    (dict(KEYCAP_COLLAR_RELIEF=(6.5, 6.6)), "つば"),          # つばの上を彫らない
+    (dict(KEYCAP_HOUSING_MARGIN=-1.0, KEYCAP_PLATE_MIN_W=0.0), "ハウジング"),   # ハウジングの上に厚い天板
+])
+def test_the_pressed_check_notices_a_plate_over_the_switch(geo, over, hit):
+    """**壊して落ちることを示す**: 天板の逃げを消すと、押し切ったキャップがスイッチ（図の包絡）に当たる。"""
+    from build123d import Compound
+
+    a = A.Assembly(geo, cs=cs_with(**over))
+    key = next(i for i, k in enumerate(a.i.keys) if k.w_u == 1.0)
+    cap = Compound([a.keycap_solids(True)[key]])
+    sw = Compound(a.switch_solids(True))
+    assert A.interference({"keycaps": cap}, {"switches": sw}), hit
+
+
+def test_the_skin_coupon_is_the_real_1u_cap_at_each_skin(asm):
+    """coupon_skin: 本番の 1u のキャップを膜 COUPON_SKIN_TS で（高さ = 膜 ＋ 筒の長さ）。本番の膜 spec.KEYCAP_TOP_T を含む。
+    本番の膜の物の体積は、本番のキャップから切り欠き 1 本（0.8 × 3 × 0.4 の箱のうちスカートの分）を引いた物。"""
+    assert asm.s.KEYCAP_TOP_T in CS.COUPON_SKIN_TS
+    part = coupons.skin_coupon(asm.i)
+    caps = sorted(part.solids(), key=lambda q: q.bounding_box().min.X)
+    assert len(caps) == len(CS.COUPON_SKIN_TS)
+    for cap, t in zip(caps, CS.COUPON_SKIN_TS):
+        assert abs(cap.bounding_box().size.Z - (t + CS.STEM_TUBE_L)) < 1e-6, t
+    real = KC.keycap(1.0, asm.s, asm.i.sw).volume
+    k = CS.COUPON_SKIN_TS.index(asm.s.KEYCAP_TOP_T)
+    notch = 0.8 * CS.KEYCAP_SKIRT_T * 0.4
+    assert abs(caps[k].volume - (real - (k + 1) * notch)) < 0.02, (caps[k].volume, real)
 
 
 def test_the_keycap_top_is_the_interface_height(asm, g):
