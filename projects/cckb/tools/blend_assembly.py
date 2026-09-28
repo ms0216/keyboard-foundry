@@ -20,6 +20,22 @@ from mathutils import Vector
 
 OUT = Path(__file__).resolve().parents[3] / "build" / "cckb" / "assembly"
 VIEW_DIR = Vector((0.9, -1.2, 1.0)).normalized()
+# 部品をコレクションに分ける（Blender のアウトライナーでまとめて表示・非表示にできる）。
+# 表に無い名前は「その他」に入れる（黙って落とさない）。
+GROUPS = {
+    "印刷する物": ("tray_L", "tray_R", "lid_L", "lid_R", "keycaps", "plate_L", "plate_R", "plate_frames"),
+    "基板と電子部品": ("pcb", "bottom_parts", "xiao", "holder", "cell", "psw"),
+    "スイッチとスタビ": ("switches", "stabs"),
+    "ねじ・ナット・インサート": ("nuts", "screws", "screw_lid", "inserts"),
+    "滑り止め・USB プラグ": ("pads", "usb_plug"),
+}
+
+
+def _collection_of(name, cols):
+    for group, names in GROUPS.items():
+        if name in names:
+            return cols[group]
+    return cols["その他"]
 
 
 def _import_stl(path):
@@ -45,13 +61,25 @@ def main():
     scene.unit_settings.scale_length = 0.001
     scene.unit_settings.length_unit = "MILLIMETERS"
     style = json.loads((OUT / "style.json").read_text())
+    cols = {}
+    for group in (*GROUPS, "その他"):
+        cols[group] = bpy.data.collections.new(group)
+        scene.collection.children.link(cols[group])
     objs = []
     for path in sorted(OUT.glob("*.stl")):
         obj = _import_stl(path)
         obj.name = path.stem
         color, alpha = style.get(path.stem, ("#888888", 1.0))
         obj.data.materials.append(_material(path.stem, color, alpha))
+        for c in list(obj.users_collection):
+            c.objects.unlink(obj)
+        _collection_of(path.stem, cols).objects.link(obj)
         objs.append(obj)
+    for group, col in list(cols.items()):
+        if not col.objects:
+            bpy.data.collections.remove(col)
+            del cols[group]
+    print("GROUPS", {g: sorted(o.name for o in c.objects) for g, c in cols.items()})
     pts = [o.matrix_world @ Vector(c) for o in objs for c in o.bound_box]
     lo = Vector((min(p[i] for p in pts) for i in range(3)))
     hi = Vector((max(p[i] for p in pts) for i in range(3)))
