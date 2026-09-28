@@ -1114,11 +1114,14 @@ def render_all(asm, g, out):
     gp = dict(g, switches=Compound(asm.switch_solids(True)), stabs=Compound(asm.stab_solids(True)),
               keycaps=Compound(asm.keycap_solids(True)))
     across = (space[0][0] - 17, space[0][0] + 17)
+    edge = min((pos for pos in asm.i.positions if abs(pos[1] - key[1]) < 0.1), key=lambda q: q[0])
     shots = [
         ("section_keycap_socket", ("y", key[1]), (key[0] - 11, key[0] + 11),
          "キャップの受け口（y = キーの中心）: 筒・十字・静音のつば・天板の窪み・止まり穴"),
         ("section_keycap_socket_pressed", ("y", key[1]), (key[0] - 11, key[0] + 11),
          "キャップの受け口を押し切った所（y = キーの中心）: 天板の窪みと静音のつば"),
+        ("section_keycap_rim_pressed", ("y", edge[1]), (edge[0] - 18, edge[0] + 12),
+         "左端のキーを押し切った所（y = キーの中心）: キャップの上面は縁（トレイの壁の上面）より低い"),
         ("section_stab_across", ("y", space[0][1]), across,
          "左のスペースのスタビを横に（y = キーの中心）: 両端の軸・キャップの台と十字の穴・箱・ねじ・止まり穴"),
         ("section_stab_across_pressed", ("y", space[0][1]), across,
