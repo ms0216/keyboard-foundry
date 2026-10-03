@@ -754,7 +754,7 @@ def test_the_keycap_plate_clears_the_housing_the_collar_and_the_stab_box(asm):
         assert bottomed - lv[name] - obstacle >= CS.KEYCAP_PRESS_CLEAR - 1e-9, name
     for name, t in lv.items():
         assert abs(t / CS.PRINT_LAYER - round(t / CS.PRINT_LAYER)) < 1e-6, (name, t)
-    assert lv == dict(skin=0.6, housing=0.6, collar=0.2, plate=1.0), lv
+    assert lv == dict(skin=1.0, housing=1.0, collar=0.6, plate=1.0), lv
     r0, r1 = CS.KEYCAP_COLLAR_RELIEF
     assert r0 <= asm.c.SW_STEM_D + 1e-9 and r1 >= asm.s.SWITCH_COLLAR_D + 0.6
     # スタビの十字の穴の上端は、スタビの軸の上端（= ステムの上面）より上（軸がキャップを押し上げない）
@@ -763,8 +763,9 @@ def test_the_keycap_plate_clears_the_housing_the_collar_and_the_stab_box(asm):
 
 def test_the_plate_levels_refuse_what_cannot_clear_or_print():
     spec = load("cckb").spec
-    with pytest.raises(ValueError):                 # 厚い天板はスタビの箱に当たる（上限 1.05）
-        KC.plate_levels(spec, cs_with(KEYCAP_PLATE_T=1.2))
+    with pytest.raises(ValueError):                 # 厚い天板はスタビの箱に当たる（膜 1.0 で上限 1.45）
+        KC.plate_levels(spec, cs_with(KEYCAP_PLATE_T=1.6))
+    assert KC.plate_levels(spec, cs_with(KEYCAP_PLATE_T=1.4))["housing"] == 1.0     # 上限の内なら通り、ハウジングの上は 1.0 のまま
     spec.KEYCAP_TOP_T = 0.4                         # 膜 0.4 ではつばの上の輪が 0.15 → 1 層を割る
     with pytest.raises(ValueError):
         KC.plate_levels(spec)
@@ -772,17 +773,23 @@ def test_the_plate_levels_refuse_what_cannot_clear_or_print():
 
 @pytest.mark.parametrize("over, hit", [
     (dict(KEYCAP_COLLAR_RELIEF=(6.5, 6.6)), "つば"),          # つばの上を彫らない
-    (dict(KEYCAP_HOUSING_MARGIN=-1.0, KEYCAP_PLATE_MIN_W=0.0), "ハウジング"),   # ハウジングの上に厚い天板
+    # ハウジングの上に厚い天板。膜 1.0（2026-10-03）では外の天板 1.0 = ハウジングの上の上限 1.0 で逃げが要らないので、
+    # 外を 1.4 にして逃げが働く形にしてから逃げを消す（逃げがあれば当たらないことは下の対照で見る）
+    (dict(KEYCAP_PLATE_T=1.4, KEYCAP_HOUSING_MARGIN=-1.0, KEYCAP_PLATE_MIN_W=0.0), "ハウジング"),
 ])
 def test_the_pressed_check_notices_a_plate_over_the_switch(geo, over, hit):
     """**壊して落ちることを示す**: 天板の逃げを消すと、押し切ったキャップがスイッチ（図の包絡）に当たる。"""
     from build123d import Compound
 
-    a = A.Assembly(geo, cs=cs_with(**over))
-    key = next(i for i, k in enumerate(a.i.keys) if k.w_u == 1.0)
-    cap = Compound([a.keycap_solids(True)[key]])
-    sw = Compound(a.switch_solids(True))
-    assert A.interference({"keycaps": cap}, {"switches": sw}), hit
+    def hits(**cs_over):
+        a = A.Assembly(geo, cs=cs_with(**cs_over))
+        key = next(i for i, k in enumerate(a.i.keys) if k.w_u == 1.0)
+        cap = Compound([a.keycap_solids(True)[key]])
+        return A.interference({"keycaps": cap}, {"switches": Compound(a.switch_solids(True))})
+
+    assert hits(**over), hit
+    if "KEYCAP_PLATE_T" in over:                    # 対照: 外を厚くしただけ（逃げはそのまま）なら当たらない
+        assert hits(KEYCAP_PLATE_T=over["KEYCAP_PLATE_T"]) == {}
 
 
 def test_the_skin_coupon_is_the_real_1u_cap_at_each_skin(asm):

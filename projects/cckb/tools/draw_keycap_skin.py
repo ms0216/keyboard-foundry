@@ -68,7 +68,7 @@ def main(argv):
     tr = KC.travel_max(s)
     stem = s.SWITCH_STEM_ABOVE_PCB
     rows = [("前（天板 1.2・上面 14.4）", kc_old.keycap(1.0, spec_old, ifc.sw, cs_old), spec_old.KEYCAP_TOP_T),
-            (f"いま（膜 {s.KEYCAP_TOP_T}・上面 13.8）", KC.keycap(1.0, s, ifc.sw, CS), s.KEYCAP_TOP_T)]
+            (f"いま（膜 {s.KEYCAP_TOP_T}・上面 {ifc.z()['keycap_top']:.1f}）", KC.keycap(1.0, s, ifc.sw, CS), s.KEYCAP_TOP_T)]
     colors = {"housing": "#555555", "stem": "#8e8e8e", "cap": "#5dade2"}
     fig, axes = plt.subplots(2, 2, figsize=(15, 8), dpi=110)
     for i, (label, cap, t) in enumerate(rows):

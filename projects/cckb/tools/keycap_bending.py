@@ -197,9 +197,11 @@ def main(argv):
         for key, name, x0, xe, d, sig, i0, c0 in rs:
             print(f"{label}\t{key}\t{name}\t支え {x0:.2f} → 縁 {xe:.3f}\tたわみ {d * 1000:.1f} µm\t"
                   f"根元の応力 {sig:.1f} MPa\tI {i0:.3f} mm4")
-    # 縁の 1 点に 3 N（押す・片側からこじって抜く）: 前（天板 1.2・つばの窪みの所 0.95）、いま、控え（膜 0.8）、元の膜 1.2
+    # 縁の 1 点に 3 N（押す・片側からこじって抜く）: 前（天板 1.2・つばの窪みの所 0.95）と、膜 0.6 / 0.8 / 1.0 / 1.2
+    # （いまの膜 spec.KEYCAP_TOP_T に「いま」と付ける。2026-10-03 から 1.0）
     edge_load("前", 1.2, 0.95, 1.2, CS)
-    for label, t in (("いま", ifc.s.KEYCAP_TOP_T), ("控え 0.8", 0.8), ("膜 1.0", 1.0), ("膜 1.2", 1.2)):
+    for t in (0.6, 0.8, 1.0, 1.2):
+        label = f"膜 {t}" + ("（いま）" if abs(t - ifc.s.KEYCAP_TOP_T) < 1e-9 else "")
         lv = KC.plate_levels(_Over(ifc.s, KEYCAP_TOP_T=t), CS)
         edge_load(label, lv["skin"], lv["collar"], lv["housing"], CS)
 
