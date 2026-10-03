@@ -7,6 +7,7 @@
 （決定記録 2026-10-03-structure）。印刷機は A1 mini の実効 168.4（docs/knowledge/case-and-print.md）。
 """
 
+import json
 import math
 import re
 import sys
@@ -30,6 +31,7 @@ import click_parts as P  # noqa: E402
 S = P.S
 PROJECT = ROOT / "projects" / "cckb-click"
 TOL = 1e-4          # mm3。面が触れているだけの組の丸め
+MIN_SKIN = 0.6      # くぼみの上に残す枠の皮の厚さ（0.4 未満は「無い」のと同じ: case-and-print.md。穴を広げた列でも残るように 0.6）
 
 
 def spec_with(**over):
@@ -108,9 +110,9 @@ def skin_above_pocket(s=S, n=200):
     return sum(fr.is_inside(Vector(x, y, z0 + s.FRAME_T * (k + 0.5) / n)) for k in range(n)) * s.FRAME_T / n
 
 
-def test_the_skin_above_the_pocket_is_three_layers():
-    assert skin_above_pocket() >= 3 * S.PRINT_LAYER - 0.02
-    assert skin_above_pocket(spec_with(HOLE_CHAMFER=0.6)) < 3 * S.PRINT_LAYER - 0.02       # 面取りを大きくすると皮が薄くなる
+def test_the_skin_above_the_pocket_is_thick_enough_to_print():
+    assert skin_above_pocket() >= MIN_SKIN - 0.02
+    assert skin_above_pocket(spec_with(HOLE_CHAMFER=0.6)) < MIN_SKIN - 0.02       # 面取りを大きくすると皮が薄くなる
 
 
 # ---------------------------------------------------------------------------
@@ -167,8 +169,11 @@ def test_every_height_in_print_orientation_is_a_multiple_of_the_layer():
 
 def test_the_print_check_notices_an_off_layer_height_and_an_unsupported_face():
     c = P.Cell(0.0, 0.0, S.HOLE_B)
-    assert any("層の倍数でない" in p for p in print_problems(c, spec_with(TAB_T=0.5)))
-    assert not P.on_layer(P.print_heights(spec_with(POCKET_DEPTH=0.9))["くぼみの底"])
+    assert any("層の倍数でない" in p for p in print_problems(c, spec_with(TAB_T=0.45)))
+    assert not P.on_layer(P.print_heights(spec_with(POCKET_DEPTH=0.95))["くぼみの底"])
+    # 層を 0.2 に戻すと、つば 0.5 は層の境目に乗らない。1 層目より低い面も乗らない（1 層目の中に面は作れない）
+    assert any("層の倍数でない" in p for p in print_problems(c, spec_with(TAB_T=0.5, PRINT_LAYER=0.2)))
+    assert P.on_layer(0.0) and not P.on_layer(0.1) and P.on_layer(0.1, first=0.1) and P.on_layer(S.PRINT_FIRST_LAYER)
     # 販売者と同じ平らな足（S）は掛かる面が宙に張り出す。**検査がそれを見つける**こと（C の 45° は見つからないこと）
     assert any("宙に張り出す" in p for p in print_problems(replace(c, latch="S", tab=0.6)))
     assert print_problems(replace(c, latch="C", tab=0.6)) == []
@@ -223,7 +228,9 @@ def test_the_swept_holes_still_latch_and_leave_the_declared_gap(hole, step):
     body = [f.bounding_box() for f in section_faces(cp, z)]
     assert len(holes) == 1 and len(body) == 1
     assert (holes[0].size.X - body[0].size.X) / 2 == pytest.approx(S.CAP_CLEAR + step / 2, abs=1e-3)
-    assert (holes[0].size.Y - body[0].size.Y) / 2 == pytest.approx(S.CAP_CLEAR + step / 2, abs=1e-3)
+    # y は手前の側で測る（奥の壁には継ぎ目の溝があり、穴の外接が溝の深さだけ伸びる）
+    assert body[0].min.Y - holes[0].min.Y == pytest.approx(S.CAP_CLEAR + step / 2, abs=1e-3)
+    assert holes[0].size.Y - S.SEAM_NOTCH[1] == pytest.approx(getattr(S, hole)[1] + step, abs=1e-3)
     assert holes[0].size.X == pytest.approx(getattr(S, hole)[0] + step, abs=1e-3)
 
 
@@ -333,11 +340,11 @@ def test_the_end_press_check_notices_rubbing_landing_and_tilt(over, word):
 # 小片の一式（遅い: 全部を作る）
 # ---------------------------------------------------------------------------
 
-EXPECTED_STLS = {"coupon_a_frame", "coupon_a_caps", "coupon_ab_base", "coupon_b_frame", "coupon_b_caps",
+EXPECTED_STLS = {"coupon_min_frame", "coupon_min_base", "coupon_min_caps", "coupon_min_plate", "coupon_a_frame", "coupon_a_caps", "coupon_ab_base", "coupon_b_frame", "coupon_b_caps",
                  "coupon_standin_frame", "coupon_standin_base", "coupon_latch_frame", "coupon_latch_base", "coupon_latch_caps",
                  "coupon_wide_frame", "coupon_wide_base", "coupon_wide_caps", "coupon_strip_frame"}
 # STL の名前 → その中の立体の数（キャップはマスの数。数えて確かめる）
-BODIES = {"coupon_a_caps": 9, "coupon_b_caps": 9, "coupon_latch_caps": 6, "coupon_wide_caps": 3}
+BODIES = {"coupon_min_caps": 4, "coupon_min_plate": 6, "coupon_a_caps": 9, "coupon_b_caps": 9, "coupon_latch_caps": 6, "coupon_wide_caps": 3}
 
 
 @pytest.fixture(scope="module")
@@ -377,15 +384,15 @@ def assembly_problems(cp, parts, s=S):
 
 @pytest.mark.slow
 def test_nothing_in_any_coupon_interferes_at_rest_or_fully_pressed(built):
-    assert set(built) == {"a", "b", "standin", "latch", "wide", "strip"}
+    assert set(built) == {"min", "a", "b", "standin", "latch", "wide", "strip"}
     total_caps = total_skipped = 0
     for name, (cp, parts) in built.items():
         bad, skipped = assembly_problems(cp, parts)
         assert not bad, f"{name}: {bad}"
         total_caps += len(parts.get("caps", []))
         total_skipped += skipped
-    # 母数: キャップ 9 + 9 + 6 + 6 + 3 個。外したのは台 3.7（押す面 3.6 より高い）の 1 組だけ
-    assert (total_caps, total_skipped) == (33, 1)
+    # 母数: キャップ 3 + 9 + 9 + 6 + 6 + 3 個。外したのは台 3.7（押す面 3.6 より高い）の 1 組だけ
+    assert (total_caps, total_skipped) == (36, 1)
 
 
 @pytest.mark.slow
@@ -423,7 +430,7 @@ def test_the_exported_coupons_are_the_declared_set_watertight_and_fit_the_a1_min
         assert all(b.is_watertight for b in bodies), stem
         assert max(mesh.extents[:2]) <= S.PRINT_MAX and abs(mesh.bounds[0][2]) < 1e-6, stem
         assert len(bodies) == BODIES.get(stem, 1), (stem, len(bodies))     # 立体の数を数える
-    assert len(style) == 16 and len(list((tmp_path / "assembly").glob("*.stl"))) == 16
+    assert len(style) == 19 and len(list((tmp_path / "assembly").glob("*.stl"))) == 19
     # 帯は 15u の半分の長さ ＋ 両側の縁
     assert made["coupon_strip_frame"][0] == pytest.approx(S.COUPON_STRIP_U * UNIT + 2 * S.PLATE_MARGIN_X)
 
@@ -452,6 +459,194 @@ def test_the_standin_coupon_covers_the_stem_tolerance_and_one_step_beyond():
     # 台の番号（板の点）と枠の縁の点が同じ番号
     cp = CC.coupons()["standin"]
     assert [c.dots for c in cp.cells] == [cp.bumps[i] for i in range(len(cp.cells))] == [1, 2, 3, 4, 5, 6]
+
+
+# ---------------------------------------------------------------------------
+# 最初に刷る最小の一式（min）と、測る所
+# ---------------------------------------------------------------------------
+
+def min_set_problems(s=S):
+    """最小の一式を**作った立体から測る**: 穴 3 つが 0.1 刻み・点の数で見分けがつく・キャップ 3 個が同じ形・測る所が 10.00。"""
+    cp = CC.coupons(s)["min"]
+    parts = CC.build(cp, s)
+    out = []
+    z = s.FRAME_UNDER + s.POCKET_DEPTH + 0.3
+    inner = sorted((w.bounding_box() for f in section_faces(parts["frame"], z) for w in f.inner_wires()), key=lambda b: b.min.X)
+    widths = [round(b.size.X - s.HOLE_B[0], 3) for b in inner[:3]]
+    if len(inner) != 4 or widths != [0.0, 0.1, 0.2]:
+        out.append(f"枠の穴が「基準・+0.1・+0.2」の 3 つ ＋ 測る穴 1 つになっていない（{len(inner)} 個・{widths}）")
+    else:
+        slot = inner[3]
+        if abs(slot.size.X - 10.0) > 1e-3 or abs(slot.size.Y - 10.0) > 1e-3:
+            out.append(f"測る穴が 10.00 角でない（{slot.size.X:.3f} × {slot.size.Y:.3f}）")
+        if slot.min.X - inner[2].max.X < 2.0:
+            out.append(f"測る穴と穴 3 の間が {slot.min.X - inner[2].max.X:.2f} しかない")
+    if [c.dots for c in cp.cells] != [1, 2, 3] or any(c.standin != s.SW_STEM_TOP for c in cp.cells):
+        out.append("点の数が 1・2・3 でない／台が名目の高さでない")
+    caps = [Pos(-c.cx, -c.cy, -CC.rest_dz(c, s)) * part for c, part in parts["caps"]]
+    if len(caps) != 3 or any(abs(intersection_volume(caps[0], k) - caps[0].volume) > 1e-3 for k in caps[1:]):
+        out.append("キャップ 3 個が同じ形でない（穴の大きさだけを変えた比べ方にならない）")
+    block = P.gauge_block(s)
+    mid = [f.bounding_box() for f in section_faces(block, 1.5)]
+    if len(mid) != 1 or abs(mid[0].size.X - 10.0) > 1e-3 or abs(mid[0].size.Y - 10.0) > 1e-3:
+        out.append("測る塊が、段より上で 10.00 角でない")
+    ledge = [a for zz, up, a in horizontal_faces(block) if up and abs(zz - s.TAB_T) < 1e-6]
+    if len(ledge) != 1 or ledge[0] < 20.0 or abs(block.bounding_box().max.Z - 3.0) > 1e-6:
+        out.append("測る塊の段（つばと同じ厚さ）か、高さ 3.00 が無い")
+    if any(not P.on_layer(zz, s) for zz, _, _ in horizontal_faces(block)):
+        out.append("測る塊の面が層の境目に無い")
+    return out
+
+
+def test_the_minimal_set_sweeps_three_holes_with_identical_caps_and_carries_the_gauges():
+    assert min_set_problems() == []
+    # 記入表に書いた設計値（docs/coupon-test.md）と同じ数か
+    sheet = (PROJECT / "docs" / "coupon-test.md").read_text()
+    for word in ("10.00", "3.00", "0.40", "2.40", "16.65", "17.05", "17.15", "17.25"):
+        assert word in sheet, word
+    lv = P.levels()
+    assert (lv["cap_top"] - lv["pad"], S.TAB_T, P.body_plan(P.Cell(0, 0, S.HOLE_B)).bounding_box().size.X) == pytest.approx((2.4, 0.4, 16.65))
+
+
+@pytest.mark.parametrize("over, word", [
+    (dict(COUPON_HOLE_STEPS=(0.0, 0.1, 0.1)), "3 つ"),
+    (dict(COUPON_GAUGE=(9.9, 3.0, 4.0)), "測る穴が 10.00 角でない"),
+    (dict(COUPON_GAUGE=(10.0, 3.0, 0.5)), "段"),
+    (dict(COUPON_GAUGE_EXTRA_U=0.6), "測る穴と穴 3 の間"),
+])
+def test_the_minimal_set_check_notices_a_wrong_sweep_and_a_wrong_gauge(over, word):
+    assert any(word in p for p in min_set_problems(spec_with(**over)))
+
+
+def test_the_minimal_plate_holds_six_separate_bodies_in_print_orientation():
+    cp = CC.coupons()["min"]
+    parts = CC.print_parts("min", cp, CC.build(cp))
+    placed = CC.plate_layout(parts, "min")
+    boxes = [(k, p.bounding_box()) for k, p in placed]
+    assert [k for k, _ in boxes] == ["caps", "frame", "base"]
+    for (_, a), (_, b) in zip(boxes, boxes[1:]):
+        assert b.min.Y - a.max.Y == pytest.approx(5.0) and abs(a.min.Z) < 1e-6 and abs(b.min.Z) < 1e-6
+    plate = parts["coupon_min_plate"]
+    assert len(plate.solids()) == 6 and max(plate.bounding_box().size.X, plate.bounding_box().size.Y) <= S.PRINT_MAX
+    # 枠は上面が下: 柱の先（設計の z = 0）がいちばん上。キャップは押す面が下: つばがベッドに着いている
+    frame = dict(placed)["frame"]
+    assert frame.bounding_box().max.Z == pytest.approx(S.FRAME_UNDER + S.FRAME_T)
+    caps = dict(placed)["caps"]
+    assert sum(1 for z, up, a in horizontal_faces(caps) if up and abs(z - S.TAB_T) < 1e-6) == 3 * 4 + 1      # つば 4 枚 × 3 ＋ 測る塊の段
+
+
+# ---------------------------------------------------------------------------
+# 継ぎ目の溝（外周の継ぎ目を、滑る面から引っ込める）
+# ---------------------------------------------------------------------------
+
+def notch_problems(s=S, step=0.0, want=None):
+    """キャップの胴と枠の穴に、継ぎ目の溝があるか。**断面の面積と外接から測る**: 溝は面積を w × d だけ変え、外接（滑る面の位置）は変えない。
+    つば・くぼみのある角の範囲に掛からない。"""
+    c, fr, _, cp = key(s, step=step)
+    w, d = want or s.SEAM_NOTCH                       # want = あるはずの溝（溝を無くした spec を見るとき）
+    out = []
+    z = s.FRAME_UNDER + s.POCKET_DEPTH + 0.3
+    body = section_faces(cp, z)
+    plan = P.body_plan(c, s)
+    if abs(sum(f.area for f in plan.faces()) - body[0].area - w * d) > 0.01:
+        out.append("キャップの胴に継ぎ目の溝が無い（断面の面積が w × d 減っていない）")
+    if abs(body[0].bounding_box().size.Y - plan.bounding_box().size.Y) > 1e-3:
+        out.append("継ぎ目の溝がキャップの胴の外接（滑る面）を変えている")
+    hole = [wr for f in section_faces(fr, z) for wr in f.inner_wires()][0]
+    hplan = P.hole_plan(c, s)
+    grown = hole.bounding_box().size.Y - hplan.bounding_box().size.Y
+    if abs(grown - d) > 1e-3:
+        out.append(f"枠の穴に深さ {d} の継ぎ目の溝が無い（外接の伸び {grown:.3f}）")
+    if w / 2 > P.hole_size(c)[0] / 2 - s.TAB_LEN - s.POCKET_CLEAR - 1.0:
+        out.append("継ぎ目の溝が、つば・くぼみのある角の範囲に近い")
+    if UNIT - P.hole_size(c)[1] - d < 1.2:
+        out.append(f"溝を掘った所のリブが {UNIT - P.hole_size(c)[1] - d:.2f} しか残らない")
+    return out
+
+
+def test_the_seam_notch_is_cut_mid_edge_and_leaves_the_sliding_faces_alone():
+    for step in S.COUPON_HOLE_STEPS:
+        assert notch_problems(step=step) == []
+    gone = notch_problems(spec_with(SEAM_NOTCH=None), want=S.SEAM_NOTCH)
+    assert any("キャップの胴に" in p for p in gone) and any("枠の穴に" in p for p in gone)
+    assert any("角の範囲に近い" in p for p in notch_problems(spec_with(SEAM_NOTCH=(9.0, 0.5))))
+    assert any("リブが" in p for p in notch_problems(spec_with(SEAM_NOTCH=(2.0, 1.0))))
+
+
+# ---------------------------------------------------------------------------
+# 刷り方（print/ のプリセット）
+# ---------------------------------------------------------------------------
+
+def preset_problems(preset, recipe, s=S):
+    """プリセットが形の前提と合っているか: 層の厚さ・1 層目・機能する面が層の境目・縁を汚す設定（ブリム・象の足の補正）を使っていない。"""
+    out = []
+    layer, first = float(preset.get("layer_height", "nan")), float(preset.get("initial_layer_print_height", "nan"))
+    if not layer == pytest.approx(s.PRINT_LAYER):
+        out.append(f"層 {layer} が spec の PRINT_LAYER {s.PRINT_LAYER} と違う")
+    if not first <= s.PRINT_FIRST_LAYER + 1e-9:
+        out.append(f"1 層目 {first} が PRINT_FIRST_LAYER {s.PRINT_FIRST_LAYER} より厚い")
+    heights = dict(P.print_heights(s), 測る塊=s.COUPON_GAUGE[1], 台=s.COUPON_BASE_T + s.SW_STEM_TOP)
+    off = {k: v for k, v in heights.items() if not (v >= first - 1e-9 and abs((v - first) / layer - round((v - first) / layer)) < 1e-6)}
+    if off:
+        out.append(f"機能する面が層の境目に乗らない: {off}")
+    want = dict(brim_type="no_brim", elefant_foot_compensation="0", xy_hole_compensation="0", xy_contour_compensation="0",
+                enable_support="0", seam_position="aligned", wall_sequence="inner-outer-inner wall")
+    for k, v in want.items():
+        if preset.get(k) != v:
+            out.append(f"{k} が {preset.get(k)}（決定は {v}）")
+    if int(preset.get("wall_loops", "0")) < 3:
+        out.append("内→外→内の順は外周 3 本以上が要る")
+    if f"{recipe['nozzle']} nozzle" not in recipe["machine"] or preset.get("from") != "User" or not preset.get("inherits"):
+        out.append("ノズルとプリンタの設定の名前が合わない／読み込める形（from = User・inherits）でない")
+    return out
+
+
+@pytest.mark.parametrize("variant", sorted(S.PRINT_RECIPES))
+def test_the_print_presets_match_the_layer_the_geometry_was_built_for(variant):
+    r = S.PRINT_RECIPES[variant]
+    preset = json.loads((PROJECT / r["process"]).read_text())
+    assert preset_problems(preset, r) == []
+    assert preset["name"] in (PROJECT / "docs" / "coupon-test.md").read_text()
+    for over, word in ((dict(layer_height="0.12"), "境目に乗らない"), (dict(initial_layer_print_height="0.3"), "より厚い"),
+                       (dict(brim_type="auto_brim"), "brim_type"), (dict(wall_loops="2"), "3 本以上"),
+                       (dict(seam_position="back"), "seam_position")):
+        assert any(word in p for p in preset_problems(dict(preset, **over), r)), over
+
+
+def test_the_two_nozzles_are_the_ones_with_installed_profiles():
+    assert sorted(r["nozzle"] for r in S.PRINT_RECIPES.values()) == [0.2, 0.4]
+    assert len({r["process"] for r in S.PRINT_RECIPES.values()}) == 2
+    assert {p.name for p in (PROJECT / "print").glob("*.json")} == {r["process"].split("/")[1] for r in S.PRINT_RECIPES.values()}
+
+
+@pytest.mark.slow
+def test_the_sliced_minimal_plate_keeps_every_seam_off_the_sliding_faces(tmp_path):
+    """**実際にスライスして G-code で数える**（OrcaSlicer が無い環境では飛ばす）。継ぎ目の溝を無くすと、継ぎ目が滑る面に出ることも確かめる。"""
+    from build123d import export_stl
+    from foundry import paths
+
+    if not __import__("pathlib").Path(paths.ORCA).exists():
+        pytest.skip("OrcaSlicer が無い")
+    sys.path.insert(0, str(PROJECT / "tools"))
+    import slice_precise as SP
+
+    def sliced(s, name):
+        cp = CC.coupons(s)["min"]
+        stl = tmp_path / name / "coupon_min_plate.stl"
+        stl.parent.mkdir()
+        export_stl(CC.print_parts("min", cp, CC.build(cp, s), s)["coupon_min_plate"], str(stl))
+        rc = SP.recipe("n04", s, "orca")
+        gcode, log = SP.slice_stl(rc, stl, out=tmp_path / name)
+        assert gcode is not None, log[-500:]
+        applied, n = SP.applied_problems(rc, SP.gcode_config(gcode.read_text(errors="replace")))
+        assert applied == [] and n >= 20
+        return SP.analyse(gcode, rc, s)
+
+    problems, facts, _ = sliced(S, "ok")
+    assert problems == [], problems
+    assert facts["継ぎ目 cap"]["全部"] >= 3 * 20 and facts["継ぎ目 hole"]["全部"] >= 3 * 15           # 数えた母数（キャップ 3 個・穴 3 つ × 層）
+    bad, _, _ = sliced(spec_with(SEAM_NOTCH=None), "no_notch")
+    assert any("滑る面にある" in p for p in bad), bad
 
 
 # ---------------------------------------------------------------------------

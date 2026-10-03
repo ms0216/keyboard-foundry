@@ -3,7 +3,8 @@
   section_main.png    本番の形（つば F・0.4）の断面。キーの中心／つばを通る面 × 置いたとき／押し切り
   section_latch.png   掛かり方 6 通りの、つばのまわりの拡大（置いたとき／押し切り）
   wide_end_press.png  2.25u の端を押したとき（剛体で回した断面）
-  coupons_top.png     小片 6 組を上から（穴・くぼみ・柱・台・番号）
+  coupons_top.png     あとで刷る小片 6 組を上から（穴・くぼみ・柱・台・番号）
+  min_set.png         最初に刷る最小の一式（ベッドに置く向き・組んだ所を上から・断面）
 
     .venv/bin/python3 projects/cckb-click/click_coupons.py   が呼ぶ
 """
@@ -183,7 +184,7 @@ def wide_end_press(out, s=S):
 
 
 def coupons_top(out, s=S):
-    cps = CC.coupons(s)
+    cps = {k: v for k, v in CC.coupons(s).items() if k != "min"}       # 最小の一式は min_set.png
     fig, axs = plt.subplots(2, 3, figsize=(16, 11.5))
     lv = P.levels(s)
     titles = {"a": "a: 案 A（穴 %.1f×%.1f）3×3" % s.HOLE_A, "b": "b: 案 B（穴 %.2f 角）3×3" % s.HOLE_B[0],
@@ -226,8 +227,67 @@ def coupons_top(out, s=S):
     return out
 
 
+def min_set(out, s=S):
+    """最初に刷る最小の一式。上 = ベッドに置く向き（coupon_min_plate.stl を上から）、中 = 組んだ所を上から、下 = 断面。"""
+    cp = CC.coupons(s)["min"]
+    built = CC.build(cp, s)
+    lv = P.levels(s)
+    parts = CC.print_parts("min", cp, built, s)
+    fig, axs = plt.subplots(3, 1, figsize=(13, 16), gridspec_kw={"height_ratios": [3.4, 1.35, 0.75]})
+    ax = axs[0]
+    label = {"caps": "キャップ 3 個（同じ形）＋ 測る塊\n押す面（下面）がベッド", "frame": "枠\n上面がベッド（柱が上を向く）",
+             "base": "板（基板の代わり）\n下面がベッド"}
+    colour = {"caps": RED, "frame": GREY, "base": GREEN}
+    for kind, part in CC.plate_layout(parts, "min"):
+        for z, a in ((0.35, 0.45), (part.bounding_box().max.Z - 0.25, 1.0)):       # 薄く = ベッドのすぐ上、濃く = いちばん上
+            fill(ax, xy(part, z), colour[kind], alpha=a, lw=0.5)
+        bb = part.bounding_box()
+        ax.text(bb.max.X + 2, (bb.min.Y + bb.max.Y) / 2, label[kind], fontsize=9, va="center")
+    side, gh, ledge = s.COUPON_GAUGE
+    ax.set_xlim(-45, 75)
+    ax.set_ylim(-4, 82)
+    ax.set_aspect("equal")
+    ax.grid(True, lw=0.2)
+    ax.set_xlabel("X（A1 mini の頭が動く向き）")
+    ax.set_ylabel("Y（ベッドが動く向き）")
+    ax.set_title("ベッドに置く向き（coupon_min_plate.stl を上から。このまま回さずに刷る）。濃い色 = いちばん上の面", fontsize=11)
+
+    ax = axs[1]
+    fr = built["frame"]
+    fill(ax, xy(fr, lv["frame_top"] - s.COUPON_DOT[1] / 2), GREY)
+    for c, part in built["caps"]:
+        fill(ax, xy(part, lv["cap_top"] + CC.rest_dz(c, s) - s.CAP_TOP_CHAMFER - 0.05), RED, ec="#b00000", alpha=0.55)
+        w, _ = P.hole_size(c)
+        ax.text(c.cx, c.cy, f"点 {c.dots}\n穴 {w:.2f} 角\n隙 片側 {P.side_gap(c, s)[0]:.2f}", fontsize=9, ha="center", va="center")
+    gx, gy = CC.gauge_slot_xy(cp, s)
+    ax.text(gx, gy, f"測る穴\n内寸 {side:.0f} 角", fontsize=8, ha="center", va="center")
+    bb = fr.bounding_box()
+    ax.set_xlim(bb.min.X - 4, bb.max.X + 4)
+    ax.set_ylim(bb.min.Y - 3, bb.max.Y + 3)
+    ax.set_aspect("equal")
+    ax.set_title("組んだ所を上から（手前が下。左手前の角が落としてある。手前の縁の点の数 = 穴の番号。右へ行くほど穴が 0.1 ずつ広い）", fontsize=11)
+
+    ax = axs[2]
+    fill(ax, xz(built["base"], 0.0), GREEN)
+    fill(ax, xz(fr, 0.0), GREY)
+    for c, part in built["caps"]:
+        fill(ax, xz(part, 0.0), RED, ec="#b00000")
+    for z, tx in ((0.0, "板の上面 0"), (s.SW_STEM_TOP, f"台の上面 {s.SW_STEM_TOP}"), (lv["frame_top"], f"枠の上面 {lv['frame_top']:.1f}")):
+        ax.plot([bb.min.X - 4, bb.max.X + 4], [z, z], ":", color="#555", lw=0.5)
+        ax.text(bb.max.X + 3.8, z + 0.05, tx, fontsize=7, ha="right", va="bottom")
+    ax.set_xlim(bb.min.X - 4, bb.max.X + 4)
+    ax.set_ylim(-1.6, 6.6)
+    ax.set_aspect("equal")
+    ax.set_title(f"断面（キーの中心を通る面・実寸比）。キャップは台の上に載っている（浮き {lv['float_nominal']:.1f}）。右の空きが測る穴", fontsize=11)
+    fig.suptitle(f"最初に刷る最小の一式（min）。測る塊: 外寸 {side:.0f} 角 × 高さ {gh:.0f}・右の段は厚さ {s.TAB_T}（つばと同じ）", fontsize=12)
+    fig.tight_layout(rect=(0, 0, 1, 0.975))
+    fig.savefig(out, dpi=100)
+    plt.close(fig)
+    return out
+
+
 def render_all(out, s=S):
     out.mkdir(parents=True, exist_ok=True)
     return [section_main(out / "section_main.png", s), section_latch(out / "section_latch.png", s),
-            wide_end_press(out / "wide_end_press.png", s), coupons_top(out / "coupons_top.png", s)]
+            wide_end_press(out / "wide_end_press.png", s), coupons_top(out / "coupons_top.png", s), min_set(out / "min_set.png", s)]
 

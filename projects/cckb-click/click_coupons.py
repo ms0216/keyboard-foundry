@@ -1,17 +1,19 @@
 """cckb-click の試し刷り（基板なし）。**基板を設計する前に刷って、触って決める。**
 
     .venv/bin/python3 projects/cckb-click/click_coupons.py      # STL・絵・.blend を build/cckb-click/ に出す
-    tools/kb cckb-click slice --printer a1mini                  # A1 mini で実際にスライス
+    .venv/bin/python3 projects/cckb-click/tools/slice_precise.py   # 精度優先の設定で実際にスライスして G-code を検査
 
-何を刷って何を見るかは docs/coupon-test.md。小片は 6 組:
+何を刷って何を見るかは docs/coupon-test.md。**最初に刷るのは min（最小の一式）。**残りの 6 組は、min で見込みが立ってから:
 
+  min       最初に刷る最小の一式: 穴 3 つの枠（穴を 0.1 ずつ広げる）＋キャップ 3 個＋板。ノギスで測る所つき（外寸 10 の塊・内寸 10 の穴・つばと同じ厚さの段）。
+            coupon_min_plate.stl は 3 つを 1 枚に並べた物（これだけ刷ればよい）
   a / b     3×3 の枠（19.05 ピッチ）。案 A（穴 16.5×16.0）と案 B（穴 17.05 角・リブ 2.0）。列ごとに穴を 0.1 ずつ広げる。板は共用（coupon_ab_base）
   standin   スイッチの代わりの台の高さ 3.2〜3.7（2×3）。浮き・がた・押し込みを触る。キャップは b の物を使う
   latch     掛かり方 6 通り（つば F・45° の足 C・平らな足 S × 0.4 / 0.6）
   wide      1.5u・1.75u・2.25u（中心の台 1 個）。端を押したときの傾き
   strip     枠の半分の長さの帯（7.5u = 142.9）と柱。反りと、柱が全部平らな面に着くか
 
-名前の約束: build/cckb-click/coupon_<組>_<frame|base|caps>.stl（**刷る向きで出す**。全部で 14 個）。
+名前の約束: build/cckb-click/coupon_<組>_<frame|base|caps>.stl（**刷る向きで出す**。min の 4 個 ＋ あとで刷る 14 個）。
 見分け方: 左手前の角が落としてある（向き）。枠の縁の点の数 = 列・番号。板の台の手前の点 = 台の番号。キャップの上面の点 = 掛かり方の番号。
 """
 
@@ -53,6 +55,7 @@ class Coupon:
     caps: bool = True
     base_stl: str | None = None                      # 板を刷る STL の名前。None = この組の名前。"" = 刷らない（ほかの組の板を使う）
     caps_stl: str | None = None                      # 同、キャップ
+    gauge: bool = False                              # 測る所をつける（枠の右の空きに内寸の穴・キャップの列に外寸の塊）。1 枚に並べた STL（_plate）も出す
 
 
 def coupons(s=S):
@@ -75,7 +78,9 @@ def coupons(s=S):
             for j, w in enumerate(s.COUPON_WIDE)]
     n = int(s.COUPON_STRIP_U)
     strip = [P.Cell(k * UNIT, 0.0, s.HOLE_B) for k in range(n)]
+    mini = [P.Cell(i * UNIT, 0.0, s.HOLE_B, step=st, standin=nominal, dots=i + 1) for i, st in enumerate(s.COUPON_HOLE_STEPS)]
     return {
+        "min": Coupon(mini, extra_u=s.COUPON_GAUGE_EXTRA_U, gauge=True),
         "a": Coupon(grid(s.HOLE_A), base_stl="coupon_ab_base"),
         "b": Coupon(grid(s.HOLE_B), base_stl=""),
         "standin": Coupon(standin, bumps={k: k + 1 for k in range(len(hs))}, caps_stl=""),
@@ -96,12 +101,20 @@ def rest_dz(c, s=S):
 def build(cp, s=S):
     """組んだ状態の立体（名前 → 立体。caps は [(マス, 立体)]・置いた位置）。"""
     out = {"frame": P.frame(cp.cells, s, wall=cp.wall, extra_u=cp.extra_u)}
+    if cp.gauge:
+        out["frame"] = (out["frame"] - P.gauge_slot(*gauge_slot_xy(cp, s), s)).clean()
     if cp.has_base:
         out["base"] = P.base(cp.cells, s, extra_u=cp.extra_u, bumps=cp.bumps)
     if cp.caps:
         out["caps"] = [(c, Pos(c.cx, c.cy, rest_dz(c, s)) * P.cap(c, s, dots=cp.cap_dots.get(i, 0)))
                        for i, c in enumerate(cp.cells)]
     return out
+
+
+def gauge_slot_xy(cp, s=S):
+    """測る穴の中心（枠の右の空きの真ん中）。"""
+    b = P.key_bounds(cp.cells)
+    return (b[2] + cp.extra_u * UNIT / 2, (b[1] + b[3]) / 2)
 
 
 def lay_caps(cells_caps, s=S, gap=3.0):
@@ -124,7 +137,26 @@ def print_parts(name, cp, built, s=S):
     if "base" in built and cp.base_stl != "":
         out[cp.base_stl or f"coupon_{name}_base"] = P.to_bed(built["base"])
     if "caps" in built and cp.caps_stl != "":
-        out[cp.caps_stl or f"coupon_{name}_caps"] = lay_caps(built["caps"], s)
+        caps = lay_caps(built["caps"], s)
+        if cp.gauge:                                  # 測る塊をキャップの列の右に（同じ 1 層目・同じ高さの段を、同じ条件で刷る）
+            bb = caps.bounding_box()
+            block = Pos(bb.max.X + 3.0 + s.COUPON_GAUGE[0] / 2, (bb.min.Y + bb.max.Y) / 2, 0) * P.gauge_block(s)
+            caps = Compound(list(caps.solids()) + [block])
+        out[cp.caps_stl or f"coupon_{name}_caps"] = caps
+    if cp.gauge:
+        out[f"coupon_{name}_plate"] = Compound([p for _, p in plate_layout(out, name)])
+    return out
+
+
+def plate_layout(parts, name, gap=5.0):
+    """1 枚に並べる: 手前から キャップ（＋測る塊）・枠・板。X は中心をそろえる。**長い辺と、穴を広げる向きが X**
+    （A1 mini は X が頭・Y がベッド。測る塊と穴の X / Y が、そのまま機械の X / Y になる）。返り値 [(種類, 置いた立体)]。"""
+    out, y = [], 0.0
+    for kind in ("caps", "frame", "base"):
+        part = parts[f"coupon_{name}_{kind}"]
+        bb = part.bounding_box()
+        out.append((kind, Pos(-(bb.min.X + bb.max.X) / 2, y - bb.min.Y, -bb.min.Z) * part))
+        y += bb.size.Y + gap
     return out
 
 

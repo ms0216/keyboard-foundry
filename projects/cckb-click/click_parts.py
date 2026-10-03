@@ -59,10 +59,13 @@ def levels(s=S, latch="F", tab=None):
                 descent_max=descent, pad_lowest=pad - descent)
 
 
-def on_layer(z, s=S):
-    """z が刷る層の倍数か。"""
-    n = z / s.PRINT_LAYER
-    return abs(n - round(n)) < 1e-6
+def on_layer(z, s=S, first=None):
+    """ベッドからの高さ z が層の境目か: 0（ベッド）か、1 層目（first。既定は PRINT_FIRST_LAYER）＋ 層の倍数。"""
+    first = s.PRINT_FIRST_LAYER if first is None else first
+    if abs(z) < 1e-6:
+        return True
+    n = (z - first) / s.PRINT_LAYER
+    return n > -1e-6 and abs(n - round(n)) < 1e-6
 
 
 def print_heights(s=S, latch="F", tab=None):
@@ -224,8 +227,17 @@ def cap(c, s=S, dots=0):
     return _finish(_fuse(parts), c, s, dots, lv)
 
 
+def seam_notch(y_face, z0, z1, s=S):
+    """継ぎ目の溝を切る立体: 辺の真ん中（x = 0）・面 y = y_face から −Y へ SEAM_NOTCH の深さ（+Y 側は十分に外まで）。"""
+    w, d = s.SEAM_NOTCH
+    return Pos(0, y_face - d, z0) * Box(w, d + 1.0, z1 - z0, align=(Align.CENTER, Align.MIN, Align.MIN))
+
+
 def _finish(out, c, s, dots, lv):
-    """上面に見分ける点を彫る。"""
+    """胴の奥の面に継ぎ目の溝を切り、上面に見分ける点を彫る。"""
+    if s.SEAM_NOTCH:
+        bd = body_plan(c, s).bounding_box().size.Y
+        out = out - seam_notch(bd / 2, lv["pad"] - EPS, lv["cap_top"] + EPS, s)
     if dots:
         bd = body_plan(c, s).bounding_box().size.Y
         y = -(bd / 2 - s.CAP_TOP_CHAMFER - s.COUPON_DOT[0])
@@ -308,6 +320,10 @@ def frame(cells, s=S, wall=True, extra_u=0.0, posts=None):
         cuts.append(at * Pos(0, 0, lv["frame_top"] - ch) * extrude(hole_plan(c, s), ch + EPS, taper=-45.0))
         if c.latch == "F":
             cuts.append(at * Pos(0, 0, -1.0) * extrude(tab_plan(c, s, s.POCKET_CLEAR), lv["latch"] + 1.0))
+        if s.SEAM_NOTCH:                              # 穴の奥の壁の継ぎ目の溝（枠の厚さの中だけ。柱は切らない）。壁の外へ掘る
+            d = hole_size(c)[1]                       # 見分ける点は手前の縁にある（奥の列だけ奥。溝との間に 0.6 残る）
+            cuts.append(at * Pos(0, d / 2 - 0.5, s.FRAME_UNDER) * Box(s.SEAM_NOTCH[0], s.SEAM_NOTCH[1] + 0.5, s.FRAME_T + EPS,
+                                                                       align=(Align.CENTER, Align.MIN, Align.MIN)))
         if c.dots:
             edge = (rib(c)[1] + s.PLATE_MARGIN_Y - ch) / 2          # 縁（外形から穴の面取りまで）の真ん中
             y = (y_back - edge) if c.back else (y_front + edge)
@@ -348,6 +364,23 @@ def base(cells, s=S, extra_u=0.0, bumps=None):
         if n:
             parts += _dots(n, c.cx, c.cy - s.SW_BODY / 2 - 2.0, -EPS, s.COUPON_DOT[1], s)
     return _fuse(parts)
+
+
+def gauge_block(s=S):
+    """測る塊（刷る向き・下面がベッド）: 外寸 SIDE 角 × H。+X 側に、つばと同じ厚さの段（ノギスで厚さを測る）。
+    下の縁はキャップと同じ面取り（1 層目の太りがノギスに当たらないように）。**X は段より上で測る。**"""
+    side, h, ledge = s.COUPON_GAUGE
+    low = _fuse([Box(side, side, h, align=CEN_MIN),
+                 Pos(side / 2 - EPS, 0, 0) * Box(ledge + EPS, side, s.TAB_T, align=(Align.MIN, Align.CENTER, Align.MIN))])
+    return chamfer(low.edges().group_by(Axis.Z)[0], s.CAP_BOTTOM_CHAMFER).clean()
+
+
+def gauge_slot(x, y, s=S):
+    """枠に開ける測る穴（内寸 SIDE 角・貫通）を切る立体。上の縁（刷るときのベッド側）はキーの穴と同じ面取り。"""
+    side = s.COUPON_GAUGE[0]
+    top, ch = s.FRAME_UNDER + s.FRAME_T, s.HOLE_CHAMFER
+    return _fuse([Pos(x, y, -1.0) * extrude(Rectangle(side, side), top + 2.0),
+                  Pos(x, y, top - ch) * extrude(Rectangle(side, side), ch + EPS, taper=-45.0)])
 
 
 def to_bed(part):
