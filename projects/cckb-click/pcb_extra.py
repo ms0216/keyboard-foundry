@@ -2,6 +2,7 @@
 
 置くもの（**全部表**。裏には部品を置かない）:
   - 幅の広いキー 11 個の空きランド（SWA{i}・SWB{i}。真ん中のスイッチと並列・JLC は実装しない・はんだを載せない）
+  - 載せないコンデンサのランド 2 つ（C_BAT・C_3V3。あとから容量を足す場所。JLC は実装しない・はんだを載せない）
   - XIAO（平ら・キャステレーション・手はんだ）・電池クリップ・電源スイッチ・74LVC595 ×2・パスコン・電源のショットキー・分圧
   - ルール領域: アンテナの銅の禁止域（全層）・XIAO の下の表の銅の禁止・ねじの頭の下の裏の銅の禁止・
     電池の下と抜き差しの道の表の銅の禁止・スイッチの本体の下のビアの禁止・外形の縁の帯
@@ -46,13 +47,19 @@ FP = {  # 参照名 → (ライブラリ, 名前)
     "R_LO": (STD / "Resistor_SMD.pretty", "R_0805_2012Metric"),
     "D_PWR": (STD / "Diode_SMD.pretty", "D_SOD-123"),
     "TP_VSW": (STD / "TestPoint.pretty", "TestPoint_Pad_D1.0mm"),
+    "C_BAT": (CLICK_LIB, "C_1206_0805_Land"),
+    "C_3V3": (CLICK_LIB, "C_1206_0805_Land"),
 }
 VALUE = {"U_MCU": "XIAO_nRF52840", "BT1": "MY-1632-03-R", "SW_PWR": "MSK12C02",
          "U1": "SN74LVC595APWR", "U2": "SN74LVC595APWR",
-         "C_U1": "0.1uF", "C_U2": "0.1uF", "R_HI": "1M", "R_LO": "1M", "D_PWR": "BAT46W", "TP_VSW": "TP_VBAT_SW"}
+         "C_U1": "0.1uF", "C_U2": "0.1uF", "R_HI": "1M", "R_LO": "1M", "D_PWR": "BAT46W", "TP_VSW": "TP_VBAT_SW",
+         "C_BAT": "cap_land_unpopulated", "C_3V3": "cap_land_unpopulated"}
 SIDE_LAND_VALUE = "SKRA_side_land_unpopulated"
 # 外形の縁の、配線・ビアを入れない帯の幅。JLC の銅と外形の規則に 0.02 足す（Freerouting は外形をネットクラスの間隔でしか避けない）
 EDGE_BAND = JLC["edge_clearance"] + 0.02
+# 試験用のランドのシルクの輪（半径・線の太さ）。KiCad の足跡は半径 0.7・太さ 0.12 で、輪の内側とパッドのマスクの開口の間が 0.10、
+# 太さも JLC の下限 0.15 を割っていた（1 回目の監査 C 軽微 1）。輪の内側から開口まで 0.225
+TP_SILK_RING = (0.85, 0.15)
 # キーのダイオードの名札（部品の中心から。CAD）。既定の位置（上）はスイッチの手前のランドに近い。カソードの左へ
 DIODE_REF_AT = (-4.4, 0.0)
 LAYER = {"F.Cu": pcbnew.F_Cu, "B.Cu": pcbnew.B_Cu}
@@ -118,20 +125,23 @@ def circle_poly(c, r, n=24):
 RULE_LAYERS = {
     "ANTENNA_KEEPOUT": ("F.Cu", "B.Cu"), "XIAO_UNDERSIDE": ("F.Cu",), "EDGE_KEEPOUT": ("F.Cu", "B.Cu"),
     "SCREW_HEAD_KEEPOUT": ("B.Cu",), "CELL_KEEPOUT": ("F.Cu",), "SW_BODY_KEEPOUT": ("F.Cu", "B.Cu"),
+    "TP_VIA_KEEPOUT": ("F.Cu", "B.Cu"), "IC_BAND": ("F.Cu",),
 }
 # ベタだけを禁止する領域（線・ビアは通す）。**配線の後で足す**（tools/route_click.py が no_fill_areas を呼ぶ）:
 # 未配線の板に置くと、DSN へは「配線も禁止」として出て、Freerouting がその中のパッド（XIAO の D0）から出られなくなった（2026-10-03）
-NO_FILL_LAYERS = {"FANOUT_NO_FILL": ("F.Cu",), "XIAO_BACK_NO_FILL": ("B.Cu",)}
+NO_FILL_LAYERS = {"FANOUT_NO_FILL": ("F.Cu",), "XIAO_BACK_NO_FILL": ("B.Cu",), "ANT_FRONT_NO_FILL": ("B.Cu",)}
 
 
 def no_fill_areas(board, lay, to_kicad):
     """ベタだけを禁止する領域を足す。足した数。
       FANOUT_NO_FILL      595 から列への束の帯（表）: 線と線の間に、ビアの打てない細い帯が 100 mm 以上残る
-      XIAO_BACK_NO_FILL   XIAO の下（裏）: 行の線で細い帯に切られ、ビアも打てない（click_layout.xiao_back_no_fill）"""
+      XIAO_BACK_NO_FILL   XIAO の下（裏）: 行の線で細い帯に切られ、ビアも打てない（click_layout.xiao_back_no_fill）
+      ANT_FRONT_NO_FILL   アンテナの禁止域の手前の端と行 4 の線の間（裏）: 幅 0.45 の細い帯（click_layout.antenna_front_strip）"""
     ctx = dict(to_kicad=to_kicad)
     rule_area(board, ctx, lay.fanout_band(), (pcbnew.F_Cu,), "FANOUT_NO_FILL", tracks=False, vias=False, fills=True)
     rule_area(board, ctx, lay.xiao_back_no_fill(), (pcbnew.B_Cu,), "XIAO_BACK_NO_FILL", tracks=False, vias=False, fills=True)
-    return 2
+    rule_area(board, ctx, lay.antenna_front_strip(), (pcbnew.B_Cu,), "ANT_FRONT_NO_FILL", tracks=False, vias=False, fills=True)
+    return 3
 
 
 
@@ -179,11 +189,17 @@ def place(board, ctx):
     for ref, (px, py, deg) in s.PART_AT.items():
         fp = _put(board, ctx, *FP[ref], ref, VALUE[ref], (px, py), deg)
         if ref in s.REF_TEXT_AT:
-            dx, dy = s.REF_TEXT_AT[ref]
+            dx, dy = s.REF_TEXT_AT[ref][:2]
             fp.Reference().SetPosition(ctx["to_kicad"](px + dx, py + dy))
-            fp.Reference().SetTextAngleDegrees(0)
+            fp.Reference().SetTextAngleDegrees(s.REF_TEXT_AT[ref][2] if len(s.REF_TEXT_AT[ref]) > 2 else 0)
     tp = _put(board, ctx, *FP["TP_VSW"], "TP_VSW", VALUE["TP_VSW"], s.TP_VSW_AT, 0)
     tp.Reference().SetVisible(False)                     # リブの下。名札は刷らない（位置は手順書の絵で）
+    rings = [g for g in tp.GraphicalItems() if g.GetLayer() == pcbnew.F_SilkS and g.GetShape() == pcbnew.SHAPE_T_CIRCLE]
+    if len(rings) != 1:
+        raise RuntimeError(f"TP_VSW のシルクの輪が {len(rings)} 個（足跡が変わった？）")
+    c = rings[0].GetCenter()
+    rings[0].SetEnd(pcbnew.VECTOR2I(c.x + pcbnew.FromMM(TP_SILK_RING[0]), c.y))
+    rings[0].SetWidth(pcbnew.FromMM(TP_SILK_RING[1]))
     if set(s.REF_TEXT_AT) - set(s.PART_AT):
         raise RuntimeError(f"REF_TEXT_AT の {sorted(set(s.REF_TEXT_AT) - set(s.PART_AT))} が PART_AT に無い")
 
@@ -231,6 +247,12 @@ def place(board, ctx):
     # near the switch」。空きランドも、あとでスイッチを付けるので同じ）。線は通してよい（ランドどうしを本体の下で結ぶ）
     for _, sx, sy, _ in lay.switch_sites():
         rule_area(board, ctx, lay.switch_body(sx, sy), both, "SW_BODY_KEEPOUT", tracks=False, fills=False)
+    # 595 の本体の下の表の GND の帯: 表の線を通さない（ビアは許す。spec.IC_BAND）
+    for box in lay.ic_band():
+        rule_area(board, ctx, box, (pcbnew.F_Cu,), "IC_BAND", tracks=True, vias=False, fills=False)
+    # 試験用のランドにビアを打たせない（Freerouting がランドの中にビアを置いた: 2026-10-04。テスターの針を当てる面に穴が開く）
+    r = pcbnew.ToMM(tp.Pads()[0].GetSize(pcbnew.F_Cu).x) / 2 + VIA_D / 2 + 0.15
+    rule_area(board, ctx, circle_poly(s.TP_VSW_AT, r), both, "TP_VIA_KEEPOUT", tracks=False, fills=False)
     x0, y0, x1, y1 = lay.pcb
     w = EDGE_BAND
     for strip in ((x0, y0, x1, y0 + w), (x0, y1 - w, x1, y1), (x0, y0, x0 + w, y1), (x1 - w, y0, x1, y1)):

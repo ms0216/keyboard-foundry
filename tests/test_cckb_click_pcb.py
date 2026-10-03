@@ -281,7 +281,7 @@ def netlist_problems(geo, want=None, mech_refs=None):
 def test_every_pad_of_the_unrouted_board_carries_the_declared_net(unrouted):
     assert netlist_problems(unrouted) == []
     want = circuit.expected_pad_nets(PROJECT)
-    assert len(want) == 62 * 2 + 22 + 11 and sum(1 for p in unrouted["pads"] if p["net"]) > 62 * 6 + 22 * 4
+    assert len(want) == 62 * 2 + 22 + 13 and sum(1 for p in unrouted["pads"] if p["net"]) > 62 * 6 + 22 * 4
 
 
 def test_the_netlist_check_notices_a_wrong_net_on_one_of_two_twin_pads(unrouted):
@@ -302,8 +302,12 @@ def test_the_circuit_is_the_same_as_cckb_except_the_battery_and_the_power_switch
     assert circuit.XIAO_PINS == cckb.XIAO_PINS and circuit.POWER_NETS == cckb.POWER_NETS
     ours = {r: (k, p) for r, k, p in circuit.electronics()}
     theirs = {r: (k, p) for r, k, p in cckb.electronics()}
-    assert set(ours) - set(theirs) == {"TP_VSW"} and not set(theirs) - set(ours)        # 試験用のランドだけ足した（VBAT_SW）
+    # 足したのは、部品の載らない銅だけ: 試験用のランド（VBAT_SW）と、載せないコンデンサのランド 2 つ（1 回目の監査 A 重要 1・D 重要 1）
+    assert set(ours) - set(theirs) == {"TP_VSW", "C_BAT", "C_3V3"} and not set(theirs) - set(ours)
     assert ours.pop("TP_VSW") == ("testpoint", {"1": "VBAT_SW"})
+    assert ours.pop("C_BAT") == ("cap_land", {"1": "VBAT_SW", "2": "GND"})        # 電源スイッチの後ろ・D_PWR の手前（スイッチで切れる）
+    assert ours.pop("C_3V3") == ("cap_land", {"1": "V3V3", "2": "GND"})           # D_PWR の後ろ
+    assert {S.FAB_KINDS[r"C_(BAT|3V3)"]} <= S.NOT_ASSEMBLED
     diff = sorted(r for r in ours if ours[r] != theirs[r])
     assert diff == ["BT1", "SW_PWR"]
     assert ours["BT1"][1] == theirs["BT1"][1]                 # ＋ と − のネットは同じ
@@ -382,7 +386,7 @@ def paste_and_side_problems(geo_board):
         ref = re.search(r'\(property "Reference" "([^"]+)"', b).group(1)
         paste = len(re.findall(r'\(pad "[^"]*" smd[\s\S]*?\(layers[^)]*"F\.Paste"', b))
         smd = len(re.findall(r'\(pad "[^"]*" smd', b))
-        dry = bool(re.fullmatch(r"SW[AB]\d+|U_MCU|TP_VSW", ref))
+        dry = bool(re.fullmatch(r"SW[AB]\d+|U_MCU|TP_VSW|C_BAT|C_3V3", ref))
         if dry and paste:
             out.append(f"{ref}: JLC が実装しないのに、はんだが載るパッド {paste} 個")
         if not dry and smd and paste != smd:
@@ -395,7 +399,7 @@ def paste_and_side_problems(geo_board):
 def test_everything_sits_on_top_and_only_the_jlc_parts_get_paste(unrouted):
     board = PROJECT.root / "pcb" / "unrouted" / "cckb-click_main.kicad_pcb"
     assert paste_and_side_problems(board) == []
-    assert len(re.findall(r'\n\t\(footprint ', board.read_text())) == 62 * 2 + 22 + 11 + 28
+    assert len(re.findall(r'\n\t\(footprint ', board.read_text())) == 62 * 2 + 22 + 13 + 30
 
 
 def test_the_paste_check_notices_paste_on_a_side_land_and_a_part_on_the_back(tmp_path, unrouted):
@@ -466,7 +470,12 @@ def test_the_corner_parts_face_the_way_the_case_needs(unrouted):
     # 電池クリップ: ＋のランドが左右・口は手前（止めが奥）→ 電池の中心 = 原点
     plus = sorted(k[2] for k in pads if k[0] == "BT1" and k[1] == "1")
     assert plus == pytest.approx([S.CLIP_AT[0] - 10.025, S.CLIP_AT[0] + 10.025])
-    assert LAY.cell()[0][1] - LAY.cell()[1] == pytest.approx(LAY.frame[1] + S.CELL_RECESS)
+    # 電池は**止めに当たる所**に座る（図面 MY-CP-0247: 止めから口 15.10・板厚 0.25。止めの外面は足跡で軸から 8.76）:
+    # 中心は軸から 8.76 − 0.25 − 8.0 = 0.51 奥。手前の縁は枠の外面から 1.71
+    assert LAY.cell()[0][1] - S.CLIP_AT[1] == pytest.approx(8.76 - 0.25 - 16.0 / 2) and S.CLIP_SHEET_T == 0.25
+    assert LAY.cell_recess() == pytest.approx(1.71)
+    # 表の銅を置かない範囲の奥の端は、止めの外面から 1.0（止めに当てた電池の缶の縁から 1.25）
+    assert LAY.cell_keepout()[3] - (LAY.cell()[0][1] + LAY.cell()[1]) == pytest.approx(1.25)
     # 電源スイッチ: 端子は本体の左（内側）・つまみは右。先が枠の外面から PSW_KNOB_PROUD 出る。端子 3 が奥
     pins = {k[1]: (k[2], k[3]) for k in pads if k[0] == "SW_PWR" and k[1] in "123" and k[1]}
     body = LAY.psw_body()
@@ -482,7 +491,7 @@ def test_the_corner_parts_face_the_way_the_case_needs(unrouted):
 def test_the_screws_sit_mid_key_on_the_wall_and_the_feet_hang_on_a_post():
     f = LAY.frame
     edge_keys = {"back": [k for k in LAY.keys if k.r == 0], "front": [k for k in LAY.keys if k.r == 4]}
-    n = dict(perimeter=0, holddown=0)
+    n = dict(perimeter=0, holddown=0, spare=0)
     for ref, (x, y), kind in LAY.screws():
         n[kind] += 1
         if kind == "holddown":
@@ -505,10 +514,21 @@ def test_the_screws_sit_mid_key_on_the_wall_and_the_feet_hang_on_a_post():
                 k = min((k for k in LAY.keys if (k.x < 0) == (x < 0)), key=lambda k: (abs(k.y - y), -abs(k.x)))
                 lo, hi, v = LAY.hole(k)[1], LAY.hole(k)[3], y
             free = S.TAB_LEN + S.POCKET_CLEAR + S.CAP_CLEAR      # つばは辺に沿って TAB_LEN。くぼみの隙と、キャップが横にずれる分
-            assert lo + free <= v - S.SCREW_BOSS_HALF and v + S.SCREW_BOSS_HALF <= hi - free, f"{ref} の壁の厚い所がつばに掛かる"
+            half = LAY.boss_half((x, y))
+            assert half == (S.SCREW_BOSS_HALF if on_x or k.w < 1.5 else S.SCREW_BOSS_HALF_SIDE), ref
+            assert lo + free <= v - half + 1e-9 and v + half <= hi - free + 1e-9, f"{ref} の壁の厚い所がつばに掛かる"
             if not on_x and k.w >= 1.5:                               # 空きランドの上端から 0.3
-                assert y - S.SCREW_BOSS_HALF - (k.y + 2.5) == pytest.approx(0.1) and y - k.y == pytest.approx(S.SIDE_SCREW_DY)
-    assert n == dict(perimeter=20, holddown=8) and S.MOUNTS == {"main": []}
+                assert y - half - (k.y + 2.5) == pytest.approx(0.1) and y - k.y == pytest.approx(S.SIDE_SCREW_DY)
+            if kind == "spare":                                      # 予備は手前の継ぎ目の両側・継ぎ目から 7 以内
+                assert on_x and y < 0 and abs(x - S.FRAME_SPLIT[-1]) <= 7.0, ref
+    assert n == dict(perimeter=20, holddown=8, spare=2) and S.MOUNTS == {"main": []}
+    assert sorted(x - S.FRAME_SPLIT[-1] > 0 for _, (x, _), kind in LAY.screws() if kind == "spare") == [False, True]
+    # 穴の縁から基板の縁まで 1.0（foundry.pcb の下限。外へ寄せられるのはここまで）・頭 φ4.0 は基板の縁の内側
+    edge = S.SCREW_FROM_EDGE - S.PCB_INSET_X
+    assert edge - S.SCREW_HOLE_D / 2 == pytest.approx(1.0) and edge - S.SCREW_HEAD_D / 2 >= 0.1 - 1e-9
+    # 内側の肉（下穴の縁からキーの穴の縁まで）は 0.7・外側は 1.5
+    wall = S.PLATE_MARGIN_Y + LAY.rib() / 2
+    assert wall - S.SCREW_FROM_EDGE - S.SCREW_PILOT_D / 2 == pytest.approx(0.7) and S.SCREW_FROM_EDGE - S.SCREW_PILOT_D / 2 == pytest.approx(1.5)
     # 継ぎ目の両側に、奥と手前で 1 本ずつ（継ぎ目から 1 キー以内）
     for y, sx in ((S.SCREWS_PERIMETER[0][1], S.FRAME_SPLIT[0]), (S.SCREWS_PERIMETER[9][1], S.FRAME_SPLIT[-1])):
         xs = sorted(p[0] - sx for p in S.SCREWS_PERIMETER if p[1] == y)

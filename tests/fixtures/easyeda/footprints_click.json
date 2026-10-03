@@ -1,5 +1,5 @@
 {
- "source": "EasyEDA の部品データ（JLC/LCSC の実装ライブラリ）。curl https://easyeda.com/api/products/<C 番号>/components?version=6.4.19.5 の result.packageDetail.dataStr から、原点（head）と PAD の番号・中心・大きさ、HOLE の中心・半径だけを抜いた（2026-10-03 取得）。単位は EasyEDA の 10mil（0.254mm）・y は下向き。同じ番号のパッドが 2 つある部品があるので、パッドは並び（[番号, x, y, 幅, 高さ]）で持つ",
+ "source": "EasyEDA の部品データ（JLC/LCSC の実装ライブラリ）。curl https://easyeda.com/api/products/<C 番号>/components?version=6.4.19.5 の result.packageDetail.dataStr から、原点（head）と PAD の番号・中心・大きさ、HOLE の中心・半径だけを抜いた（2026-10-03 取得）。単位は EasyEDA の 10mil（0.254mm）・y は下向き。同じ番号のパッドが 2 つある部品があるので、パッドは並び（[番号, x, y, 幅, 高さ]）で持つ。C20606805 の marks は、同じ dataStr のシルク（layer 3）の外形から: stop = 折り返しの止めの外の縁の真ん中（TRACK の y の最小 = 原点から −8.76 mm・幅 6.35）、mouth = 口の縁（ARC の端の y = 原点から ＋6.35 mm）。パッドは左右対称で、180° 回っても同じ番号のパッドに載るので、向きはこの印で見る（2026-10-04 取得）",
  "parts": {
   "C202383": {
    "package": "SW-SMD_4P-L6.2-W6.2-P4.00-LS6.8",
@@ -68,7 +68,17 @@
      27.559
     ]
    ],
-   "holes": []
+   "holes": [],
+   "marks": {
+    "stop": [
+     4000.0,
+     2965.512
+    ],
+    "mouth": [
+     4000.0,
+     3025.0
+    ]
+   }
   },
   "C431540": {
    "package": "SW-TH_MSK12C02",

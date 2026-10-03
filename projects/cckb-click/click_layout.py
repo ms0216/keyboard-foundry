@@ -203,11 +203,27 @@ class Layout:
         return self.s.SCREW_PILOT_D, self.s.SCREW_PILOT_DEPTH
 
     def screws(self):
-        """[(参照名, (x, y), 種類)]。種類は "perimeter"（外周の壁に M2×4）か "holddown"（中の低い足に M2×3）。基板の H{n} と同じ順。"""
+        """[(参照名, (x, y), 種類)]。種類は "perimeter"（外周の壁に M2×4）・"holddown"（中の低い足に M2×3）・
+        "spare"（外周の壁の予備。基板の穴と枠の下穴はあるが、既定では締めない）。基板の H{n} と同じ順（予備は最後に足した）。"""
         s = self.s
-        n = len(s.SCREWS_PERIMETER)
-        return [(f"H{i}", tuple(p), "perimeter" if i < n else "holddown")
-                for i, p in enumerate(s.SCREWS_PERIMETER + s.HOLDDOWN_AT)]
+        kinds = ["perimeter"] * len(s.SCREWS_PERIMETER) + ["holddown"] * len(s.HOLDDOWN_AT) + ["spare"] * len(s.SCREWS_SPARE)
+        return [(f"H{i}", tuple(p), kind)
+                for i, (p, kind) in enumerate(zip(s.SCREWS_PERIMETER + s.HOLDDOWN_AT + s.SCREWS_SPARE, kinds))]
+
+    def boss_half(self, c):
+        """外周のねじ c の所で壁を厚くする幅の半分。奥と手前の壁は SCREW_BOSS_HALF。左右の壁は、隣のキーが幅の広いキー
+        （空きランドがある）なら SCREW_BOSS_HALF_SIDE・1u なら SCREW_BOSS_HALF。"""
+        s = self.s
+        f = self.frame
+        x, y = c
+        if min(y - f[1], f[3] - y) < min(x - f[0], f[2] - x):
+            return s.SCREW_BOSS_HALF
+        k = min((k for k in self.keys if (k.x < 0) == (x < 0)), key=lambda k: (abs(k.y - y) > UNIT / 2, -abs(k.x)))
+        return s.SCREW_BOSS_HALF if self.side_offset(k) is None else s.SCREW_BOSS_HALF_SIDE
+
+    def wall_screws(self):
+        """外周の壁に下穴を持つねじ（外周 ＋ 予備）[(参照名, (x, y), 種類)]。"""
+        return [v for v in self.screws() if v[2] in ("perimeter", "spare")]
 
     def screw_head_keepouts(self):
         """ねじの頭（基板の下面）の下で裏の銅を禁止する円 [(参照名, 中心, 半径)]。"""
@@ -287,6 +303,13 @@ class Layout:
         h = self.s.ANT_KEEPOUT_HALF_W
         return (b[2] - self.s.ANT_KEEPOUT_IN, y - h, b[2] + self.s.ANT_KEEPOUT_OUT, y + h)
 
+    def antenna_front_strip(self):
+        """アンテナの禁止域の手前の端と、行 4 の裏の線（spec.XIAO_ESCAPE の run_y）の間。裏の GND のベタを塗らない矩形。
+        ここのベタは幅 0.45・長さ 5 の細い帯で、禁止域の縁に沿って右の端だけで繋がっていた（1 回目の監査 D 軽微 4）。
+        **禁止域そのものは広げない**（広げると行 4 の線が通れない）。"""
+        k = self.antenna_keepout()
+        return (k[0], self.s.XIAO_ESCAPE["ROW4"]["run_y"], k[2], k[1])
+
     def xiao_exposed(self):
         """XIAO の裏の露出パッド 8 個と USB のシールドの長穴 4 個（＋ XIAO_BOTTOM_CLEAR）。{名前: 矩形}。"""
         s = self.s
@@ -320,8 +343,16 @@ class Layout:
 
     # --- 右の角: 電池・電源スイッチ ------------------------------------------
     def cell(self):
-        """電池（中心, 半径）。"""
-        return tuple(self.s.CLIP_AT), self.s.CELL_D / 2
+        """**止めに当てた**電池（中心, 半径）。クリップの原点から奥へ: 止めの外面 CLIP_STOP − 板の厚さ − 電池の半径
+        （図面 MY-CP-0247。1 回目の監査 E 重要 1: 前はクリップの原点を中心にしていて、缶の縁が表のベタの縁の真上だった）。"""
+        s = self.s
+        r = s.CELL_D / 2
+        return (s.CLIP_AT[0], round(s.CLIP_AT[1] + s.CLIP_STOP - s.CLIP_SHEET_T - r, 6)), r
+
+    def cell_recess(self):
+        """電池の手前の縁が枠の外面から引っ込む量。"""
+        (_, y), r = self.cell()
+        return y - r - self.frame[1]
 
     def clip_pads(self):
         """＋のランド 2 つ（左・右）。"""
@@ -335,16 +366,37 @@ class Layout:
         return (x - self.s.CLIP_BODY_W / 2, y - self.s.CLIP_MOUTH, x + self.s.CLIP_BODY_W / 2, y + self.s.CLIP_STOP)
 
     def cell_keepout(self):
-        """電池の下と抜き差しの道（表の銅を置かない）。矩形: 電池の幅 ＋ 余裕・奥は電池の奥の端 ＋ 余裕・手前は基板の縁。"""
-        (x, y), r = self.cell()
-        c = self.s.CELL_KEEPOUT_CLEAR
-        return (x - r - c, self.pcb[1], x + r + c, y + r + c)
+        """電池の下と抜き差しの道（表の銅を置かない）。矩形: 電池の幅 ＋ 余裕・奥は止めの外面 ＋ CELL_KEEPOUT_BACK・手前は基板の縁。"""
+        s = self.s
+        (x, _), r = self.cell()
+        c = s.CELL_KEEPOUT_CLEAR
+        return (x - r - c, self.pcb[1], x + r + c, s.CLIP_AT[1] + s.CLIP_STOP + s.CELL_KEEPOUT_BACK)
+
+    def ic_band(self):
+        """2 つの 595 の本体の下を抜ける表の GND の帯で、表の線を通さない矩形 [矩形, ...]（spec.IC_BAND）。ランドを結ぶ線
+        （spec.LINK_UNDER）の間。名指しのビア（spec.IC_BAND_VIA_X）の所は空ける。"""
+        s = self.s
+        left, right, clear = s.IC_BAND
+        y = s.PART_AT["U1"][1]
+        land_y = SKRA_LAND["inner"][1] / 2 + (SKRA_LAND["outer"][1] - SKRA_LAND["inner"][1]) / 4      # ランドの列の中心（2.0）
+        half = land_y - s.LINK_UNDER - 0.1 - clear                                                  # 線の半幅 0.1
+        x0 = min(s.PART_AT["U1"][0], s.PART_AT["U2"][0]) - left
+        x1 = max(s.PART_AT["U1"][0], s.PART_AT["U2"][0]) + right
+        cuts = sorted(v for v in s.IC_BAND_VIA_X if x0 < v < x1)
+        xs = [x0] + [e for v in cuts for e in (v - 0.7, v + 0.7)] + [x1]
+        return [(xs[i], y - half, xs[i + 1], y + half) for i in range(0, len(xs), 2)]
 
     def psw_body(self):
         """電源スイッチの本体（長辺が y・つまみは +x）。"""
         x, y = self.s.PSW_AT
         cx = x + self.s.PSW_ORIGIN_TO_BODY
         return rect(cx, y, self.s.PSW_BODY[1], self.s.PSW_BODY[0])
+
+    def psw_pads(self):
+        """電源スイッチのパッドの外接（端子・枠のランド）。"""
+        x, y = self.s.PSW_AT
+        b = self.s.PSW_PAD_BOX
+        return (x + b[0], y + b[1], x + b[2], y + b[3])
 
     def psw_knob(self, pos):
         """つまみ（pos = +1 奥 / −1 手前）。"""

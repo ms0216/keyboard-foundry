@@ -3,6 +3,7 @@
   main_sections.png   断面 6 枚: キー 2 個（置いたとき・押し切り）／外周のねじ／XIAO と USB の切り欠き／電池の口と指の切り欠き／電源スイッチのつまみ
   main_top.png        上から（枠の上面の高さで切る）と、枠の下（基板の上 1.5）で切った図。柱・壁・部品・ねじ・継ぎ目
   main_tilt.png       2.25u と 1u の縁を押し切った傾き（公差の端）と、その下の部品
+  coupon_screw.png    ねじの試し刷り（本番の枠から切り出した壁と当て板）
 
     .venv/bin/python3 projects/cckb-click/click_case.py   が呼ぶ
 """
@@ -134,5 +135,37 @@ def tilt(out):
     return p
 
 
+def screw_coupon(out):
+    """ねじの試し刷り: 上から（基板の上 1.0 で切る）と、ねじを通る断面（ふつうの壁・厚くした壁・左の壁）。"""
+    sc = C.screw_coupon()
+    boxes = C.screw_coupon_boxes()
+    d, depth = LAY.pilot()
+    fig, axs = plt.subplots(2, 3, figsize=(18, 9))
+    axs[0][0].remove()
+    axs[0][1].remove()
+    scene = lambda n: [(COL["pcb"], sc[f"base_{n}"]), (COL["frame"], sc[f"frame_{n}"])]      # noqa: E731
+    bb, screws, thick = boxes["back"]
+    ax = plt.subplot2grid((2, 3), (0, 0), colspan=2, fig=fig)
+    _draw(ax, scene("back"), lambda p: F.xy(p, 1.0), (bb[0] - 2, bb[2] + 2, bb[1] - 2, bb[3] + 2),
+          "奥の壁の切れ端（基板の上 1.0 で切った図）: ねじ 3 本。右の 1 本だけ壁を穴の中へ 0.5 厚くした（その側の端の角を落としてある）")
+    for i, (x, y) in enumerate(screws):
+        ax.text(x, bb[1] - 1.2, f"{i + 1} {'厚い（内の肉 1.2）' if (x, y) == thick else 'ふつう（内の肉 0.7）'}", ha="center", fontsize=9)
+    sb, (sscrew,), _ = boxes["side"]
+    _draw(axs[0][2], scene("side"), lambda p: F.xy(p, 1.0), (sb[0] - 2, sb[2] + 2, sb[1] - 2, sb[3] + 2),
+          "左の壁の切れ端: ねじ 1 本（壁を厚くする幅が狭い所。斜めの肉 0.49）")
+    axs[0][2].text(sscrew[0] + 4.5, sscrew[1], "4", fontsize=9)
+    zl = (-2.2, 5.6)
+    lv = [(0.0, "当て板の上面 0（基板の上面）"), (depth, f"下穴の底 {depth}"), (S.SCREW_L - S.PCB_T, f"M2×4 の先 {S.SCREW_L - S.PCB_T:.1f}")]
+    _draw(axs[1][0], scene("back"), lambda p: yz(p, screws[0][0]), (bb[1] - 1, bb[3] + 1, *zl), "1 のねじを通る断面（ふつう）", lv)
+    _draw(axs[1][1], scene("back"), lambda p: yz(p, thick[0]), (bb[1] - 1, bb[3] + 1, *zl), "3 のねじを通る断面（厚くした壁）", lv)
+    _draw(axs[1][2], scene("side"), lambda p: F.xz(p, sscrew[1]), (sb[0] - 1, sb[2] + 1, *zl), "4 のねじを通る断面（左の壁）", lv)
+    fig.suptitle("ねじの試し刷り coupon_screw（本番の枠から切り出した壁 ＋ 厚さ 1.6 の当て板。灰 = 枠・緑 = 当て板）", fontsize=12)
+    fig.tight_layout()
+    p = out / "coupon_screw.png"
+    fig.savefig(p, dpi=85)
+    plt.close(fig)
+    return p
+
+
 def render_all(out):
-    return [sections(out), top(out), tilt(out)]
+    return [sections(out), top(out), tilt(out), screw_coupon(out)]

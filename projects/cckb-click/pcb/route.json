@@ -1,24 +1,32 @@
 {
   "board": "cckb-click_main.kicad_pcb",
   "unrouted": "cckb-click_main.kicad_pcb",
-  "unrouted_fingerprint": "0871dccc541d5b6682016e622b4562f7a8bf7860c5577a88aafdf0eef4854282",
-  "unrouted_sha256": "268e20183e32f62c22c6727e37c613820b882cc09eb1c60d5c7ef33320a67c93",
+  "unrouted_fingerprint": "138104509e8dcfd1abf741d61bdb344f3f937c16f7f7bb524dca4dcbd89f8b0f",
+  "unrouted_sha256": "f5e67e6fe9d5f7380006e34b006d41a652f0fffceaf3e89e87a744c1a472794c",
   "freerouting": "freerouting-2.3.0.jar",
   "passes": 100,
   "freerouting_options": [
     "--router.optimizer.enabled=false"
   ],
-  "margin_um": 30,
+  "margin_um": 25,
   "margins_tried": [
     [
       30,
+      2
+    ],
+    [
+      35,
+      1
+    ],
+    [
+      25,
       0
     ]
   ],
-  "matrix_segments": 628,
-  "matrix_vias": 74,
-  "power_segments": 3,
-  "gnd_fanout": 12,
+  "matrix_segments": 634,
+  "matrix_vias": 85,
+  "power_segments": 18,
+  "gnd_fanout": 14,
   "ring": {
     "奥": [
       4,
@@ -37,12 +45,13 @@
       11
     ]
   },
-  "fence": 87,
-  "grid": 713,
-  "one_layer_vias_removed": 3,
+  "fence": 90,
+  "grid": 710,
+  "one_layer_vias_removed": 1,
+  "duplicate_tracks_removed": 6,
   "band_vias_removed": 28,
-  "island_vias": 3,
-  "second_island_vias": 2,
+  "island_vias": 1,
+  "second_island_vias": 0,
   "declared_vias": 1,
   "single_via_islands": [
     {
@@ -52,32 +61,27 @@
     },
     {
       "layer": "F.Cu",
-      "area_mm2": 10.13,
-      "length_mm": 7.97
+      "area_mm2": 3.24,
+      "length_mm": 2.38
     },
     {
       "layer": "F.Cu",
-      "area_mm2": 1.83,
-      "length_mm": 2.06
+      "area_mm2": 3.66,
+      "length_mm": 4.66
     },
     {
       "layer": "F.Cu",
-      "area_mm2": 1.61,
-      "length_mm": 3.55
-    },
-    {
-      "layer": "F.Cu",
-      "area_mm2": 2.69,
-      "length_mm": 3.48
+      "area_mm2": 4.38,
+      "length_mm": 3.99
     }
   ],
-  "islands_removed": 5,
-  "islands_removed_mm2": 10.33,
+  "islands_removed": 15,
+  "islands_removed_mm2": 22.47,
   "joined_vias": 0,
   "orphan_vias_removed": 0,
   "gnd_area_mm2": {
-    "F": 22077.9,
-    "B": 26967.0
+    "F": 21997.0,
+    "B": 26923.4
   },
   "unconnected": 0
 }

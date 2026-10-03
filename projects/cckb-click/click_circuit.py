@@ -7,6 +7,7 @@
     CR1632 ＋（クリップ）→ 電源スイッチ MSK12C02（2 共通 → 3）→ VBAT_SW ┬ 1MΩ → VBAT_SENSE（D0）→ 1MΩ → GND
                                                                       └ D_PWR（BAT46W）A→K → V3V3（XIAO の 3V3）
     CR1632 − → 基板の裸の銅 → GND。**XIAO の BAT には何も繋がない**
+    載せないコンデンサのランド: C_BAT（VBAT_SW–GND）・C_3V3（V3V3–GND）。JLC は実装しない
     行 5 本 ROW0..4 → XIAO D2..D6。列 15 本 ← 74LVC595 ×2（SPI: SCK=D8・MOSI=D10・CS=D7）
     キーごとに BAT46W（col2row: COL → スイッチ → A→K → ROW）
     幅の広いキー 11 個は、真ん中のスイッチと**並列の空きランド**が左右にある（SWA{i}・SWB{i}。JLC は実装しない）
@@ -68,6 +69,10 @@ def electronics():
         ("R_LO", "res_1M", {"1": "VBAT_SENSE", "2": "GND"}),
         ("D_PWR", "schottky", {"A": "VBAT_SW", "K": "V3V3"}),
         ("TP_VSW", "testpoint", {"1": "VBAT_SW"}),      # 試験用のランド（電源スイッチの後ろの電圧を測る。CCKB には無い）
+        # 部品を載せないコンデンサのランド（CCKB には無い。1 回目の監査 A 重要 1・D 重要 1）。起動の試験（open-gaps #32）の結果で
+        # 利用者が容量を足す場所: 電池の側（スイッチで切れる・D_PWR の手前）と、レールの側（D_PWR の後ろ）
+        ("C_BAT", "cap_land", {"1": "VBAT_SW", "2": "GND"}),
+        ("C_3V3", "cap_land", {"1": "V3V3", "2": "GND"}),
     ]
 
 

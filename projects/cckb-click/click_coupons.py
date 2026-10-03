@@ -42,6 +42,7 @@ OUT = paths.BUILD / HERE.name
 # 掛かり方の試し: (形, つばの厚さ／首の高さ)。番号 = 並び順 ＋ 1（枠の縁とキャップの上面の点の数）
 LATCH_VARIANTS = (("F", 0.4), ("F", 0.6), ("C", 0.4), ("C", 0.6), ("S", 0.4), ("S", 0.6))
 COLORS = {"frame": "#9aa0a6", "base": "#2f7d32", "caps": "#e8c9a0"}
+OTHER_GENERATOR = "coupon_screw_"       # ねじの試し刷りは click_case.py が作る（本番の枠から切り出す）。ここでは消さない
 
 
 @dataclass
@@ -187,7 +188,7 @@ def export(s=S, out=OUT):
         x += b.size.X + 12.0
     (asm / "style.json").write_text(json.dumps(style))
     for old in out.glob("coupon_*.stl"):
-        if old.stem not in made:
+        if old.stem not in made and not old.stem.startswith(OTHER_GENERATOR):
             old.unlink()
             print(f"消した（もう作らない）: {old.name}")
     return made, style

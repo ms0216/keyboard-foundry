@@ -57,7 +57,7 @@ from foundry.project import load                        # noqa: E402
 
 SRC = PROJ / "pcb" / "unrouted" / "cckb-click_main.kicad_pcb"
 OUT = PROJ / "pcb" / "cckb-click_main.kicad_pcb"
-PREWIRED = re.compile(r"GND|SW\d+_D|ROW\d+|COL\d+")   # 自分で引き切った網（DSN から外す。線は protect）
+PREWIRED = re.compile(r"GND|SW\d+_D|ROW\d+|COL\d+|VBAT_SENSE")   # 自分で引き切った網（DSN から外す。線は protect）
 FIXED = re.compile(r"(?!)")                             # 最後の 1 本だけ Freerouting に繋がせる網（いまは無い）
 # Freerouting の「最適化」の段を回さない。行列の 628 本を障害物（protect）として渡すと、最適化の 1 回が 17 分かかり、
 # 点数も配線も変わらなかった（2026-10-03 実測: 配線は 17 秒で未配線 0・最適化 2 回で 34 分）。配線の良し悪しは KiCad の DRC と検査が見る
@@ -132,15 +132,16 @@ def edit_dsn(dsn, ends, margin_um, power=None):
         n_fix[0] += 1
         return "(type protect)"
     t = re.sub(r"\(net COL\d+\)\s*\(type route\)", protect, t)
-    # (b1) 電源の決まった線の網: to の端のピンを外し、線は protect（残りのピンを Freerouting が frm の端へ繋ぐ）
+    # (b1) 電源の決まった線の網: 決まった線でもう繋いだピン（to の端・C_BAT のランド）を外し、線は protect
+    #      （残りのピンを Freerouting が frm の端へ繋ぐ。外さないと、線の途中に付く C_BAT を「未配線 1」と数えて止まらなかった）
     n_pw = {}
-    for net, drop in (power or {}).items():
-        def narrow_power(m, drop=drop):
+    for net, drops in (power or {}).items():
+        def narrow_power(m, drops=drops):
             pins = m.group(2).split()
-            if drop not in pins:
-                raise SystemExit(f"{m.group(1)}: DSN のピン {pins} に {drop} が無い")
-            n_pw[m.group(1)] = len(pins) - 1
-            return f"(net {m.group(1)}\n      (pins {' '.join(q for q in pins if q != drop)})"
+            if set(drops) - set(pins):
+                raise SystemExit(f"{m.group(1)}: DSN のピン {pins} に {sorted(set(drops) - set(pins))} が無い")
+            n_pw[m.group(1)] = len(pins) - len(drops)
+            return f"(net {m.group(1)}\n      (pins {' '.join(q for q in pins if q not in drops)})"
         t = re.sub(rf"\(net ({re.escape(net)})\s*\n\s*\(pins ([^)]*)\)", narrow_power, t)
         t = re.sub(rf"\(net {re.escape(net)}\)\s*\(type route\)", "(type protect)", t)
     if set(n_pw) != set(power or {}):
@@ -190,7 +191,10 @@ def freeroute(board, work):
         if not pcbnew.ExportSpecctraDSN(board, str(dsn)):
             raise SystemExit("DSN の書き出しに失敗")
         how = load(PROJ).spec.POWER_RUN
-        info = edit_dsn(dsn, ends, margin, {how["net"]: f"{how['to'][0]}-{how['to'][1]}"})
+        spec = load(PROJ).spec
+        v3 = spec.V3V3_RUN
+        info = edit_dsn(dsn, ends, margin, {how["net"]: (f"{how['to'][0]}-{how['to'][1]}", "C_BAT-1"),
+                                            v3["net"]: (f"{v3['to'][0]}-{v3['to'][1]}",)})
         log = work / f"freerouting_{margin}.log"
         with log.open("w") as fh:
             r = subprocess.run([rp._java(), "-jar", str(rp.JAR), "-de", str(dsn), "-do", str(ses),
@@ -240,6 +244,24 @@ def drop_one_layer_vias(board):
             gone.append(v)
     for v in gone:
         board.Remove(v)
+    return len(gone)
+
+
+def drop_duplicate_tracks(board):
+    """同じ網・同じ層・同じ両端の線が 2 本以上あれば 1 本にする（消した数）。決まった形で引いた GND の線は、SES の取り込みの後で
+    「電源の決まった線」と「GND のスタブ」の両方として置き直されて、同じ所に 2 本重なった（2026-10-04）。"""
+    seen, gone = set(), []
+    for t in board.GetTracks():
+        if t.GetClass() != "PCB_TRACK":
+            continue
+        # 1 µm に丸めて比べる（SES の往復で端が 0.1 µm 単位でずれる）
+        a, b = (round(t.GetStart().x, -3), round(t.GetStart().y, -3)), (round(t.GetEnd().x, -3), round(t.GetEnd().y, -3))
+        key = (t.GetNetname(), t.GetLayer(), min(a, b), max(a, b))
+        if key in seen:
+            gone.append(t)
+        seen.add(key)
+    for t in gone:
+        board.Remove(t)
     return len(gone)
 
 
@@ -308,10 +330,11 @@ def main():
             nv.SetDrill(MM(VIA_DRILL))
             nv.SetNet(board.FindNet("GND"))
             board.Add(nv)
+    n_dup = drop_duplicate_tracks(board)
     n_thin = rp.widen_thin(board)
     n_dangling = drop_one_layer_vias(board)
     print(f"   片方の層にしか繋がっていない Freerouting のビアを消した: {n_dangling}", flush=True)
-    print(f"   SES 後に置き直した: 行列 {len(miss)} / ビア {n_mv} / GND スタブ {len(have_gnd)} / 細い線 {n_thin}", flush=True)
+    print(f"   SES 後に置き直した: 行列 {len(miss)} / ビア {n_mv} / GND スタブ {len(have_gnd)} / 細い線 {n_thin} / 重なった線を消した {n_dup}", flush=True)
 
     from foundry.pcb import to_kicad
     _extra().no_fill_areas(board, lay, to_kicad)     # ベタだけを禁止する領域は、配線の後で足す（理由は pcb_extra.NO_FILL_LAYERS）
@@ -356,14 +379,15 @@ def main():
     board.Save(str(OUT))
     shutil.copy(SRC.with_suffix(".kicad_pro"), OUT.with_suffix(".kicad_pro"))
     sync_project_rules(OUT, getattr(proj.spec, "DRC_SEVERITY", None),
-                       pth_hole_clearance=getattr(proj.spec, "DRC_PTH_HOLE_CLEARANCE", False))
+                       pth_hole_clearance=getattr(proj.spec, "DRC_PTH_HOLE_CLEARANCE", False),
+                       tighten=getattr(proj.spec, "DRC_RULES", None))
     areas = {("F" if lay_ == pcbnew.F_Cu else "B"): round(sum(a for l2, a, _, _ in rp.islands(board) if l2 == lay_), 1)
              for lay_ in (pcbnew.F_Cu, pcbnew.B_Cu)}
     rec = dict(board=OUT.name, unrouted=SRC.name, unrouted_fingerprint=boardhash.fingerprint(SRC),
                unrouted_sha256=hashlib.sha256(SRC.read_bytes()).hexdigest(),
                freerouting=rp.JAR.name, passes=rp.PASSES, freerouting_options=[OPTIMIZER_OFF], margin_um=info["margin_um"], margins_tried=info["tried"],
                matrix_segments=n_mx, matrix_vias=len(mvias), power_segments=n_pw, gnd_fanout=len(fan), ring=n_ring, fence=n_fence, grid=n_grid,
-               one_layer_vias_removed=n_dangling, band_vias_removed=len(in_band), island_vias=n_is, second_island_vias=n_dbl, declared_vias=n_decl,
+               one_layer_vias_removed=n_dangling, duplicate_tracks_removed=n_dup, band_vias_removed=len(in_band), island_vias=n_is, second_island_vias=n_dbl, declared_vias=n_decl,
                single_via_islands=[dict(layer="F.Cu" if l_ == pcbnew.F_Cu else "B.Cu", area_mm2=round(a, 2), length_mm=round(L, 2))
                                    for l_, a, L in single],
                islands_removed=len(left), islands_removed_mm2=round(removed, 2), joined_vias=n_join,

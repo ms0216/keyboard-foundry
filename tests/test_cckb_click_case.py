@@ -179,12 +179,15 @@ def test_the_frame_prints_top_down_without_support(halves):
 
 
 def test_the_thin_places_are_at_least_what_the_nozzle_can_print():
-    """部品の逃げで薄くなる所（spec と layout から）。0.4 ノズルの壁の下限 1.2（外周 3 本）。屋根は 0.6 以上。"""
+    """部品の逃げで薄くなる所（spec と layout から）。0.4 ノズルの壁: 左は 1.2 以上（外周 3 本）。屋根は 0.6 以上。
+    **XIAO の手前の壁は 1.135**（1 回目の監査 E 軽微 2 で、逃げをパッドの外接 ＋ 0.3 から ＋ PART_CLEAR 0.4 に広げた。前は 1.235）。
+    下限を 1.1 にした: 線幅 0.42 の外周 2 本（0.84）＋ 隙間埋め。高さは基板の上 3.7 までで、その上は壁の全厚 3.0 が続く"""
     f, xb, xp = LAY.frame, LAY.xiao(), LAY.xiao_pads()
     left_wall = (xb[0] - S.PART_CLEAR) - f[0]
-    front_wall = (xp[1] - 0.3) - f[1]
+    front_wall = (xp[1] - S.PART_CLEAR) - f[1]
     roofs = {"XIAO": 5.0 - S.XIAO_ROOF_UNDER, "電池クリップ": 5.0 - S.CLIP_ROOF_UNDER}
-    assert left_wall >= 1.2 and front_wall >= 1.2, (left_wall, front_wall)
+    assert left_wall >= 1.2 and front_wall >= 1.1, (left_wall, front_wall)
+    assert front_wall == pytest.approx(1.135)
     assert all(v >= 0.6 for v in roofs.values()), roofs
     z = LAY.z()
     assert S.XIAO_ROOF_UNDER - z["xiao_body_top"] >= S.PART_HEADROOM and S.CLIP_ROOF_UNDER - z["clip_top"] >= S.PART_HEADROOM - 1e-9
@@ -195,14 +198,17 @@ def test_the_thin_places_are_at_least_what_the_nozzle_can_print():
 # ねじ
 # ---------------------------------------------------------------------------
 
+def local(frame, x, y, half=5.0):
+    """ねじのまわりだけ切り出す（枠まるごとに is_inside を当てると 1 点 0.1 秒かかる）。"""
+    return frame & (Pos(x, y, 2.0) * Box(2 * half, 2 * half, 8.0))
+
+
 def screw_wall_problems(halves, ring=0.45, step=45):
     """外周のねじの下穴の周り（下穴の縁から ring）が、基板の上 0.3〜2.5 で枠の中にある。下穴の中は空いている。"""
     out = []
     d, depth = LAY.pilot()
-    for ref, (x, y), kind in LAY.screws():
-        if kind != "perimeter":
-            continue
-        frame = halves["left" if x < LAY.seam_x(y) else "right"]
+    for ref, (x, y), kind in LAY.wall_screws():                # 外周 20 ＋ 予備 2
+        frame = local(halves["left" if x < LAY.seam_x(y) else "right"], x, y)
         for z in (0.3, 1.4, 2.5):
             if frame.is_inside((x, y, z)):
                 out.append(f"{ref}: 下穴が空いていない（z {z}）")
@@ -218,7 +224,100 @@ def screw_wall_problems(halves, ring=0.45, step=45):
 def test_every_perimeter_screw_has_plastic_all_around_its_pilot_hole(halves):
     bad = screw_wall_problems(halves)
     assert bad == [], bad
-    assert screw_wall_problems(halves, ring=1.3, step=90)       # 検査器が生きている: 1.3 の肉は無い（内側は 0.6）
+    assert screw_wall_problems(halves, ring=1.3, step=90)       # 検査器が生きている: 1.3 の肉は無い（内側は 0.7）
+    assert len(LAY.wall_screws()) == 22
+
+
+def wall_flesh(frame, x, y, zs=(0.3, 1.4, 2.5), step=10):
+    """下穴の縁から外へ、枠の中にいる間の距離のいちばん短い物（全方位・基板の上 0.3〜2.5）。(肉, 角度)。"""
+    d, _ = LAY.pilot()
+    loc = local(frame, x, y)
+    best = (9.0, 0)
+    for z in zs:
+        for a in range(0, 360, step):
+            r = d / 2 + 0.01
+            while r < 4.0 and loc.is_inside((x + r * math.cos(math.radians(a)), y + r * math.sin(math.radians(a)), z)):
+                r += 0.02
+            best = min(best, (round(r - d / 2, 2), a))
+    return best
+
+
+def test_the_plastic_around_each_pilot_hole_is_as_thick_as_the_board_allows(halves):
+    """E 重要 2: 監査の時は、下穴から斜め内向きの肉が 0.49（壁を厚くする幅 ± 1.2 の角）・真内向きが 0.6 だった。
+    基板の穴を 0.1 外へ寄せ、壁を厚くする幅を ± 2.0 にした: 奥と手前の壁と 1u の脇は 0.7 以上。幅の広いキーの脇の 3 本だけ 0.49 が残る。"""
+    thin = {}
+    for ref, (x, y), kind in LAY.wall_screws():
+        m, a = wall_flesh(halves["left" if x < LAY.seam_x(y) else "right"], x, y)
+        if LAY.boss_half((x, y)) == S.SCREW_BOSS_HALF:
+            assert m >= 0.69, (ref, m, a)
+        else:
+            thin[ref] = m
+    assert sorted(thin) == ["H16", "H17", "H18"] and all(0.47 <= v <= 0.52 for v in thin.values()), thin
+
+
+def pad_relief_problems(halves, clear):
+    """電源スイッチと XIAO のパッドの外接から clear 外まで、基板のすぐ上（z 0.2）に枠が無い。"""
+    out = []
+    for side, name, box in (("right", "電源スイッチ", LAY.psw_pads()), ("left", "XIAO", LAY.xiao_pads())):
+        cx, cy = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
+        loc = halves[side] & (Pos(cx, cy, 0.5) * Box(box[2] - box[0] + 6, box[3] - box[1] + 6, 2.0))
+        g = L.grow(box, clear)
+        n = 12
+        ring = [(g[0] + (g[2] - g[0]) * i / n, y) for i in range(n + 1) for y in (g[1], g[3])]
+        ring += [(x, g[1] + (g[3] - g[1]) * i / n) for i in range(n + 1) for x in (g[0], g[2])]
+        p = LAY.pcb
+        hit = [q for q in ring if p[0] < q[0] < p[2] and p[1] < q[1] < p[3] and loc.is_inside((q[0], q[1], 0.2))]
+        if hit:
+            out.append(f"{name}: パッドの外接 ＋ {clear} に枠がある {hit[:2]}")
+    return out
+
+
+def test_the_frame_keeps_clear_of_the_solder_pads_of_the_corner_parts(halves):
+    """E 軽微 1・2: 枠の逃げ = パッドの外接 ＋ PART_CLEAR 0.4（はんだの裾・刷った穴の縮み）。前は 0.08〜0.28 だった。"""
+    assert pad_relief_problems(halves, S.PART_CLEAR - 0.05) == []
+    assert len(pad_relief_problems(halves, S.PART_CLEAR + 0.2)) == 2          # 検査器が生きている: 0.6 外には枠がある
+
+
+# ---------------------------------------------------------------------------
+# ねじの試し刷り（coupon_screw）: 本番の枠から切り出した物か・当て板が基板と同じか
+# ---------------------------------------------------------------------------
+
+def test_the_screw_coupon_is_cut_from_the_real_frame_with_one_thickened_wall():
+    """切り出す元は、左右に分ける前の枠（奥の壁の切れ端は継ぎ目 x 9.525 をまたぐ。試し刷りには継ぎ目の隙 0.1 を入れない）。"""
+    frame = C.frame_full()
+    sc = C.screw_coupon()
+    boxes = C.screw_coupon_boxes()
+    assert set(sc) == {"frame_back", "frame_side", "base_back", "base_side"}
+    top = S.FRAME_UNDER + S.FRAME_T
+    for name, (box, screws, thick) in boxes.items():
+        piece, real = sc[f"frame_{name}"], frame & C._box(box, -1.0, top + 1.0)
+        extra = (piece - real).volume
+        missing = (real - piece).volume
+        if thick is None:
+            assert extra < TOL and missing < TOL, (name, extra, missing)
+        else:
+            # 足したのは厚くした壁（幅 4.0 × 0.5 × 高さ 3.0）だけ・削ったのは印（その側の端の外の角・三角柱）だけ
+            assert extra == pytest.approx(4.0 * S.COUPON_SCREW_THICK * S.FRAME_UNDER, abs=0.05), extra
+            assert missing == pytest.approx(S.COUPON_SCREW_MARK ** 2 / 2 * top, abs=0.2), missing
+            assert thick[0] == max(x for x, _ in screws)                  # 印のある端 = 厚くしたねじの側
+        base = sc[f"base_{name}"].bounding_box()
+        assert (base.min.Z, base.max.Z) == pytest.approx((-S.PCB_T, 0.0))            # 当て板 = 基板の厚さ 1.6
+        d, depth = LAY.pilot()
+        for x, y in screws:
+            assert (x, y) in [c for _, c, k in LAY.screws() if k == "perimeter"]       # 本番のねじの位置
+            assert not piece.is_inside((x, y, 1.0)) and piece.is_inside((x, y, depth + 0.3))         # 下穴は本番の深さ
+            assert not sc[f"base_{name}"].is_inside((x, y, -0.8)) and sc[f"base_{name}"].is_inside((x + S.SCREW_HOLE_D / 2 + 0.2, y, -0.8))
+            m, _ = wall_flesh(piece, x, y)
+            want = 1.2 if (x, y) == thick else 0.71 if name == "back" else 0.49
+            assert m == pytest.approx(want, abs=0.03), (name, x, m)
+        # 当て板の縁は基板の縁（穴の縁から 1.0）
+        edge = min(base.max.Y - screws[0][1], screws[0][0] - base.min.X)
+        assert edge - S.SCREW_HOLE_D / 2 == pytest.approx(1.0, abs=1e-6)
+    plate = C.screw_coupon_plate()
+    size = plate.bounding_box().size
+    assert len(plate.solids()) == 4 and max(size.X, size.Y) <= 80 and plate.bounding_box().min.Z == pytest.approx(0.0, abs=1e-6)
+    # ねじ M2×4 は当て板 1.6 を抜けて 2.4 掛かる（本番と同じ）
+    assert S.SCREW_L - S.PCB_T == pytest.approx(LAY.z()["screw_grip"])
 
 
 def test_the_screws_grip_the_wall_and_stay_out_of_the_pockets():
@@ -257,7 +356,11 @@ def static_problems(halves, parts=None, switches=None, caps=None):
 
 def test_nothing_interferes_at_rest(halves):
     assert static_problems(halves) == []
-    assert len(C.board_parts()) == 62 + 7 + 4 and len(C.switch_solids()) == 62
+    assert len(C.board_parts()) == 62 + 9 + 4 and len(C.switch_solids()) == 62
+    # 載せないコンデンサのランドは、載せてよいいちばん大きな部品（1206 の最大の外形・背は spec.CAP_LAND_H）で見ている
+    for ref, h in S.CAP_LAND_H.items():
+        b = C.board_parts()[ref].bounding_box().size
+        assert (b.X, b.Y, b.Z) == pytest.approx((1.8, 3.4, h))
 
 
 def _tall_part_under_a_post(p, s, c):
@@ -328,6 +431,20 @@ def test_the_lowest_point_of_a_tilted_cap_is_above_every_part():
     assert min(low.values()) > max(C.PART_H.values()) + 0.2, low
     assert min(low.values()) == pytest.approx(1.6, abs=0.1)
     assert C.descent_max() == pytest.approx(1.0)
+
+
+def test_the_bulk_capacitor_land_under_the_z_key_takes_a_low_part_but_not_a_tall_one():
+    """C_3V3 は Z のキーのキャップの下。背 1.45（0805 の 22〜47 µF の最大）までは、縁を押し切ったキャップに当たらない。
+    背 1.6 ± 0.2 の 1206（最大 1.8）は当たる → 載せてよい背を spec.CAP_LAND_H と手順書に書いてある。"""
+    z = next(k for k in LAY.keys if k.label == "Z")
+    parts = dict(C.board_parts())
+    assert press_problems(keys=[z], parts=parts) == []
+    b = parts["C_3V3"].bounding_box()
+    assert b.max.Z == pytest.approx(1.45) and LAY.hole(z)[0] < b.min.X and b.max.X < z.x - S.SW_BODY / 2
+    parts["C_3V3"] = Pos((b.min.X + b.max.X) / 2, (b.min.Y + b.max.Y) / 2, 0) * Box(b.size.X, b.size.Y, 1.9, align=C.CEN_MIN)
+    assert any("C_3V3" in x for x in press_problems(keys=[z], parts=parts))
+    # C_BAT は右の角の屋根の下（枠の下面 3.0）: 背 2.8 まで。置いたときの干渉は test_nothing_interferes_at_rest が見る
+    assert S.CAP_LAND_H["C_BAT"] <= S.FRAME_UNDER - 0.2
 
 
 @pytest.mark.parametrize("kw, word", [
@@ -437,7 +554,10 @@ def test_the_battery_slides_out_through_the_front_wall_without_taking_anything_a
     assert bad == [] and area == pytest.approx(23.0, abs=4.0), (bad, area)
     # クリップの口は手前・電池の縁は枠の外面から CELL_RECESS 内側・クリップの口の縁（真ん中のえぐり）より手前が指の切り欠きに出る
     (x, y), r = LAY.cell()
-    assert y - r - LAY.frame[1] == pytest.approx(S.CELL_RECESS) and LAY.clip_body()[1] > LAY.frame[1] + S.CELL_RECESS + 1.0
+    # 電池は止めに当たる所（クリップの原点より 0.51 奥。1 回目の監査 E 重要 1）
+    assert y - r - LAY.frame[1] == pytest.approx(LAY.cell_recess()) == pytest.approx(1.71)
+    assert LAY.clip_body()[1] > LAY.frame[1] + LAY.cell_recess() + 1.0
+    assert S.FINGER_NOTCH[1] - LAY.cell_recess() >= 2.7                 # 切り欠きから電池の上面が 2.79 見える
     assert S.CELL_T < S.CLIP_H - 0.25                            # 電池はクリップの板（厚さ 0.25）の下に入る
 
 

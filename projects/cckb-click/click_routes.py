@@ -30,9 +30,8 @@ from foundry.layout import UNIT                    # noqa: E402
 
 F, B = "F.Cu", "B.Cu"
 # ランドどうしを結ぶ線が部品（595）に当たるとき: 595 の本体の下（2 列のピンの間）を通す。ランドの列から、キーの中心線の側へ
-# LINK_UNDER 寄せる（ピンの内端 2.125 から 1.1）。縦の脚は、ランドの中心から LINK_LEG（ランドの端から 0.625）。
+# spec.LINK_UNDER 寄せる。縦の脚は、ランドの中心から LINK_LEG（ランドの端から 0.625）。
 # **595 を線で囲まない**（外を回すと、595 のピンから表で出る道が無くなり、Freerouting が列を繋げなかった）
-LINK_UNDER = 1.1
 LINK_LEG = 2.0
 # 行のバスの左端を LEFT へ伸ばした所にビアを置き、XIAO からの裏の線を受ける
 ROW_VIA_DX = 2.0
@@ -169,6 +168,105 @@ def power_run(lay, by, segs, obs):
     return out
 
 
+def sense_run(lay, by, vpad, lay_seg, put_via):
+    """電池電圧の線（spec.SENSE_RUN）。XIAO のパッド内ビア → 裏を左の縁へ寄せて上がる → ビア → 表で分圧の中点の 2 つのパッドへ。"""
+    how = lay.s.SENSE_RUN
+    net = how["net"]
+    if net not in vpad:
+        raise ValueError(f"{net}: XIAO のパッド内ビアが無い")
+    x0, y0 = vpad[net]
+    a = by[tuple(how["to"])][0]
+    b = by[tuple(how["link"])][0]
+    if a["net"] != net or b["net"] != net:
+        raise ValueError(f"{net}: 端のパッドの網が {a['net']}・{b['net']}")
+    v = (how["lane_x"], how["via_y"])
+    lay_seg(net, B, [(x0, y0), (x0, how["turn_y"]), (how["lane_x"], how["turn_y"]), v], "XIAO→分圧")
+    put_via(net, v)
+    lay_seg(net, F, [v, (a["x"], how["via_y"]), (a["x"], a["y"])], "分圧の中点へ")
+    if abs(a["y"] - b["y"]) > 1e-3:
+        raise ValueError(f"{net}: 分圧の 2 つのパッドの高さが違う")
+    lay_seg(net, F, [(a["x"], a["y"]), (b["x"], b["y"])], "分圧の中点どうし")
+
+
+def cap_land_run(lay, by, wide, segs, obs):
+    """載せないコンデンサのランド C_BAT の 1 番（VBAT_SW）を、電源の長い線の縦の区間へ横にまっすぐ繋ぐ（表・電源の太さ）。"""
+    s = lay.s
+    net = s.POWER_RUN["net"]
+    p = by[("C_BAT", "1")][0]
+    if p["net"] != net:
+        raise ValueError(f"C_BAT.1 の網が {p['net']}")
+    vert = [(a, b) for m, layer, a, b in wide if m == net and a[0] == b[0] and min(a[1], b[1]) <= p["y"] <= max(a[1], b[1])]
+    if len(vert) != 1:
+        raise ValueError(f"C_BAT.1 の高さ {p['y']} を通る {net} の縦の区間が {len(vert)} 本")
+    a, b = (p["x"], p["y"]), (vert[0][0][0], p["y"])
+    half = s.POWER_TRACK_W / 2
+    bad = obs.problems(net, F, a, b, half=half)
+    bad += [(m, c, d) for m, layer, c, d in segs
+            if layer == F and m != net and mr.seg_seg_dist(a, b, c, d) < mr.CLEAR + half + mr.HALF_W - 1e-9]
+    if bad:
+        raise ValueError(f"{net} {a}->{b} が近い: {bad[:3]}")
+    return [(net, F, _r(a), _r(b))]
+
+
+def v3v3_run(lay, by, segs, obs_f, obs_b, put_via):
+    """載せないコンデンサのランド C_3V3 の 1 番を、U1 のパスコンの 1 番へ（spec.V3V3_RUN）。[(net, layer, a, b)]（電源の太さ）。"""
+    s = lay.s
+    how = s.V3V3_RUN
+    net = how["net"]
+    a = by[tuple(how["frm"])][0]
+    b = by[tuple(how["to"])][0]
+    if a["net"] != net or b["net"] != net:
+        raise ValueError(f"{net}: 端のパッドの網が {a['net']}・{b['net']}")
+    va = (a["x"], round(a["y"] - how["down"], 4))
+    vb = (b["x"], round(b["y"] - how["below"], 4))
+    half = s.POWER_TRACK_W / 2
+    out = []
+    for layer, obs, pts in ((F, obs_f, [(a["x"], a["y"]), va]), (B, obs_b, [va, (vb[0], va[1])]),
+                            (B, obs_b, [(vb[0], va[1]), vb]), (F, obs_f, [vb, (b["x"], b["y"])])):
+        p, q = pts
+        bad = obs.problems(net, layer, p, q, half=half)
+        bad += [(m, c, d) for m, lyr, c, d in segs
+                if lyr == layer and m != net and mr.seg_seg_dist(p, q, c, d) < mr.CLEAR + half + mr.HALF_W - 1e-9]
+        if bad:
+            raise ValueError(f"{net} {layer} {p}->{q} が近い: {bad[:3]}")
+        out.append((net, layer, _r(p), _r(q)))
+    put_via(net, va)
+    put_via(net, vb)
+    return out
+
+
+def gnd_return_run(lay, by, segs, obs_f, obs_b, put_via):
+    """パスコンの GND（2 番）から、その 595 の GND のピン（8 番）までの戻り（spec.GND_RETURN）。[(net, layer, a, b)]（電源の太さ）。
+    595 の Q0 を裏へ落とすビアの手前を回る。"""
+    s = lay.s
+    how = s.GND_RETURN
+    half = s.POWER_TRACK_W / 2
+    out = []
+    for ref in ("U1", "U2"):
+        c = by[(f"C_{ref}", "2")][0]
+        g = by[(ref, "8")][0]
+        q0 = next(ps[0] for (r, num), ps in by.items() if r == ref and ps[0]["y"] < s.PART_AT[ref][1] and re.fullmatch(r"COL\d+", ps[0]["net"]))
+        if c["net"] != "GND" or g["net"] != "GND":
+            raise ValueError(f"{ref}: パスコンの 2 番・595 の 8 番の網が {c['net']}・{g['net']}")
+        v1 = (c["x"], round(c["y"] + how["up"], 4))
+        v8 = (round(g["x"] - how["left"], 4), g["y"])
+        y = round(s.PART_AT[ref][1] - s.FANOUT_HOP_DY - how["below_hop"], 4)
+        if not (v8[0] < q0["x"] < v1[0]):
+            raise ValueError(f"{ref}: Q0 のピン x {q0['x']} が、8 番のビア {v8[0]} とパスコンのビア {v1[0]} の間に無い")
+        runs = ((F, obs_f, [(c["x"], c["y"]), v1]), (B, obs_b, [v1, (v1[0], y)]), (B, obs_b, [(v1[0], y), (v8[0], y)]),
+                (B, obs_b, [(v8[0], y), v8]), (F, obs_f, [v8, (g["x"], g["y"])]))
+        for layer, obs, (p, q) in runs:
+            bad = obs.problems("GND", layer, p, q, half=half)
+            bad += [(m, a, b) for m, lyr, a, b in segs
+                    if lyr == layer and m != "GND" and mr.seg_seg_dist(p, q, a, b) < mr.CLEAR + half + mr.HALF_W - 1e-9]
+            if bad:
+                raise ValueError(f"GND の戻り（{ref}）{layer} {p}->{q} が近い: {bad[:3]}")
+            out.append(("GND", layer, _r(p), _r(q)))
+        put_via("GND", v1)
+        put_via("GND", v8)
+    return out
+
+
 def plan(project, pads, edge=None, head_keepouts=None):
     """(細い線 [(net, layer, a, b)], ビア [(net, (x, y))], 太い線 [(net, layer, a, b)])。pads は板から読んだパッド（projects/cckb/tools/board_geometry.dump の書式）。"""
     lay = click_layout.Layout(project)
@@ -220,7 +318,7 @@ def plan(project, pads, edge=None, head_keepouts=None):
             for pa, pb in zip(ps, ps[1:]):
                 # まっすぐ結ぶ。あいだに部品（595）がある所は、その本体の下を通す
                 a0, b0 = (pa["x"], pa["y"]), (pb["x"], pb["y"])
-                yu = a0[1] - sgn * LINK_UNDER
+                yu = a0[1] - sgn * s.LINK_UNDER
                 under = [a0, (a0[0] + LINK_LEG, a0[1]), (a0[0] + LINK_LEG, yu), (b0[0] - LINK_LEG, yu), (b0[0] - LINK_LEG, b0[1]), b0]
                 path = next((c for c in ([a0, b0], under) if ok(pa["net"], F, c)), None)
                 if path is None:
@@ -267,6 +365,7 @@ def plan(project, pads, edge=None, head_keepouts=None):
     #   行 4     run_y まで上がり、アンテナの禁止域の手前を右へ、バスの左端のビアの下で上がる
     vpad = {p_["net"]: (p_["x"], p_["y"]) for p_ in pads
             if p_["ref"] == "U_MCU" and not p_["npth"] and p_["front"] and p_["back"] and p_["net"]}
+    vpad_all = dict(vpad)
     for net, pts in sorted(rows.items()):
         how = s.XIAO_ESCAPE[net]
         if net not in vpad:
@@ -305,7 +404,13 @@ def plan(project, pads, edge=None, head_keepouts=None):
             lay_seg(net, B, path, f"SW{iu}→SW{il}")
 
     fanout(lay, by, col_vias, segs, lay_seg, put_via)
+    sense_run(lay, by, vpad_all, lay_seg, put_via)
+    for x in s.IC_BAND_VIA_X:                           # 595 の本体の下の GND の帯のビア（spec.IC_BAND）
+        put_via("GND", (x, s.PART_AT["U1"][1]))
     wide = power_run(lay, by, segs, obs_f)
+    wide += cap_land_run(lay, by, wide, segs, obs_f)
+    wide += v3v3_run(lay, by, segs, obs_f, obs_b, put_via)
+    wide += gnd_return_run(lay, by, segs + wide, obs_f, obs_b, put_via)
 
     bad = mr.clashes(segs)
     bad += [f"ビア {n} {p} が {m} {a}->{b} に近い" for n, p in vias for m, _, a, b in segs

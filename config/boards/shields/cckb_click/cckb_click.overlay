@@ -1,14 +1,14 @@
 /*
  * cckb-click。一体型・62 キー・5 行 × 15 列（行列は cckb_click-transform.dtsi・生成物）。
  * **回路は CCKB と同じ**（projects/cckb-click/click_circuit.py・tests が CCKB の回路と突き合わせる）なので、
- * この overlay は config/boards/shields/cckb/cckb.overlay と同じ中身（違うのは名前と transform のファイル名だけ。
- * tests/test_cckb_click_board.py が 2 つを比べる）。
+ * この overlay は config/boards/shields/cckb/cckb.overlay と同じ中身（違うのは名前と transform のファイル名と、
+ * 末尾の「cckb-click だけ」の節 = SPI の MISO のプルダウン。tests/test_cckb_click_board.py が 2 つを比べる）。
  *
  * ピン（XIAO nRF52840・D0..D10）:
  *   D0        電池電圧（ADC は D0..D5 だけ）
  *   D2..D6    行 0..4（MCU 直結の入力。割り込みで起きられる）
  *   D7        595 の CS（ラッチ）
- *   D8 / D10  SPI SCK / MOSI（xiao_spi）。D9 は board の pinctrl が MISO に確保
+ *   D8 / D10  SPI SCK / MOSI（xiao_spi）。D9 は board の pinctrl が MISO に確保（基板では空き → 末尾でプルダウン）
  *   D1        予備
  * 列 15 本は 74LVC595 ×2 の数珠つなぎ（&shifter 0..14。15 は空き）。
  */
@@ -93,4 +93,37 @@
  */
 &xiao_i2c {
 	status = "disabled";
+};
+
+/* ---- cckb-click だけ（ここから下は cckb.overlay に無い）---- */
+/*
+ * SPI の MISO（D9 = P1.14）は、この基板では**どこにも繋がっていない**（595 は書くだけ）。ボードの pinctrl
+ * （zmkfirmware/zephyr v4.1.0+zmk-fixes の xiao_ble-pinctrl.dtsi の spi2_default / spi2_sleep。写しは
+ * foundry/upstream/xiao_ble-pinctrl.dtsi）は MISO を入力に確保するだけで、プルを付けない → 浮いた入力になる
+ * （入力のバッファが中間の電位で電流を食いうる。1 回目の監査 A 軽微 1）。MISO だけ別の組に分けてプルダウンを付ける。
+ * ピンは写しと同じ 3 本（tests/test_cckb_click_board.py が突き合わせる）。**実機でスリープ電流を測って確かめる**
+ * （projects/cckb-click/docs/open-gaps.md P17）。
+ */
+&spi2_default {
+	group1 {
+		psels = <NRF_PSEL(SPIM_SCK, 1, 13)>,
+			<NRF_PSEL(SPIM_MOSI, 1, 15)>;
+	};
+	group2 {
+		psels = <NRF_PSEL(SPIM_MISO, 1, 14)>;
+		bias-pull-down;
+	};
+};
+
+&spi2_sleep {
+	group1 {
+		psels = <NRF_PSEL(SPIM_SCK, 1, 13)>,
+			<NRF_PSEL(SPIM_MOSI, 1, 15)>;
+		low-power-enable;
+	};
+	group2 {
+		psels = <NRF_PSEL(SPIM_MISO, 1, 14)>;
+		low-power-enable;
+		bias-pull-down;
+	};
 };

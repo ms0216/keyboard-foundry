@@ -49,6 +49,7 @@ CAP_WIDTHS = (1.0, 1.5, 1.75, 2.25)
 PART_H = {"D": 1.35, "R": 1.35, "C": 1.35, "U": 1.2}
 # 部品の本体の大きさ（x, y）。向きは spec.PART_AT の角度（0 か 90）で入れ替える
 PART_BODY = {"D": (2.8, 1.8), "R": (2.0, 1.25), "C": (2.0, 1.25), "U": (6.4, 5.0)}
+CAP_LAND_BODY = (3.4, 1.8)   # 1206 の外形の最大（3.2 ± 0.2 × 1.6 ± 0.2）
 COLORS = {"frame_left": "#9aa0a6", "frame_right": "#b0b6bc", "pcb": "#2f7d32", "caps": "#e8c9a0", "switches": "#303030",
           "parts": "#8a5a2b", "xiao": "#1f4e9c", "battery": "#c8c8c8", "screws": "#d0a000", "sheet": "#202020"}
 
@@ -85,17 +86,18 @@ def outline2d(lay=LAY):
 # ---------------------------------------------------------------------------
 
 def screw_boss(c, lay=LAY):
-    """外周のねじの所で、壁を内へ厚くする矩形（キー領域の端から穴の縁まで。角ではその先へ 0.5）。"""
+    """外周のねじの所で、壁を内へ厚くする矩形（キー領域の端から穴の縁まで。角ではその先へ 0.5）。
+    幅は click_layout.boss_half（奥と手前の壁・1u のキーの脇は ± SCREW_BOSS_HALF、幅の広いキーの脇は ± SCREW_BOSS_HALF_SIDE）。"""
     s = lay.s
     f, a = lay.frame, lay.key_area
     x, y = c
-    h = s.SCREW_BOSS_HALF
-    depth = lay.rib() / 2
-    in_corner = any(click_layout.rect_gap((x, y, x, y), lay.corner(side)) < 6 for side in SIDES)
-    if in_corner:
-        depth, h = depth + 0.5, h + 0.6
     d = {"left": x - f[0], "right": f[2] - x, "front": y - f[1], "back": f[3] - y}
     side = min(d, key=d.get)
+    h = lay.boss_half(c)
+    depth = lay.rib() / 2
+    in_corner = any(click_layout.rect_gap((x, y, x, y), lay.corner(side_)) < 6 for side_ in SIDES)
+    if in_corner:
+        depth, h = depth + 0.5, max(h, s.SCREW_BOSS_HALF_SIDE + 0.6)
     if side == "front":
         return (x - h, a[1] - EPS, x + h, a[1] + depth)
     if side == "back":
@@ -108,7 +110,7 @@ def screw_boss(c, lay=LAY):
 def lower_rects(lay=LAY):
     """柱と、ねじの所の厚い壁の矩形 [(種類, 矩形)]。"""
     out = [("post", click_layout.rect(*p)) for p in lay.all_posts()]
-    out += [("boss", screw_boss(c, lay)) for _, c, kind in lay.screws() if kind == "perimeter"]
+    out += [("boss", screw_boss(c, lay)) for _, c, _ in lay.wall_screws()]
     return out
 
 
@@ -147,7 +149,7 @@ def corner_cuts(lay=LAY):
     xb, xp = lay.xiao(), lay.xiao_pads()
     usb = lay.usb_shell()
     out = {}
-    out["xiao"] = _box((xb[0] - c, xp[1] - 0.3, xb[2] + c, xp[3] + 0.3), -1.0, s.XIAO_ROOF_UNDER)
+    out["xiao"] = _box((xb[0] - c, xp[1] - c, xb[2] + c, xp[3] + c), -1.0, s.XIAO_ROOF_UNDER)       # パッドの外接 ＋ PART_CLEAR
     out["usb"] = _box((f[0] - 1.0, usb[1] - s.PORT_CLEAR, usb[2] + c, usb[3] + s.PORT_CLEAR), -1.0, top + 1.0)
     (cx, cy), r = lay.cell()
     body = lay.clip_body()
@@ -159,7 +161,8 @@ def corner_cuts(lay=LAY):
     out["finger"] = _box((cx - w / 2, f[1] - 1.0, cx + w / 2, f[1] + d), slot_top - EPS, top + 1.0)
     pb = lay.psw_body()
     psw_top = z["psw_top"] + h + 0.1
-    out["psw"] = _box((pb[0] - 2.2, pb[1] - 0.3, pb[2] + 0.3, pb[3] + 0.3), -1.0, psw_top)      # 端子の側（左）へ 2.2: 端子とはんだ
+    pp = lay.psw_pads()                                                                          # パッドの外接 ＋ PART_CLEAR（本体はその中）
+    out["psw"] = _box((min(pp[0], pb[0]) - c, min(pp[1], pb[1]) - c, max(pp[2], pb[2]) + c, max(pp[3], pb[3]) + c), -1.0, psw_top)
     ks = lay.psw_knob_sweep()
     out["knob"] = _box((pb[2], ks[1] - c, f[2] + 1.0, ks[3] + c), -1.0, psw_top)
     d_mark, depth = s.ON_MARK
@@ -200,7 +203,7 @@ def frame_full(with_feet=None):
     chamfers = _union([Pos(c.cx, c.cy, top - ch) * extrude(P.hole_plan(c, s), ch + EPS, taper=-45.0) for c in cells])
     cuts = [chamfers] + list(corner_cuts(lay).values())
     d, depth = lay.pilot()
-    cuts += [Pos(c[0], c[1], -1.0) * Cylinder(d / 2, depth + 1.0, align=CEN_MIN) for _, c, kind in lay.screws() if kind == "perimeter"]
+    cuts += [Pos(c[0], c[1], -1.0) * Cylinder(d / 2, depth + 1.0, align=CEN_MIN) for _, c, _ in lay.wall_screws()]
     body = body - _union(cuts)
     if with_feet:
         ft = _union([f for _, f in feet(lay)])
@@ -347,11 +350,14 @@ def board_parts(lay=LAY):
         x, y = diode_at(k)
         out[f"D{k.i}"] = Pos(x, y, 0) * Box(*PART_BODY["D"], PART_H["D"], align=CEN_MIN)
     for ref, (x, y, deg) in s.PART_AT.items():
-        kind = "U" if ref.startswith("U") else "D" if ref.startswith("D_") else ref[0]
-        w, d = PART_BODY[kind]
+        if ref in s.CAP_LAND_H:                         # 載せないコンデンサのランド: 載せてよいいちばん大きな部品（1206 の最大・背は spec）
+            (w, d), h = CAP_LAND_BODY, s.CAP_LAND_H[ref]
+        else:
+            kind = "U" if ref.startswith("U") else "D" if ref.startswith("D_") else ref[0]
+            (w, d), h = PART_BODY[kind], PART_H[kind]
         if deg % 180 == 90:
             w, d = d, w
-        out[ref] = Pos(x, y, 0) * Box(w, d, PART_H[kind], align=CEN_MIN)
+        out[ref] = Pos(x, y, 0) * Box(w, d, h, align=CEN_MIN)
     out["U_MCU"] = _union([_box(lay.xiao_pads(), 0.0, z["xiao_body_top"]), _box(lay.usb_shell(), 0.0, z["usb_top"])])
     pads = lay.clip_pads()
     body = lay.clip_body()
@@ -384,15 +390,15 @@ def pcb_solid(lay=LAY):
     return board - holes
 
 
-def screw_solids(lay=LAY, with_feet=None):
-    """ねじ {参照名: 立体}（頭は基板の下面・軸は上へ）。中の押さえは、足を付けるときだけ。"""
+def screw_solids(lay=LAY, with_feet=None, spare=False):
+    """ねじ {参照名: 立体}（頭は基板の下面・軸は上へ）。中の押さえは、足を付けるときだけ。spare=True で予備のねじも。"""
     s = lay.s
     with_feet = s.HOLDDOWN_FEET if with_feet is None else with_feet
     out = {}
     for ref, c, kind in lay.screws():
-        if kind == "holddown" and not with_feet:
+        if (kind == "holddown" and not with_feet) or (kind == "spare" and not spare):
             continue
-        length = s.SCREW_L if kind == "perimeter" else s.HOLDDOWN_SCREW_L
+        length = s.HOLDDOWN_SCREW_L if kind == "holddown" else s.SCREW_L
         out[ref] = _union([Pos(c[0], c[1], -s.PCB_T - s.SCREW_HEAD_H) * Cylinder(s.SCREW_HEAD_D / 2, s.SCREW_HEAD_H, align=CEN_MIN),
                            Pos(c[0], c[1], -s.PCB_T - EPS) * Cylinder(s.SCREW_D / 2, length + EPS, align=CEN_MIN)])
     return out
@@ -405,7 +411,7 @@ def sheet_solid(lay=LAY):
     z0 = -s.PCB_T - s.BOTTOM_SHEET_T
     sheet = Pos((p[0] + p[2]) / 2, (p[1] + p[3]) / 2, z0) * extrude(RectangleRounded(p[2] - p[0], p[3] - p[1], s.CORNER_R), s.BOTTOM_SHEET_T)
     holes = _union([Pos(c[0], c[1], z0 - 1) * Cylinder(s.SCREW_HEAD_D / 2 + 0.5, s.BOTTOM_SHEET_T + 2, align=CEN_MIN)
-                    for _, c, kind in lay.screws() if kind == "perimeter"])
+                    for _, c, _ in lay.wall_screws()])                  # 予備のねじの所も開けておく（あとから締められる）
     return sheet - holes
 
 
@@ -453,10 +459,78 @@ def weights(lay=LAY, fill=None):
 # 書き出し
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# ねじの試し刷り（発注の前に刷る。docs/coupon-test.md「ねじ」）
+# ---------------------------------------------------------------------------
+
+def screw_coupon_boxes(lay=LAY):
+    """切り出す範囲 {名前: (矩形, [ねじの中心], 厚くするねじの中心 か None)}。back = 奥の壁（ねじ 3 本）・side = 左の壁（ねじ 1 本）。"""
+    s = lay.s
+    f, a = lay.frame, lay.key_area
+    want = [tuple(c) for _, c, kind in lay.screws() if kind == "perimeter"]
+    back = [c for x in s.COUPON_SCREW_X for c in want if abs(c[0] - x) < 1e-6 and abs(f[3] - c[1] - s.SCREW_FROM_EDGE) < 1e-6]
+    side = tuple(s.COUPON_SCREW_SIDE)
+    if len(back) != len(s.COUPON_SCREW_X) or side not in want:
+        raise ValueError("ねじの試し刷りのねじが、本番の外周のねじ（spec.SCREWS_PERIMETER）に無い")
+    inner = lay.rib() / 2 + s.COUPON_SCREW_DEPTH
+    half = UNIT * len(back) / 2
+    mid = sum(x for x, _ in back) / len(back)
+    return {
+        "back": ((mid - half, a[3] - inner, mid + half, f[3]), back, back[-1]),
+        "side": ((f[0], side[1] - UNIT / 2, a[0] + inner, side[1] + UNIT / 2), [side], None),
+    }
+
+
+@lru_cache(maxsize=None)
+def screw_coupon():
+    """{名前: 立体}（組んだ向き・本番の座標）。frame_back / frame_side = 本番の枠の切れ端、base_back / base_side = 当て板（基板の代わり）。
+    frame_back の最後のねじだけ、壁を穴の中へ COUPON_SCREW_THICK 厚くする（基板の上 0〜FRAME_UNDER）。"""
+    lay, s = LAY, S
+    full = frame_full()
+    top = s.FRAME_UNDER + s.FRAME_T
+    out = {}
+    for name, (box, screws, thick) in screw_coupon_boxes(lay).items():
+        part = full & _box(box, -1.0, top + 1.0)
+        if thick is not None:
+            b = screw_boss(thick, lay)                                   # 奥の壁: 厚い壁の矩形（y0 = 穴の縁）
+            add = _box((b[0], b[1] - s.COUPON_SCREW_THICK, b[2], b[1] + EPS), 0.0, s.FRAME_UNDER)
+            part = part + add
+            m = s.COUPON_SCREW_MARK                                      # 厚い方の印: その側の端の外の角を落とす（裏返しても見える）
+            # 点は反時計回りに（時計回りだと面が下を向き、押し出しが下へ行って何も削らなかった）
+            mark = extrude(Polygon((box[2] + EPS, box[3] - m), (box[2] + EPS, box[3] + EPS), (box[2] - m, box[3] + EPS), align=None), top + 2.0)
+            part = part - Pos(0, 0, -1.0) * mark
+        solids = part.solids()
+        if len(solids) != 1:
+            raise RuntimeError(f"ねじの試し刷り {name} が {len(solids)} 個の塊")
+        out[f"frame_{name}"] = part.clean()
+        p = lay.pcb
+        r = (max(box[0], p[0]), max(box[1], p[1]), min(box[2], p[2]), min(box[3], p[3]))     # 基板のある範囲だけ
+        plate = _box(r, -s.PCB_T, 0.0)
+        holes = _union([Pos(x, y, -s.PCB_T - 1.0) * Cylinder(s.SCREW_HOLE_D / 2, s.PCB_T + 2.0, align=CEN_MIN) for x, y in screws])
+        out[f"base_{name}"] = plate - holes
+    return out
+
+
+def screw_coupon_plate(gap=5.0):
+    """1 枚に並べた刷る物（枠の切れ端は上面をベッドに・当て板は平らに）。手前から 当て板 2 枚・枠 2 つ。"""
+    sc = screw_coupon()
+    placed, y = [], 0.0
+    for name in ("base_side", "base_back", "frame_side", "frame_back"):
+        part = P.flip_to_bed(sc[name]) if name.startswith("frame") else P.to_bed(sc[name])
+        bb = part.bounding_box()
+        if name.endswith("side"):                                         # 左の壁の切れ端は長い辺を X に（90° 回す）
+            part = Rot(0, 0, 90) * part
+            bb = part.bounding_box()
+        placed.append(Pos(-(bb.min.X + bb.max.X) / 2, y - bb.min.Y, -bb.min.Z) * part)
+        y += bb.size.Y + gap
+    return Compound(placed)
+
+
 def printables():
     """刷る物（STL の名前 → 刷る向きの立体）。"""
     halves = frame_halves()
     out = {f"frame_{side}": frame_print(halves[side]) for side in SIDES}
+    out["coupon_screw_plate"] = screw_coupon_plate()
     out.update(caps_plates())
     for w in CAP_WIDTHS:
         c = P.Cell(0.0, 0.0, S.HOLE_B, w_u=w)
