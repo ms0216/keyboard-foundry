@@ -165,7 +165,8 @@ def build(project, piece):
         # 組み立てる人が見るのは裏面。通し番号だけでは 60 個を取り違える
         t = pcbnew.PCB_TEXT(board)
         t.SetText(k.label)
-        t.SetPosition(to_kicad(kx, ky + 8.2))
+        # 既定はキーの中心の 8.2 奥。機種が spec.KEY_LABEL_DY で変えられる（縁のねじの穴に字が掛かる機種）
+        t.SetPosition(to_kicad(kx, ky + getattr(spec, "KEY_LABEL_DY", 8.2)))
         t.SetLayer(pcbnew.B_SilkS)
         t.SetMirrored(True)
         t.SetTextSize(pcbnew.VECTOR2I_MM(1.1, 1.1))
@@ -183,11 +184,17 @@ def build(project, piece):
         d.SetReference(f"D{i}")
         d.SetValue("BAT46W")
         board.Add(d)
-        d.Flip(d.GetPosition(), False)        # **Add の後で。**前だと segfault する
+        if not kind.diode_front:
+            d.Flip(d.GetPosition(), False)    # **Add の後で。**前だと segfault する
         # パッドは pinmap から引く。引けなければ落ちる（握り潰すとネットの無い
         # パッドが DRC 0 のまま残る。HHKB で 74LVC595 が丸ごと消えていた）
-        sw.FindPadByNumber(pinmap.resolve("keyswitch", "1")).SetNet(net(f"COL{c}"))
-        sw.FindPadByNumber(pinmap.resolve("keyswitch", "2")).SetNet(net(f"SW{i}_D"))
+        # 同じ番号のパッドが 2 つある足跡（表面実装のタクトスイッチは端子が 2 つずつ中でつながる）は全部に張る
+        for pin, name in (("1", f"COL{c}"), ("2", f"SW{i}_D")):
+            pads = [q for q in sw.Pads() if q.GetNumber() == pinmap.resolve("keyswitch", pin)]
+            if not pads:
+                raise RuntimeError(f"SW{i}: パッド {pin} が足跡に無い")
+            for q in pads:
+                q.SetNet(net(name))
         d.FindPadByNumber(pinmap.resolve("diode", "A")).SetNet(net(f"SW{i}_D"))
         d.FindPadByNumber(pinmap.resolve("diode", "K")).SetNet(net(f"ROW{r}"))
 
@@ -206,7 +213,9 @@ def build(project, piece):
     # **他社の商標を刷らない**（HHKB は "SSKB" にした）
     label = pcbnew.PCB_TEXT(board)
     label.SetText(f"{spec.NAME} {piece.upper()}")
-    label.SetPosition(pcbnew.VECTOR2I_MM(ORIGIN[0], ORIGIN[1] + pcb_h / 2 - 3.0))
+    # 既定は手前の縁から 3.0 の真ん中。機種が spec.PCB_LABEL_AT（CAD）で変えられる
+    lx, ly = getattr(spec, "PCB_LABEL_AT", (0.0, -(pcb_h / 2 - 3.0)))
+    label.SetPosition(to_kicad(lx, ly))
     label.SetLayer(pcbnew.B_SilkS)
     label.SetMirrored(True)
     label.SetTextSize(pcbnew.VECTOR2I_MM(2.5, 2.5))

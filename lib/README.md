@@ -162,6 +162,30 @@ Seeed XIAO nRF52840 のフットプリントと公式 STEP（HHKB で作り、14
 tests/fixtures/easyeda/footprints.json に置いた（形の描画・3D・記号などは含めない）。
 XIAO の Seeed のフットプリントは CC-BY-SA-4.0 なので無改変で置いた（tests/fixtures/seeed_xiao/README.md）。
 
+### SW_Alps_SKRA_6.2x6.2（Alps Alpine SKRAAWE010 / SKRACAE010・表面実装のタクトスイッチ・cckb-click・自作）
+
+| 出典 | 値 | 足跡 |
+|---|---|---|
+| Alps の製品ページの図「Land dimensions（Viewed from switch mounting face）」（<https://tech.alpsalpine.com/e/products/detail/SKRAAWE010/> の `product_detail_fig_skra_c_1`。2026-10-03 取得） | 矩形 4 つ。外外 8.5 × 5.0・内内 3.0 × 3.0 | 2.75 × 1.0 を (±2.875, ±2.0) |
+| 同ページの「Circuit Diagram」（`product_detail_fig_skra_c_2`） | ①—② がつながり、③—④ がつながる。その間が接点 | 奥の 2 つ = パッド 1、手前の 2 つ = パッド 2 |
+| 販売者（Salicylic_acid3 さん）が JLC に実装させた基板 PCB_Data/ClickBoard Tenkey/Assemble Alps Silent の足跡 `SKRACAE010_1u`（MIT） | 同じランド・同じ番号 | 一致 |
+| LCSC（EasyEDA）の C202383 の足跡 | 2.1 × 1.2 を (±3.0, ±2.0)（小さめ） | 中心の差 0.125。JLC は足跡の原点（= 同じ中心）に置く |
+
+**Panasonic EVQQ2 も載る「重ねたランド」にはしていない**: ランドを大きくすると、リフローでスイッチが自分で中心に寄る力が弱まり、
+浮き・傾きが出やすい（押す面の高さの余裕は 0.1〜0.2 しか無い）。安全と言い切れないので Alps の図のまま。
+コートヤードは x ±4.4（ランド ＋ 0.15。幅の広いキーの空きランドを真ん中から 8.99 に置くため）・y ±3.35（本体 ＋ 0.25）。
+`tests/test_cckb_click_pcb.py` が図の値・販売者の足跡・LCSC の足跡と突き合わせる（パッドを 0.1 動かすと落ちる）。
+
+## cckb-click.pretty（cckb-click の部品）
+
+| ファイル | 出典 | 照合 |
+|---|---|---|
+| `BAT_MY-1632-03-R` | MYOUNG の図面 MY-CP-0247（LCSC のデータシート 2401191740_MYOUNG-MY-1632-03-R_C20606805.pdf）の PCB Layout Diagram: ＋のランド 4.15 × 4.20 を中心の間 20.05。−は電池が基板の裸の銅に当たる（図に寸法なし）→ LCSC の足跡 BAT-SMD_MY-1632-03 の φ7.0 を中心に。**−にははんだを載せない**（種類 connect）。裏の GND へ銅の中のビア 2 個。向きは LCSC の足跡と同じ（止めが −y・口が +y） | 図の値・LCSC の足跡（tests/test_cckb_click_pcb.py） |
+| `SW_MSK12C02` | SHOU HAN の承認書（2024-12-14・LCSC のデータシート 2304140030_SHOU-HAN-MSK12C02_C431540.pdf）の外形図・安装参考图: 枠 1.05 × 0.7 を外外 8.4・2.2 間隔、端子 0.6 幅を軸から 1.3〜2.6（先を 0.2 伸ばして 2.8 まで）、突起の穴 2 個を 3.0 間隔。穴は φ0.9（図は φ0.85。LCSC の足跡の値。突起の最大 φ0.85 でも JLC の機械が挿せる側で、遊びは片側 0.075 = つまみの切り欠きの隙の中）。原点と向きは LCSC の足跡 SW-TH_MSK12C02 と同じ | 同上 |
+| `Hole_M2_2.2` | 枠を留める M2 のねじの穴（非めっき φ2.2）。コートヤードは表が穴 ＋ 0.25・裏がスリムヘッドの頭 φ4.0 ＋ 0.25 | spec.SCREW_HOLE_D |
+
+EasyEDA のデータからは座標の事実だけを tests/fixtures/easyeda/footprints_click.json に置いた（同じ番号のパッドが 2 つある部品があるので、パッドは並びで持つ）。
+
 ## ライセンス表記
 
 このディレクトリのフットプリントは kiswitch/kiswitch（および、

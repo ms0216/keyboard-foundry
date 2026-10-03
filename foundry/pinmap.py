@@ -120,6 +120,14 @@ PINS = {
     # こちらで付けた: lib/cckb.pretty/SW_SS-12D00G3 のパッド 1 / 2 / 3 が足の並び順で、2 が真ん中（共通）
     "slide_ss12d00": {"1": ("1", PASSIVE), "2": ("2", PASSIVE), "3": ("3", PASSIVE)},
 
+    # CR1632 の電池クリップ MYOUNG MY-1632-03-R（LCSC C20606805）。クリップそのものが ＋（図面 MY-CP-0247 の部品表
+    # 「TERMINAL(+)」・ランド 2 つ）。−は電池が基板の裸の銅に直に当たる。lib/cckb-click.pretty/BAT_MY-1632-03-R: 1 = ＋・2 = −
+    "coin_clip_my1632": {"+": ("1", POWER_OUT), "-": ("2", PASSIVE)},
+
+    # 横向きのつまみのスライドスイッチ SHOU HAN MSK12C02（LCSC C431540）。図面（承認書 2024-12-14）の端子 1・2・3 と枠 4。
+    # 2 が共通（1P2T）。枠は図面の回路図でアースに落ちている。lib/cckb-click.pretty/SW_MSK12C02（番号は LCSC の足跡と同じ）
+    "slide_msk12c02": {"1": ("1", PASSIVE), "2": ("2", PASSIVE), "3": ("3", PASSIVE), "SHELL": ("4", PASSIVE)},
+
     # XIAO nRF52840。**フットプリントのパッドは名前が付いている**ので
     # 対応は恒等。3V3 を power_out にしてあるのは、USB を挿すと
     # XIAO 側のレギュレータがレールを駆動するため（実際にそうなる）。

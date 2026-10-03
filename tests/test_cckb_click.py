@@ -432,7 +432,7 @@ def test_the_exported_coupons_are_the_declared_set_watertight_and_fit_the_a1_min
         assert len(bodies) == BODIES.get(stem, 1), (stem, len(bodies))     # 立体の数を数える
     assert len(style) == 19 and len(list((tmp_path / "assembly").glob("*.stl"))) == 19
     # 帯は 15u の半分の長さ ＋ 両側の縁
-    assert made["coupon_strip_frame"][0] == pytest.approx(S.COUPON_STRIP_U * UNIT + 2 * S.PLATE_MARGIN_X)
+    assert made["coupon_strip_frame"][0] == pytest.approx(S.COUPON_STRIP_U * UNIT + 2 * S.COUPON_MARGIN)
 
 
 @pytest.mark.slow

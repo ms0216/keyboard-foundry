@@ -111,7 +111,9 @@ def test_kicad_side_modules_need_only_the_standard_library(name):
 KICAD_SIDE_PROJECT = ["projects/cckb/pcb_extra.py", "projects/cckb/circuit.py",
                       "projects/cckb/interface.py", "projects/cckb/matrix_routes.py",
                       "projects/cckb/case_spec.py", "projects/cckb/tools/route_pcb.py",
-                      "projects/cckb/tools/board_geometry.py", "projects/cckb/tools/board_facts.py"]
+                      "projects/cckb/tools/board_geometry.py", "projects/cckb/tools/board_facts.py",
+                      "projects/cckb-click/pcb_extra.py", "projects/cckb-click/click_circuit.py",
+                      "projects/cckb-click/click_layout.py"]
 
 
 def _kicad_side_problems(path):

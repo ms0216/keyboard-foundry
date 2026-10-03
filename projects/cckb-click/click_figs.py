@@ -98,7 +98,7 @@ def draw_key(ax, c, fr, bs, cp, y, dz, title, s=S, xlim=None, zlim=(-2.0, 6.6), 
     fill(ax, xz(bs, y), GREEN)
     fill(ax, xz(fr, y), GREY)
     fill(ax, xz(Pos(0, 0, dz) * cp, y), RED, ec="#b00000")
-    half = c.w_u * UNIT / 2 + s.PLATE_MARGIN_X + 2.5
+    half = c.w_u * UNIT / 2 + s.COUPON_MARGIN + 2.5
     xlim = xlim or (-half, half)
     if marks:
         for z, t in ((0.0, "基板の上面 0"), (s.SW_BODY_H, f"スイッチの本体 {s.SW_BODY_H}"), (lv["frame_under"], f"枠の下面 {lv['frame_under']:.1f}"),

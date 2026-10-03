@@ -268,8 +268,8 @@ def key_bounds(cells, extra_u=0.0):
 
 def outline_plan(bounds, s=S, grow=0.0):
     """枠の外形（キー領域 ＋ 余白。左手前の角を落として向きの印にする）。grow で外へ広げる（板・立ち上がり）。"""
-    x0, y0 = bounds[0] - s.PLATE_MARGIN_X, bounds[1] - s.PLATE_MARGIN_Y
-    x1, y1 = bounds[2] + s.PLATE_MARGIN_X, bounds[3] + s.PLATE_MARGIN_Y
+    x0, y0 = bounds[0] - s.COUPON_MARGIN, bounds[1] - s.COUPON_MARGIN
+    x1, y1 = bounds[2] + s.COUPON_MARGIN, bounds[3] + s.COUPON_MARGIN
     m = s.COUPON_MARK_CHAMFER
     sk = Polygon((x0 + m, y0), (x1, y0), (x1, y1), (x0, y1), (x0, y0 + m), align=None)
     return offset(sk, grow, kind=Kind.INTERSECTION) if grow else sk
@@ -292,9 +292,9 @@ def rib_posts(cells, s=S, border=False):
         ys = sorted({c.cy for c in cells})
         for c in cells:
             if c.cy == ys[0]:
-                out.append((c.cx, c.cy - UNIT / 2 - s.PLATE_MARGIN_Y / 2, s.POST_L, s.POST_W))
+                out.append((c.cx, c.cy - UNIT / 2 - s.COUPON_MARGIN / 2, s.POST_L, s.POST_W))
             if c.cy == ys[-1]:
-                out.append((c.cx, c.cy + UNIT / 2 + s.PLATE_MARGIN_Y / 2, s.POST_L, s.POST_W))
+                out.append((c.cx, c.cy + UNIT / 2 + s.COUPON_MARGIN / 2, s.POST_L, s.POST_W))
     return sorted(set(out))
 
 
@@ -313,7 +313,7 @@ def frame(cells, s=S, wall=True, extra_u=0.0, posts=None):
         body.append(Pos(x, y, 0) * Box(lx, ly, s.FRAME_UNDER + EPS, align=CEN_MIN))
     cuts = []
     ch = s.HOLE_CHAMFER
-    y_front, y_back = bounds[1] - s.PLATE_MARGIN_Y, bounds[3] + s.PLATE_MARGIN_Y
+    y_front, y_back = bounds[1] - s.COUPON_MARGIN, bounds[3] + s.COUPON_MARGIN
     for c in cells:
         at = Pos(c.cx, c.cy)
         cuts.append(at * Pos(0, 0, -1.0) * extrude(hole_plan(c, s), lv["frame_top"] + 2.0))
@@ -325,7 +325,7 @@ def frame(cells, s=S, wall=True, extra_u=0.0, posts=None):
             cuts.append(at * Pos(0, d / 2 - 0.5, s.FRAME_UNDER) * Box(s.SEAM_NOTCH[0], s.SEAM_NOTCH[1] + 0.5, s.FRAME_T + EPS,
                                                                        align=(Align.CENTER, Align.MIN, Align.MIN)))
         if c.dots:
-            edge = (rib(c)[1] + s.PLATE_MARGIN_Y - ch) / 2          # 縁（外形から穴の面取りまで）の真ん中
+            edge = (rib(c)[1] + s.COUPON_MARGIN - ch) / 2          # 縁（外形から穴の面取りまで）の真ん中
             y = (y_back - edge) if c.back else (y_front + edge)
             cuts += _dots(c.dots, c.cx, y, lv["frame_top"] - s.COUPON_DOT[1], lv["frame_top"] + 1.0, s)
     return (_fuse(body) - _fuse(cuts)).clean()

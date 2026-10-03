@@ -48,6 +48,9 @@ class Switch:
     # 手前に来る種類（Cherry）だけ回す。**素の向きでワイヤが奥の種類（Choc V2 のねじ留め）は回さない**
     # （回すと最前列で爪の穴が基板の外へ出る）
     stab_turn_front_row: bool
+    # ダイオードを表（スイッチと同じ面）に置くか。既定は裏（ホットスワップ・Choc）。表面実装のスイッチを
+    # 片面で JLC に実装させる機種（cckb-click）だけ True
+    diode_front: bool = False
 
     def footprint(self, w_u):
         if w_u not in self.fp:
@@ -57,7 +60,7 @@ class Switch:
 
     def stab_offset_for(self, w_u):
         """幅 w_u のキーに要るスタビ半間隔。2u 未満は不要で None。"""
-        if w_u < 2.0:
+        if w_u < 2.0 or self.stab_kind is None:
             return None
         if w_u not in self.stab_offset:
             raise ValueError(f"{self.name}: {w_u}u のスタビ間隔が未定義。"
@@ -292,7 +295,36 @@ CHOC_V2 = Switch(
     stab_turn_front_row=False,        # フットプリントの素の向きでワイヤが奥。最前列（スペース）も回さない
 )
 
-SWITCHES = {s.name: s for s in (MX_HOTSWAP, CHOC_V1, CHOC_V2)}
+# ---------------------------------------------------------------------------
+# Alps Alpine SKRA（6.2 角・表面実装のタクトスイッチ。SKRAAWE010 / SKRACAE010）。cckb-click
+# ---------------------------------------------------------------------------
+# ランド（Alps の製品ページの図「Land dimensions / Viewed from switch mounting face」。
+# <https://tech.alpsalpine.com/e/products/detail/SKRAAWE010/> の product_detail_fig_skra_c_1）:
+#   4 つの矩形。外外 8.5 × 5.0・内内 3.0 × 3.0 → 1 つは 2.75 × 1.0・中心 (±2.875, ±2.0)。
+# 回路（同ページの Circuit Diagram）: ①—② がつながり（奥の 2 つ）、③—④ がつながる（手前の 2 つ）。その間が接点。
+# 販売者（Salicylic_acid3 さん）が JLC に実装させた基板（PCB_Data/ClickBoard Tenkey/Assemble Alps Silent・MIT）の
+# 足跡 SKRACAE010_1u も同じランドで、奥の 2 つをパッド 1・手前の 2 つをパッド 2 にしている。同じ番号にした。
+# tests/test_cckb_click_pcb.py が lib/keyswitch.pretty/SW_Alps_SKRA_6.2x6.2 をこの値と突き合わせる（0.1 ずらすと落ちる）
+SKRA_LAND = dict(outer=(8.5, 5.0), inner=(3.0, 3.0))
+SKRA_FP = "SW_Alps_SKRA_6.2x6.2"
+SKRA_TACT = Switch(
+    name="skra_tact",
+    cutout=6.2,             # 本体の一辺。**プレートは無い**（枠は機種が作る）。foundry.plate は使わない
+    plate_t=0.0,
+    fp={w: SKRA_FP for w in (1.0, 1.5, 1.75, 2.25)},
+    value="SKRAAWE010",
+    # ダイオード（表・横置き）。スイッチの手前（KiCad の +y）5.6: 手前のランドの下端（2.5）からコートヤード（±1.15）まで 1.95。
+    # アノード（パッド 2・+1.65）が手前右のランドの中心 x 2.875 の真下に来る → スイッチ → ダイオードが縦の 1 本
+    diode_offset=(1.225, 5.6),
+    diode_angle=0,
+    stab_offset={},
+    stab_fp={},
+    stab_kind=None,
+    stab_turn_front_row=False,
+    diode_front=True,
+)
+
+SWITCHES = {s.name: s for s in (MX_HOTSWAP, CHOC_V1, CHOC_V2, SKRA_TACT)}
 
 
 def switch_of(spec):
