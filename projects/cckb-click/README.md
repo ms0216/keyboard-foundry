@@ -6,32 +6,30 @@ CCKB（HHKB 英語配列・62 キー・19.05 ピッチ・XIAO nRF52840）を、*
 
 `projects/cckb/`（発注できる状態の CCKB）には手を入れない。だめなら CCKB に戻れる。
 
-## いまの段: 刷るだけの試し（基板なし）
+## いまの段: 基板・枠・キャップ・ファームまで設計した（独立した監査の前）
 
-基板を設計する前に、キャップと枠を刷って触り、形を決める。
+**いまの状態は [docs/status.md](docs/status.md)。**残っているものは [docs/open-gaps.md](docs/open-gaps.md) の冒頭。
 
 ```
-.venv/bin/python3 projects/cckb-click/click_coupons.py     # STL（最小の一式 ＋ あとで刷る 14 個）・断面図・上から見た図・.blend を build/cckb-click/ に
-.venv/bin/python3 projects/cckb-click/tools/slice_precise.py   # 最小の一式を精度優先の設定でスライスし、G-code を検査（時間・材料・継ぎ目の場所）
-.venv/bin/pytest tests/test_cckb_click.py -q                # 形の検査
+tools/kb cckb-click pcb                                            # 未配線の板
+"$KICAD_PYTHON" projects/cckb-click/tools/route_click.py           # 配線（Freerouting 2.3.0 と java が要る）
+tools/kb cckb-click fab-fields && tools/kb cckb-click drc          # LCSC の番号・DRC
+.venv/bin/python3 projects/cckb-click/click_case.py                # 枠・キャップの STL・断面図・.blend を build/cckb-click/ に
+.venv/bin/python3 projects/cckb-click/tools/slice_main.py          # 刷る 4 枚をスライスして G-code を検査
+.venv/bin/python3 projects/cckb-click/click_stiffness.py           # たわみの見積もり
+.venv/bin/python3 projects/cckb-click/tools/parts_check.py         # 部品の在庫・単価（JLC の API）
+.venv/bin/pytest tests/test_cckb_click.py tests/test_cckb_click_pcb.py tests/test_cckb_click_board.py tests/test_cckb_click_case.py -q
+tools/kb cckb-click gate                                           # 発注の門（いまは閉）
 ```
 
 | 読むもの | 何 |
 |---|---|
-| [docs/coupon-test.md](docs/coupon-test.md) | **試し刷りの手順と記入表**（最初に刷る 1 枚・刷り方・測る表・結果の意味） |
-| print/ | 精度優先の刷り方のプリセット（0.4 ノズル用・0.2 ノズル用。Bambu Studio / OrcaSlicer に読み込む） |
-| [docs/open-gaps.md](docs/open-gaps.md) | 決まったこと・試し刷りが決めること・基板が来るまで分からないこと |
-| [docs/decisions/](docs/decisions/) | スイッチ・構造（積み上げと刷る向き）・ライセンスの決定 |
+| [docs/status.md](docs/status.md) | **いまの状態**・CCKB との比較・利用者が決めること |
+| [docs/open-gaps.md](docs/open-gaps.md) | 発注を止めているもの・実物が来るまで分からないこと |
+| [docs/decisions/](docs/decisions/) | 決定の記録（スイッチ・構造・刷り方・試し刷りの結果・基板と枠） |
+| [docs/shopping-list.md](docs/shopping-list.md)・[docs/order-steps.md](docs/order-steps.md) | 買う物・基板の頼み方 |
+| [docs/printing-guide.md](docs/printing-guide.md)・[docs/assembly-guide.md](docs/assembly-guide.md) | 刷り方・組み立て |
+| [docs/coupon-test.md](docs/coupon-test.md) | 試し刷りの手順と結果（2026-10-03 に利用者が刷った） |
+| print/ | 精度優先の刷り方のプリセット |
 | [docs/provisional-values.md](docs/provisional-values.md) | まだ実測していない値（`[暫定]`） |
-| spec.py | 寸法（積み上げ・穴・隙・つば）。値ごとに出どころ |
-
-## 状態（2026-10-03）
-
-| | |
-|---|---|
-| 配列 | CCKB と同じ（layout.json） |
-| スイッチ | Alps SKRAAWE010（JLC C202383）に決定。基板は SKRACAE010 も載る足跡にする（基板の段） |
-| 積み上げ | 基板の上面 0 / 枠の下面 3.0 / 掛かる面 4.0 / 押す面 3.6 / 枠の上面 5.0 / キャップの上面 6.0 `[暫定]` |
-| キャップと枠 | 形は作った（click_parts.py）。**まだ刷っていない** |
-| 試し刷り | 最小の一式（1 枚・0.4 ノズルで約 45 分）を、精度優先の設定で Bambu Studio と OrcaSlicer の両方でスライスし、G-code を検査した。**まだ刷っていない。**刷るかは利用者の判断 |
-| 基板・ファーム・ケース | 未着手（試し刷りの結果を見てから）。`tools/kb cckb-click plate / pcb / zmk` はまだ動かない |
+| spec.py | 寸法と部品。値ごとに出どころ |
