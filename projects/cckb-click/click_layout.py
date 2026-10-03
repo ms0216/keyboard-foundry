@@ -142,13 +142,42 @@ class Layout:
                         out.add((round((lo + hi) / 2, 6), round(a.y + UNIT / 2, 6), s.POST_L, s.POST_W))
         return sorted(out)
 
+    def corner_posts(self):
+        """角（XIAO・電池）の屋根を支える柱。角の境目のリブの下: 横の境目（キーとの間）の真ん中に縦長 1 本、
+        奥の境目（段 3 との間）に、上のキーの辺の真ん中ごとに横長 1 本。"""
+        s = self.s
+        out = []
+        for side in ("left", "right"):
+            c = self.corner(side)
+            x = c[2] if side == "left" else c[0]
+            out.append((round(x, 6), round((c[1] + c[3]) / 2, 6), s.POST_W, s.POST_L))
+            for k in self.keys:
+                if abs(k.y - UNIT / 2 - c[3]) < 1e-6 and c[0] - 1e-6 <= k.x0 and k.x1 <= c[2] + 1e-6:
+                    out.append((k.x, round(c[3], 6), s.POST_L, s.POST_W))
+                elif abs(k.y - UNIT / 2 - c[3]) < 1e-6 and k.x0 < c[2] and k.x1 > c[0]:
+                    lo, hi = max(k.x0, c[0]), min(k.x1, c[2])
+                    out.append((round((lo + hi) / 2, 6), round(c[3], 6), s.POST_L, s.POST_W))
+        return sorted(out)
+
+    def all_posts(self):
+        return self.posts() + self.corner_posts()
+
     def post_rects(self):
-        return [rect(*p) for p in self.posts()]
+        return [rect(*p) for p in self.all_posts()]
 
     def col_via(self, k):
         """列を裏へ落とすビア（キーの中心から）。右に空きランドのあるキーは、真ん中のランドの上。"""
         dx, dy = self.s.COL_VIA if self.side_offset(k) is None else self.s.COL_VIA_WIDE
         return (round(k.x + dx, 6), round(k.y + dy, 6))
+
+    def fanout_band(self):
+        """595 から列への束の帯（表）: 右の 595 の右から右端の列のビアの右まで・段 3 のランドの奥の端から段 2 のバスの少し手前まで
+        （束の手前の線とランドの間に残る幅 1.3 の帯も、行き先へ下りる線で 19 mm おきに切られて袋小路になるので、一緒に塗らない）。"""
+        s = self.s
+        row_y = self.rows()[s.FANOUT_ROW]
+        x0 = max(s.PART_AT["U1"][0], s.PART_AT["U2"][0]) + 3.5      # 595 の右から（595 のまわりは塗る: GND のピンのビアが表のベタに繋がる）
+        x1 = max(self.col_via(k)[0] for k in self.keys if k.r == s.FANOUT_ROW) + 1.0
+        return (x0, row_y + SKRA_LAND["outer"][1] / 2, x1, row_y + UNIT + s.ROW_BUS_DY - 0.4)
 
     # --- 高さ（基板の上面 = 0）-------------------------------------------------
     def z(self):
@@ -267,6 +296,12 @@ class Layout:
         out.update(s.XIAO_BOTTOM_SLOTS)
         return {n: (x + r[0] - c, y + r[1] - c, x + r[2] + c, y + r[3] + c) for n, r in out.items()}
 
+    def xiao_back_no_fill(self):
+        """XIAO の下の裏で GND のベタを塗らない範囲: 表の銅を禁止している範囲と同じ（XIAO の外形の中・手前は基板の縁から・左も縁から）。
+        ここの裏は、行 0〜4 の線（2.54 おきの縦線と、左へ曲がる横線）で幅 2 mm 足らずの帯と袋に切られる。表が禁止なのでビアも打てず、
+        帯の先はビアから銅の上で 19〜22 mm あった（検査 gnd_far）。XIAO は自分の基板に GND の面を持っている。"""
+        return self.xiao_underside()[0]
+
     def xiao_underside(self):
         """XIAO の下で表の銅を禁止する範囲 [矩形, ...]。CCKB の pcb_extra.xiao_underside と同じ決め方:
         XIAO の外形の中で、手前は基板の縁から、奥は露出パッドの奥の端まで。外形の外へ出る露出パッドは足す。"""
@@ -277,7 +312,9 @@ class Layout:
         pad_inner = s.XIAO_AT[1] + s.XIAO_W / 2 - s.XIAO_PAD_IN
         if top >= pad_inner:
             raise RuntimeError(f"XIAO の下の禁止域の奥 {top:.3f} が奥の列のパッドの内端 {pad_inner:.3f} を越える")
-        out = [(b[0], self.pcb[1], b[2], top)]
+        # 左は基板の縁まで（XIAO の左の端と基板の縁の間 1.5 に残る表のベタは、ビアの打てない細い帯で、奥へ 20 mm 続く袋小路になる。
+        # 検査 gnd_far が見つけた。真上は USB のシェルの張り出し）
+        out = [(self.pcb[0], self.pcb[1], b[2], top)]
         out += [p for p in pads if p[0] < b[0] or p[2] > b[2] or p[3] > top]
         return out
 

@@ -1,0 +1,83 @@
+{
+  "board": "cckb-click_main.kicad_pcb",
+  "unrouted": "cckb-click_main.kicad_pcb",
+  "unrouted_fingerprint": "0871dccc541d5b6682016e622b4562f7a8bf7860c5577a88aafdf0eef4854282",
+  "unrouted_sha256": "268e20183e32f62c22c6727e37c613820b882cc09eb1c60d5c7ef33320a67c93",
+  "freerouting": "freerouting-2.3.0.jar",
+  "passes": 100,
+  "freerouting_options": [
+    "--router.optimizer.enabled=false"
+  ],
+  "margin_um": 30,
+  "margins_tried": [
+    [
+      30,
+      0
+    ]
+  ],
+  "matrix_segments": 628,
+  "matrix_vias": 74,
+  "power_segments": 3,
+  "gnd_fanout": 12,
+  "ring": {
+    "奥": [
+      4,
+      7
+    ],
+    "手前": [
+      0,
+      7
+    ],
+    "左": [
+      0,
+      11
+    ],
+    "右": [
+      10,
+      11
+    ]
+  },
+  "fence": 87,
+  "grid": 713,
+  "one_layer_vias_removed": 3,
+  "band_vias_removed": 28,
+  "island_vias": 3,
+  "second_island_vias": 2,
+  "declared_vias": 1,
+  "single_via_islands": [
+    {
+      "layer": "F.Cu",
+      "area_mm2": 1.33,
+      "length_mm": 1.79
+    },
+    {
+      "layer": "F.Cu",
+      "area_mm2": 10.13,
+      "length_mm": 7.97
+    },
+    {
+      "layer": "F.Cu",
+      "area_mm2": 1.83,
+      "length_mm": 2.06
+    },
+    {
+      "layer": "F.Cu",
+      "area_mm2": 1.61,
+      "length_mm": 3.55
+    },
+    {
+      "layer": "F.Cu",
+      "area_mm2": 2.69,
+      "length_mm": 3.48
+    }
+  ],
+  "islands_removed": 5,
+  "islands_removed_mm2": 10.33,
+  "joined_vias": 0,
+  "orphan_vias_removed": 0,
+  "gnd_area_mm2": {
+    "F": 22077.9,
+    "B": 26967.0
+  },
+  "unconnected": 0
+}

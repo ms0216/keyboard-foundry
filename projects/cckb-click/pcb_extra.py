@@ -45,10 +45,11 @@ FP = {  # 参照名 → (ライブラリ, 名前)
     "R_HI": (STD / "Resistor_SMD.pretty", "R_0805_2012Metric"),
     "R_LO": (STD / "Resistor_SMD.pretty", "R_0805_2012Metric"),
     "D_PWR": (STD / "Diode_SMD.pretty", "D_SOD-123"),
+    "TP_VSW": (STD / "TestPoint.pretty", "TestPoint_Pad_D1.0mm"),
 }
 VALUE = {"U_MCU": "XIAO_nRF52840", "BT1": "MY-1632-03-R", "SW_PWR": "MSK12C02",
          "U1": "SN74LVC595APWR", "U2": "SN74LVC595APWR",
-         "C_U1": "0.1uF", "C_U2": "0.1uF", "R_HI": "1M", "R_LO": "1M", "D_PWR": "BAT46W"}
+         "C_U1": "0.1uF", "C_U2": "0.1uF", "R_HI": "1M", "R_LO": "1M", "D_PWR": "BAT46W", "TP_VSW": "TP_VBAT_SW"}
 SIDE_LAND_VALUE = "SKRA_side_land_unpopulated"
 # 外形の縁の、配線・ビアを入れない帯の幅。JLC の銅と外形の規則に 0.02 足す（Freerouting は外形をネットクラスの間隔でしか避けない）
 EDGE_BAND = JLC["edge_clearance"] + 0.02
@@ -118,6 +119,20 @@ RULE_LAYERS = {
     "ANTENNA_KEEPOUT": ("F.Cu", "B.Cu"), "XIAO_UNDERSIDE": ("F.Cu",), "EDGE_KEEPOUT": ("F.Cu", "B.Cu"),
     "SCREW_HEAD_KEEPOUT": ("B.Cu",), "CELL_KEEPOUT": ("F.Cu",), "SW_BODY_KEEPOUT": ("F.Cu", "B.Cu"),
 }
+# ベタだけを禁止する領域（線・ビアは通す）。**配線の後で足す**（tools/route_click.py が no_fill_areas を呼ぶ）:
+# 未配線の板に置くと、DSN へは「配線も禁止」として出て、Freerouting がその中のパッド（XIAO の D0）から出られなくなった（2026-10-03）
+NO_FILL_LAYERS = {"FANOUT_NO_FILL": ("F.Cu",), "XIAO_BACK_NO_FILL": ("B.Cu",)}
+
+
+def no_fill_areas(board, lay, to_kicad):
+    """ベタだけを禁止する領域を足す。足した数。
+      FANOUT_NO_FILL      595 から列への束の帯（表）: 線と線の間に、ビアの打てない細い帯が 100 mm 以上残る
+      XIAO_BACK_NO_FILL   XIAO の下（裏）: 行の線で細い帯に切られ、ビアも打てない（click_layout.xiao_back_no_fill）"""
+    ctx = dict(to_kicad=to_kicad)
+    rule_area(board, ctx, lay.fanout_band(), (pcbnew.F_Cu,), "FANOUT_NO_FILL", tracks=False, vias=False, fills=True)
+    rule_area(board, ctx, lay.xiao_back_no_fill(), (pcbnew.B_Cu,), "XIAO_BACK_NO_FILL", tracks=False, vias=False, fills=True)
+    return 2
+
 
 
 def place(board, ctx):
@@ -167,14 +182,18 @@ def place(board, ctx):
             dx, dy = s.REF_TEXT_AT[ref]
             fp.Reference().SetPosition(ctx["to_kicad"](px + dx, py + dy))
             fp.Reference().SetTextAngleDegrees(0)
+    tp = _put(board, ctx, *FP["TP_VSW"], "TP_VSW", VALUE["TP_VSW"], s.TP_VSW_AT, 0)
+    tp.Reference().SetVisible(False)                     # リブの下。名札は刷らない（位置は手順書の絵で）
     if set(s.REF_TEXT_AT) - set(s.PART_AT):
         raise RuntimeError(f"REF_TEXT_AT の {sorted(set(s.REF_TEXT_AT) - set(s.PART_AT))} が PART_AT に無い")
 
     # --- キーのダイオードの名札 ---------------------------------------------------
+    moved = {f"D{i}" for i in project.diode_override("main")}       # 置き場所を変えたダイオードは、名札を右へ（左は 595 のパスコン）
     for fp in board.GetFootprints():
         if re.fullmatch(r"D\d+", fp.GetReference()):
             px, py = _cad(fp.GetPosition(), origin)
-            fp.Reference().SetPosition(ctx["to_kicad"](px + DIODE_REF_AT[0], py + DIODE_REF_AT[1]))
+            sgn = -1 if fp.GetReference() in moved else 1
+            fp.Reference().SetPosition(ctx["to_kicad"](px + sgn * DIODE_REF_AT[0], py + DIODE_REF_AT[1]))
 
     # --- JLC が実装しない物（spec.NOT_ASSEMBLED）のパッドからペーストの層を外す --------------
     # JLC はペーストの層からステンシルを作り、載せない部品のパッドにもはんだを盛ってリフローする

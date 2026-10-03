@@ -228,7 +228,7 @@ def test_the_power_switch_land_is_the_drawing_and_sits_where_jlc_places_the_part
 
 @pytest.mark.parametrize("edit, word", [
     (lambda p: p[:3] + (p[3] + 0.1,) + p[4:] if p[0] == "2" else p, "端子 2"),
-    (lambda p: p[:4] + (p[4] + 0.3,) + p[5:] if p[0] == "1" else p, "含んでいない"),
+    (lambda p: p[:4] + (p[4] + 0.7,) + p[5:] if p[0] == "1" else p, "含んでいない"),
     (lambda p: p[:4] + (p[4] + 0.1,) + p[5:] if p[1] == "np_thru_hole" else p, "突起の穴"),
     (lambda p: p[:5] + (0.8, 0.8) + p[7:] if p[1] == "np_thru_hole" else p, "φ0.8"),
 ])
@@ -281,7 +281,7 @@ def netlist_problems(geo, want=None, mech_refs=None):
 def test_every_pad_of_the_unrouted_board_carries_the_declared_net(unrouted):
     assert netlist_problems(unrouted) == []
     want = circuit.expected_pad_nets(PROJECT)
-    assert len(want) == 62 * 2 + 22 + 10 and sum(1 for p in unrouted["pads"] if p["net"]) > 62 * 6 + 22 * 4
+    assert len(want) == 62 * 2 + 22 + 11 and sum(1 for p in unrouted["pads"] if p["net"]) > 62 * 6 + 22 * 4
 
 
 def test_the_netlist_check_notices_a_wrong_net_on_one_of_two_twin_pads(unrouted):
@@ -302,7 +302,8 @@ def test_the_circuit_is_the_same_as_cckb_except_the_battery_and_the_power_switch
     assert circuit.XIAO_PINS == cckb.XIAO_PINS and circuit.POWER_NETS == cckb.POWER_NETS
     ours = {r: (k, p) for r, k, p in circuit.electronics()}
     theirs = {r: (k, p) for r, k, p in cckb.electronics()}
-    assert set(ours) == set(theirs)
+    assert set(ours) - set(theirs) == {"TP_VSW"} and not set(theirs) - set(ours)        # 試験用のランドだけ足した（VBAT_SW）
+    assert ours.pop("TP_VSW") == ("testpoint", {"1": "VBAT_SW"})
     diff = sorted(r for r in ours if ours[r] != theirs[r])
     assert diff == ["BT1", "SW_PWR"]
     assert ours["BT1"][1] == theirs["BT1"][1]                 # ＋ と − のネットは同じ
@@ -381,7 +382,7 @@ def paste_and_side_problems(geo_board):
         ref = re.search(r'\(property "Reference" "([^"]+)"', b).group(1)
         paste = len(re.findall(r'\(pad "[^"]*" smd[\s\S]*?\(layers[^)]*"F\.Paste"', b))
         smd = len(re.findall(r'\(pad "[^"]*" smd', b))
-        dry = bool(re.fullmatch(r"SW[AB]\d+|U_MCU", ref))
+        dry = bool(re.fullmatch(r"SW[AB]\d+|U_MCU|TP_VSW", ref))
         if dry and paste:
             out.append(f"{ref}: JLC が実装しないのに、はんだが載るパッド {paste} 個")
         if not dry and smd and paste != smd:
@@ -394,7 +395,7 @@ def paste_and_side_problems(geo_board):
 def test_everything_sits_on_top_and_only_the_jlc_parts_get_paste(unrouted):
     board = PROJECT.root / "pcb" / "unrouted" / "cckb-click_main.kicad_pcb"
     assert paste_and_side_problems(board) == []
-    assert len(re.findall(r'\n\t\(footprint ', board.read_text())) == 62 * 2 + 22 + 10 + 28
+    assert len(re.findall(r'\n\t\(footprint ', board.read_text())) == 62 * 2 + 22 + 11 + 28
 
 
 def test_the_paste_check_notices_paste_on_a_side_land_and_a_part_on_the_back(tmp_path, unrouted):
@@ -421,7 +422,7 @@ def placement_problems(geo, lay=LAY):
             if not re.fullmatch(r"H\d+", f["ref"]):
                 out.append(f"{f['ref']}: 表のコートヤードが無い")
             continue
-        if re.fullmatch(r"H\d+", f["ref"]):
+        if re.fullmatch(r"H\d+|TP_VSW", f["ref"]):          # 穴と、試験用のランド（銅だけ。リブの下でよい）
             continue
         if re.fullmatch(r"SW[AB]?\d+", f["ref"]):
             # スイッチは**ランド**で見る（コートヤードの余白 0.15 は決まりごとで、物ではない。本体はランドより 1.15 内側）

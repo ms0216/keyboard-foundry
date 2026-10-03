@@ -67,6 +67,7 @@ def electronics():
         ("R_HI", "res_1M", {"1": "VBAT_SW", "2": "VBAT_SENSE"}),
         ("R_LO", "res_1M", {"1": "VBAT_SENSE", "2": "GND"}),
         ("D_PWR", "schottky", {"A": "VBAT_SW", "K": "V3V3"}),
+        ("TP_VSW", "testpoint", {"1": "VBAT_SW"}),      # 試験用のランド（電源スイッチの後ろの電圧を測る。CCKB には無い）
     ]
 
 
