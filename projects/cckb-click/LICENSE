@@ -1,0 +1,51 @@
+cckb-click のライセンスと出どころ（NOTICE）
+============================================
+
+このディレクトリ（projects/cckb-click/）と、そこから生成される物（build/cckb-click/ の STL・絵・.blend）について。
+
+1. キーキャップと枠（ケース）の形 —— CC BY-NC 4.0
+---------------------------------------------------
+
+対象: click_parts.py・click_coupons.py・click_figs.py・spec.py のうち形を決めている値、およびそれらから生成した
+STL・STEP・絵・.blend。
+
+これらは次の公開データを**測って作り直した二次的著作物**で、同じ条件で公開する。
+
+  出どころ   Salicylic_acid3 さん（https://salicylic-acid3.hatenablog.com/）
+             - ACC_Keycaps  https://github.com/Salicylic-acid3/ACC_Keycaps   （CC BY-NC 4.0）
+             - Case_Data    https://github.com/Salicylic-acid3/Case_Data     （CC BY-NC 4.0・ClickBoard Tenkey のケース）
+             - 記事         https://salicylic-acid3.hatenablog.com/entry/acc-introduction
+                            https://salicylic-acid3.hatenablog.com/entry/clickboard-introduction
+  ライセンス Creative Commons Attribution-NonCommercial 4.0 International（CC BY-NC 4.0）
+             https://creativecommons.org/licenses/by-nc/4.0/legalcode
+             **非営利に限る。**販売・有償の頒布・営利目的の製造には使えない。
+
+変えた所（CC BY-NC 4.0 第 3 条(a)(1)(B) の「改変の表示」）:
+
+  - 公開 STEP は写していない。穴・高さ・隙・足の寸法を測り、build123d のコードで形を作り直した
+  - 1u の穴 16.5 × 16.0（R2.25）を 19.05 mm ピッチに置いた案 A と、穴を 17.05 角に広げた案 B を作った
+  - 1.5u・1.75u・2.25u のキャップと穴を新しく作った（元のデータには無い幅）
+  - キャップの足を、下面と同じ面にある薄いつば（厚さ 0.4）に変え、枠の下面に掘ったくぼみの底に掛ける形にした
+    （FDM で、押す面をベッドの面・掛かる面を上向きの面として刷るため）
+  - 押す面を φ3 の当て面からキャップの下面の全部に変え、押す面の高さを 3.5 から 3.6 に上げた
+  - キャップの上面を平らにし（元は窪み）、抜き勾配をやめ、胴と穴の隙を 0.16 から 0.20 に広げた
+  - 比べるための形（45° の足・平らな足）と、試し刷り用の枠・板・見分ける点を足した
+
+名前について: 元の製品名（「ACC」「Acid Caps」「ClickBoard」）は Salicylic_acid3 さんの物で、**このリポジトリの部品の
+名前には使わない**（出どころを示す上の記載と、記録の中での言及だけ）。この機種は元の作者の承認・推奨を受けた物ではない。
+
+2. 基板のデータ・フットプリントから作る物 —— MIT
+------------------------------------------------
+
+次の公開データは MIT ライセンス。基板の段でそこからフットプリントや配置を借りるときは、借りたファイルに
+元の著作権表示と MIT の許諾表示を残す（いまの段ではまだ何も借りていない）。
+
+  - PCB_Data          https://github.com/Salicylic-acid3/PCB_Data
+  - KiCAD_FootPrint   https://github.com/Salicylic-acid3/KiCAD_FootPrint
+
+3. それ以外
+-----------
+
+配列（layout.json）は projects/cckb/ の写し。検査（tests/test_cckb_click.py）・台帳（docs/）は上の 1 の形を含まないが、
+形の寸法を引用している箇所は 1 に従う。部品のデータシートの数値（Alps Alpine SKRAAWE010 など）は各社の物で、
+出どころを spec.py と docs/decisions/ に書いている。

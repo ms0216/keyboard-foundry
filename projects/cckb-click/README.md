@@ -1,0 +1,36 @@
+# cckb-click
+
+CCKB（HHKB 英語配列・62 キー・19.05 ピッチ・XIAO nRF52840）を、**薄い表面実装のタクトスイッチ**と
+**枠の下から入れる軸の無いキーキャップ**で作り直す機種。目標の厚さは約 8.1 mm（CCKB は 14.2）。
+方式は Salicylic_acid3 さんの ClickBoard（出どころと条件は [LICENSE](LICENSE)。**非営利に限る**）。
+
+`projects/cckb/`（発注できる状態の CCKB）には手を入れない。だめなら CCKB に戻れる。
+
+## いまの段: 刷るだけの試し（基板なし）
+
+基板を設計する前に、キャップと枠を刷って触り、形を決める。
+
+```
+.venv/bin/python3 projects/cckb-click/click_coupons.py     # STL 14 個・断面図・上から見た図・.blend を build/cckb-click/ に
+tools/kb cckb-click slice --printer a1mini                  # A1 mini で実際にスライス（時間と材料）
+.venv/bin/pytest tests/test_cckb_click.py -q                # 形の検査
+```
+
+| 読むもの | 何 |
+|---|---|
+| [docs/coupon-test.md](docs/coupon-test.md) | **試し刷りの手順と記入表**（何を刷り、何を見て、何が決まるか） |
+| [docs/open-gaps.md](docs/open-gaps.md) | 決まったこと・試し刷りが決めること・基板が来るまで分からないこと |
+| [docs/decisions/](docs/decisions/) | スイッチ・構造（積み上げと刷る向き）・ライセンスの決定 |
+| [docs/provisional-values.md](docs/provisional-values.md) | まだ実測していない値（`[暫定]`） |
+| spec.py | 寸法（積み上げ・穴・隙・つば）。値ごとに出どころ |
+
+## 状態（2026-10-03）
+
+| | |
+|---|---|
+| 配列 | CCKB と同じ（layout.json） |
+| スイッチ | Alps SKRAAWE010（JLC C202383）に決定。基板は SKRACAE010 も載る足跡にする（基板の段） |
+| 積み上げ | 基板の上面 0 / 枠の下面 3.0 / 掛かる面 4.0 / 押す面 3.6 / 枠の上面 5.0 / キャップの上面 6.0 `[暫定]` |
+| キャップと枠 | 形は作った（click_parts.py）。**まだ刷っていない** |
+| 試し刷り | STL 14 個を出してスライスまで通した。刷るかは利用者の判断 |
+| 基板・ファーム・ケース | 未着手（試し刷りの結果を見てから）。`tools/kb cckb-click plate / pcb / zmk` はまだ動かない |
