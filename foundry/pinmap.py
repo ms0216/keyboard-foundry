@@ -89,6 +89,7 @@ PINS = {
     "res_1M":    _numbered(2),
     "keyswitch": _numbered(2),
     "ffc_12p":   _numbered(12),
+    "cap_land":  _numbered(2),           # 部品を載せないコンデンサのランド（あとから手はんだで足す場所。cckb-click）
     "testpoint": _numbered(1),           # 試験用のランド（KiCad の TestPoint_Pad_*。部品は載らない）
 
     # ケースの中で配線し、基板側はランド 2 個で受ける部品。

@@ -106,7 +106,7 @@ def npth_too_close_to_edge(board, w, h):
             q = pad.GetPosition()
             x, y = pcbnew.ToMM(q.x) - ORIGIN[0], pcbnew.ToMM(q.y) - ORIGIN[1]
             gap = min(w / 2 - abs(x), h / 2 - abs(y)) - pcbnew.ToMM(pad.GetDrillSize().x) / 2
-            if gap < NPTH_EDGE_MIN:
+            if gap < NPTH_EDGE_MIN - 1e-6:        # ちょうど下限の穴を、浮動小数の丸め（1e-13）で落とさない
                 bad.append(f"{fp.GetReference()} の穴 φ{pcbnew.ToMM(pad.GetDrillSize().x):.3f}"
                            f" が外形まで {gap:.3f}mm")
     return bad
@@ -248,7 +248,8 @@ def build(project, piece):
     path = out / f"{project.root.name}_{piece}.kicad_pcb"
     board.Save(str(path))
     sync_project_rules(path, getattr(spec, "DRC_SEVERITY", None),
-                       pth_hole_clearance=getattr(spec, "DRC_PTH_HOLE_CLEARANCE", False))
+                       pth_hole_clearance=getattr(spec, "DRC_PTH_HOLE_CLEARANCE", False),
+                       tighten=getattr(spec, "DRC_RULES", None))
     return path, (pcb_w, pcb_h), len(keys), n_stab, len(nets)
 
 

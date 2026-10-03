@@ -54,7 +54,12 @@ DOWNGRADABLE = frozenset({
 })
 
 
-def sync_project_rules(pcb_path, severities=None, pth_hole_clearance=False):
+# 機種が spec.DRC_RULES で**厳しくできる**下限（.kicad_pro の鍵 → JLC の鍵）。ゆるめることはさせない
+TIGHTENABLE = {"min_via_diameter": "via_dia_min", "min_through_hole_diameter": "hole_min",
+               "min_track_width": "track_min", "min_clearance": "clearance_min"}
+
+
+def sync_project_rules(pcb_path, severities=None, pth_hole_clearance=False, tighten=None):
     """`.kicad_pro` の規則を JLC に揃える。**kicad-cli の DRC はここを読む。**
 
     HHKB で JLC の値を直しても DRC が古い規則で判定し続けた（#50）。
@@ -63,6 +68,9 @@ def sync_project_rules(pcb_path, severities=None, pth_hole_clearance=False):
     severities: 機種が spec.DRC_SEVERITY で**理由を書いて**変える重大度（例: 違反 → 警告）。
     **消す（ignore）ことはさせない**——警告に下げたものも drc.py が種類ごとに数えて出す。
     警告に下げてよいのは DOWNGRADABLE の種類だけ（clearance などを下げさせない）。
+
+    tighten: 機種が spec.DRC_RULES で**理由を書いて**上げる下限（例: この板のビアは全部 φ0.6 なので min_via_diameter を 0.6 に）。
+    JLC の下限より小さい値・TIGHTENABLE に無い鍵は落とす（機種が黙って規則をゆるめない）。
 
     pth_hole_clearance: True なら穴と銅の距離（min_hole_clearance）を JLC の PTH と線の 0.28 にする
     （機種の spec.DRC_PTH_HOLE_CLEARANCE。KiCad はこの値でベタも穴から引くので、上げたら塗り直す）。
@@ -84,6 +92,12 @@ def sync_project_rules(pcb_path, severities=None, pth_hole_clearance=False):
     })
     if pth_hole_clearance:
         rules["min_hole_clearance"] = JLC["pth_to_track"]
+    for key, value in (tighten or {}).items():
+        if key not in TIGHTENABLE:
+            raise ValueError(f"{key} は機種が変えられる下限ではない（変えられるのは {sorted(TIGHTENABLE)}）")
+        if value < JLC[TIGHTENABLE[key]]:
+            raise ValueError(f"{key} = {value} は JLC の下限 {JLC[TIGHTENABLE[key]]} より小さい（ゆるめることはできない）")
+        rules[key] = value
     for kind, sev in (severities or {}).items():
         if sev not in ("error", "warning"):
             raise ValueError(f"{kind}: 重大度 {sev!r} は error / warning だけ（ignore で隠さない）")
