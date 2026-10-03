@@ -77,6 +77,42 @@ def test_the_stack_check_notices_a_broken_stack(over, word):
     assert any(word in p for p in stack_problems(spec_with(**over)))
 
 
+def test_the_switch_numbers_match_the_datasheet_and_the_standin_is_built_from_them():
+    """SKRAAWE010 PRODUCT SPECIFICATIONS の数（外形図・7.2・C11・C12）。**ここは仕様書から打ち直した 2 つ目の写し**——
+    spec.py を 1 か所ずらすと落ちる。スイッチの代わりの台は、その数で作られているかを立体で測る。"""
+    assert (S.SW_BODY, S.SW_BODY_H, S.SW_STEM_D, S.SW_STEM_TOP, S.SW_STEM_TOP_TOL) == (6.2, 2.5, 2.0, 3.4, 0.2)
+    assert (S.SW_TRAVEL, S.SW_TRAVEL_TOL, S.SW_ACTUATOR_D, S.SW_PUSH_ANGLE_MAX) == (0.3, 0.2, 3.0, 3.0)
+    st = P.standin(P.Cell(0.0, 0.0, S.HOLE_B, standin=3.4))
+    bb = st.bounding_box()
+    assert (bb.size.X, bb.size.Y, bb.max.Z, bb.min.Z) == pytest.approx((6.2, 6.2, 3.4, 0.0), abs=1e-3)
+    stem = [f.bounding_box() for f in section_faces(st, 3.0)]
+    assert len(stem) == 1 and stem[0].size.X == pytest.approx(2.0, abs=1e-3)
+
+
+def test_the_print_limit_and_the_strip_length_come_from_outside():
+    from foundry.layout import bounds_mm
+    from foundry.slice_check import PRINTERS
+
+    assert S.PRINT_MAX == load("cckb").spec.PRINT_MAX == 168.4 < PRINTERS["a1mini"]["bed"][0]      # CLI の自動配置の実効（case-and-print.md）
+    x0, _, x1, _ = bounds_mm(load("cckb-click").keys())
+    assert S.COUPON_STRIP_U * UNIT == pytest.approx((x1 - x0) / 2)                                  # 配列の幅の半分
+
+
+def skin_above_pocket(s=S, n=200):
+    """くぼみの上に残る枠の皮の厚さ（穴の縁のすぐ外・**枠の立体の中の点を縦に数える**）。穴の上の縁の面取りが削る。"""
+    c = P.Cell(0.0, 0.0, s.HOLE_B)
+    fr = P.frame([c], s)
+    x = P.hole_size(c)[0] / 2 + 0.02
+    y = -P.hole_size(c)[1] / 2 + s.TAB_LEN - 0.5
+    z0 = s.FRAME_UNDER
+    return sum(fr.is_inside(Vector(x, y, z0 + s.FRAME_T * (k + 0.5) / n)) for k in range(n)) * s.FRAME_T / n
+
+
+def test_the_skin_above_the_pocket_is_three_layers():
+    assert skin_above_pocket() >= 3 * S.PRINT_LAYER - 0.02
+    assert skin_above_pocket(spec_with(HOLE_CHAMFER=0.6)) < 3 * S.PRINT_LAYER - 0.02       # 面取りを大きくすると皮が薄くなる
+
+
 # ---------------------------------------------------------------------------
 # 刷る向きで、機能する面がきれいに出るか（R4）
 # ---------------------------------------------------------------------------

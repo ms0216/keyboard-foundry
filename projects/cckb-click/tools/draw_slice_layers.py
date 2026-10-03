@@ -63,9 +63,8 @@ def main():
     fig, axs = plt.subplots(2, 3, figsize=(16, 10.5))
     # キャップ 1 個の左手前の角（最初の層の線の左下から 6 mm 角）
     walls = [s for s in lc[0.4] if s[4] == "Outer wall"]          # スカート（捨て線）を除いて、物の外周から窓を決める
-    x0 = min(min(s[0], s[2]) for s in walls)
-    y0 = min(min(s[1], s[3]) for s in walls)
-    win = (x0 - 1.0, x0 + 6.0, y0 - 1.0, y0 + 6.0)
+    x0, y0 = min(((s[0], s[1]) for s in walls), key=lambda p: p[0] + p[1])      # いちばん左手前のキャップの角（並べ方で向きが変わる）
+    win = (x0 - 2.5, x0 + 5.0, y0 - 2.5, y0 + 5.0)
     for ax, z, t in zip(axs[0], (0.2, 0.4, 0.6), ("1 層目（ベッドの面 = 押す面。縁は面取りで内へ）", "2 層目（上面がつばの上面 = 掛かる面）",
                                                    "3 層目（つばが無くなり胴だけ）")):
         draw(ax, lc[z], f"キャップ z={z}: {t}", win)

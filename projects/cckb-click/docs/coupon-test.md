@@ -37,7 +37,7 @@ tools/kb cckb-click slice --printer a1mini                  # スライス（時
 | `coupon_latch_frame` | 掛かり方の枠 1×6 | 35 分 | 3.5 cm³ |
 | `coupon_latch_base` | 同・板（台 3.4 × 6） | 42 分 | 4.7 cm³ |
 | `coupon_latch_caps` | 掛かり方 6 通りのキャップ（上面の点 1〜6） | 32 分 | 3.3 cm³ |
-| `coupon_a_frame` | 案 A の枠 3×3（穴 16.5×16.0 / 16.6×16.1 / 16.7×16.2） | 43 分 | 4.1 cm³ |
+| `coupon_a_frame` | 案 A の枠 3×3（穴 16.5×16.0 / 16.6×16.1 / 16.7×16.2） | 42 分 | 4.0 cm³ |
 | `coupon_a_caps` | 案 A の 1u キャップ × 9 | 38 分 | 4.1 cm³ |
 | `coupon_standin_frame` | 台の高さの枠 2×3（穴は案 B の基準） | 29 分 | 2.8 cm³ |
 | `coupon_standin_base` | 同・板（台 3.2〜3.7。手前の点 1〜6） | 38 分 | 4.2 cm³ |
