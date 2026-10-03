@@ -213,10 +213,31 @@ def pocket_wall(s=S, step=0.0, n=400):
 
 
 def test_the_wall_between_neighbouring_pockets_is_printable():
-    """0.4 未満の肉は「無い」のと同じ（case-and-print.md）。穴を一番広げた列でも 1 本より太く残る。"""
+    """0.4 未満の肉は「無い」のと同じ（case-and-print.md）。基準の穴で外周 2 本（0.8）、穴を一番広げた列でも 1 本より太く残る。"""
     assert pocket_wall() == pytest.approx(UNIT - S.HOLE_B[0] - 2 * (S.TAB_REACH + S.POCKET_CLEAR), abs=0.03)
-    assert pocket_wall(step=max(S.COUPON_HOLE_STEPS)) >= 0.6
+    assert pocket_wall() >= 0.8 - 0.03 and pocket_wall(step=max(S.COUPON_HOLE_STEPS)) >= 0.6 - 0.03
     assert pocket_wall(spec_with(POCKET_CLEAR=0.6)) < 0.4          # 壊すと気づく
+
+
+def guide_problems(s=S):
+    """横の動きを胴（穴）で受けているか。くぼみの隙が胴の隙より狭いと、つば（ベッド側で太る・薄い）が先に当たる。
+    **立体の断面から測る**: くぼみの高さで切った穴の内法 − つばの高さで切ったキャップの外法。"""
+    out = []
+    for step in s.COUPON_HOLE_STEPS:
+        c, fr, _, cp = key(s, step=step)
+        lv = P.levels(s)
+        pocket = [w.bounding_box() for f in section_faces(fr, lv["latch"] - 0.1) for w in f.inner_wires()]
+        tab = [f.bounding_box() for f in section_faces(cp, lv["latch"] - 0.05)]
+        gap = (pocket[0].size.X - tab[0].size.X) / 2
+        body = P.side_gap(c, s)[0]
+        if gap < body - 1e-6:
+            out.append(f"穴 +{step}: つばとくぼみの隙 {gap:.2f} が胴と穴の隙 {body:.2f} より狭い")
+    return out
+
+
+def test_sideways_play_is_taken_by_the_body_not_by_the_thin_tabs():
+    assert guide_problems() == []
+    assert any("より狭い" in p for p in guide_problems(spec_with(POCKET_CLEAR=0.2)))      # 0.2 だと穴を広げた列でつばが先に当たる
 
 
 # ---------------------------------------------------------------------------

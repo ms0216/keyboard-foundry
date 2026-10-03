@@ -133,6 +133,11 @@ def corners(w, d, length):
     return out
 
 
+def reach_of(c, s=S):
+    """穴の縁から外へ出る量。つば（F）は TAB_REACH、比べる形の足（S・C）は FOOT_REACH。"""
+    return s.TAB_REACH if c.latch == "F" else s.FOOT_REACH
+
+
 def tab_plan(c, s=S, grow=0.0, uniform=False):
     """つば（足）の平面: 穴を TAB_REACH 外へ広げた矩形（角の丸み TAB_R）の、四隅だけ。穴を広げる前の穴で決める（キャップは 1 種類）。
     角の丸みを穴の角より小さくするので、穴の角の外に掛かりができる（斜めにずれ切っても残る）。
@@ -140,8 +145,8 @@ def tab_plan(c, s=S, grow=0.0, uniform=False):
     n = replace(c, step=0.0)
     w, d = hole_size(n)
     if uniform:
-        return hole_plan(n, s, s.TAB_REACH + grow) & corners(w, d, s.TAB_LEN + grow)
-    r = s.TAB_REACH + grow
+        return hole_plan(n, s, reach_of(c, s) + grow) & corners(w, d, s.TAB_LEN + grow)
+    r = reach_of(c, s) + grow
     return RectangleRounded(w + 2 * r, d + 2 * r, s.TAB_R + grow) & corners(w, d, s.TAB_LEN + grow)
 
 
@@ -205,13 +210,13 @@ def cap(c, s=S, dots=0):
         neck_bottom = lv["latch"]
         parts.append(Pos(0, 0, foot_bottom) * extrude(tab_plan(c, s), s.FOOT_H))
     else:
-        # 45° の斜面: 首（胴と同じ断面）から足（穴 ＋ TAB_REACH）まで、横に CAP_CLEAR ＋ TAB_REACH 広がる。
+        # 45° の斜面: 首（胴と同じ断面）から足（穴 ＋ FOOT_REACH）まで、横に CAP_CLEAR ＋ FOOT_REACH 広がる。
         # 穴の縁（枠の下面の角）に当たるのは、斜面が首から CAP_CLEAR 広がった所 = 斜面の上端から CAP_CLEAR 下
-        fh = s.CAP_CLEAR + s.TAB_REACH
+        fh = s.CAP_CLEAR + s.FOOT_REACH
         neck_bottom = lv["latch"] + s.CAP_CLEAR
         n = replace(c, step=0.0)
         w, d = hole_size(n)
-        cone = extrude(hole_plan(n, s, s.TAB_REACH), fh, taper=45.0)
+        cone = extrude(hole_plan(n, s, s.FOOT_REACH), fh, taper=45.0)
         cone = cone & extrude(corners(w, d, s.TAB_LEN), fh)
         parts.append(Pos(0, 0, neck_bottom - fh) * cone)
         parts.append(Pos(0, 0, foot_bottom) * extrude(tab_plan(c, s, uniform=True), neck_bottom - fh - foot_bottom))   # 斜面の下端と面で接する（重ねると 0.01 の段が残る）
@@ -365,7 +370,7 @@ def end_press(c, s=S, press_in=0.4):
     press_in = 指が端から内側に入る量。"""
     lv = levels(s, c.latch, c.tab)
     w, _ = hole_size(replace(c, step=0.0))
-    pivot = w / 2 + s.TAB_REACH                      # 支点（中心から）
+    pivot = w / 2 + reach_of(c, s)                   # 支点（中心から）
     d = s.SW_TRAVEL + s.SW_TRAVEL_TOL
     th = math.atan2(d, pivot)
     body_half = w / 2 - s.CAP_CLEAR
