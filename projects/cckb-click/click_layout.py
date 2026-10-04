@@ -199,13 +199,13 @@ class Layout:
 
     # --- ねじ -----------------------------------------------------------------
     def pilot(self):
-        """樹脂の下穴（径, 深さ）。枠の壁も、蓋の足も同じ。"""
+        """樹脂の下穴（径, 深さ）。枠の壁。"""
         return self.s.SCREW_PILOT_D, self.s.SCREW_PILOT_DEPTH
 
     def screws(self):
         """[(参照名, (x, y), 種類)]。種類は "perimeter"（外周の壁に M2×4）・"holddown"（中の低い足に M2×3）・
         "spare"（外周の壁の予備。基板の穴と枠の下穴はあるが、既定では締めない）・
-        "cover"（電池の蓋を留める M2×4。**枠には掛からず、蓋の足に切る**）。基板の H{n} と同じ順（足した順）。"""
+        "cover"（蓋のねじ穴。**基板の穴だけで、いまは使っていない**: 枠にも蓋にも下穴は無く、ねじも入れない）。基板の H{n} と同じ順（足した順）。"""
         s = self.s
         kinds = (["perimeter"] * len(s.SCREWS_PERIMETER) + ["holddown"] * len(s.HOLDDOWN_AT) + ["spare"] * len(s.SCREWS_SPARE)
                  + ["cover"] * len(s.SCREWS_COVER))
@@ -432,27 +432,51 @@ class Layout:
         y0, y1 = (k[3], k[3] + w) if pos > 0 else (k[1] - w, k[1])
         return (k[2] - bite, y0, self.frame[2] + 10.0, y1)
 
-    # --- 電池の蓋（ねじ 2 本で留める）-------------------------------------------
-    def cover(self):
-        """蓋の寸法（CAD・基板の上面 = 0）。枠の口（click_case.corner_cuts）と蓋（click_case.cover_solid）の両方がここから作る。
-          x0, x1    電池の口（手前の壁を上から下まで抜く溝）。幅は蓋のねじで決まる: ねじの中心 ± (下穴の半径 ＋ COVER_BOSS[0] ＋ COVER_CLEAR)
-          y0        枠の外面・y_front 手前の板の奥の面・y_root 上の板の付け根の奥の端・y1 口の奥の壁
-          z_top     枠の上面・z_plate 上の板の下面・z_root 付け根の下面
-          screws    蓋のねじの中心 [(x, y), ...]（左・右）
-          boss      足の範囲 [(x0, x1), ...]（左・右）・y_boss 足の奥の端
-          y_clip    ここより奥は、足の上面を z_under より低くする（クリップの板の口の側の端 − COVER_CLIP_CLEAR）・z_under その高さ"""
+    # --- 電池の蓋（落とし込み式）---------------------------------------------------
+    def cover(self, variant=None):
+        """蓋の寸法（CAD・基板の上面 = 0）。枠の口・溝・歯（click_case.corner_cuts・cover_teeth）と蓋（click_case.cover_solid）の両方がここから作る。
+        variant = spec.COVER_VARIANTS の番号（既定は COVER_MAIN）。**枠の形は variant によらない**（3 つの蓋が同じ枠に入る）。
+          x0, x1      電池の口（手前の壁を上から下まで抜く溝）
+          y0          枠の外面・y1 口の奥の壁・y_lip 溝の手前の壁の奥の面（口の縁で）・y_groove 溝の奥の面・y_cheek 溝の奥の壁の奥の面
+          gx          溝の先 (左, 右)。溝は三角: 手前の面が、口の縁から gx へ 45° で奥へ下がり、奥の面に届く
+          tooth       歯の先の x (左, 右)・ledge 歯の下面の高さ {"A": 右の歯, "B": 左の歯}
+          side        蓋の側面 (左, 右)・yf 蓋の手前の面・y_ear 耳の斜めの面の始まり・終わり（= 耳の奥の面）・y_face 溝の斜めの面が口の縁で始まる y
+          z_top       枠の上面・z_plate 上の板の下面・z_sill 下の帯の (下, 上)・z_strip 上の帯の下面
+          band        棒の高さ {"A": (z0, z1), "B": (z0, z1)}（A は左の足から右へ・B は右の足から左へ）
+          root, tip   棒の付け根と先の x {"A": .., "B": ..}・leaf_len 棒の長さ・t 棒の厚さ
+          block       足の x の範囲 [(左), (右)]・y_block 足の奥の端（クリップの板の端の COVER_CLIP_CLEAR 手前）
+          release     棒の先を歯の奥へ逃がすのに要る押し込み（名目）
+          holes       蓋のねじ穴（使っていない基板の穴）の中心"""
         s = self.s
         f = self.frame
+        v = s.COVER_VARIANTS[s.COVER_MAIN if variant is None else variant]
         top = s.FRAME_UNDER + s.FRAME_T
-        flesh, back, z_under = s.COVER_BOSS
-        r = s.SCREW_PILOT_D / 2
-        screws = sorted(tuple(c) for _, c, kind in self.screws() if kind == "cover")
-        (xl, yl), (xr, yr) = screws
-        if yl != yr:
-            raise ValueError("蓋のねじ 2 本の y が違う")
-        x0, x1 = xl - r - flesh - s.COVER_CLEAR, xr + r + flesh + s.COVER_CLEAR
-        boss = [(x0 + s.COVER_CLEAR, xl + r + flesh), (xr - r - flesh, x1 - s.COVER_CLEAR)]
-        return dict(x0=x0, x1=x1, y0=f[1], y_front=f[1] + s.COVER_FRONT_T, y_root=f[1] + s.COVER_ROOT[1],
-                    y1=f[1] + s.FINGER_NOTCH_DEPTH, z_top=top, z_plate=top - s.COVER_TOP_T, z_root=top - s.COVER_ROOT[0],
-                    screws=screws, boss=boss, y_boss=yl + r + back,
-                    y_clip=self.clip_body()[1] - s.COVER_CLIP_CLEAR, z_under=z_under)
+        cx = s.CLIP_AT[0]
+        x0, x1 = cx - s.COVER_MOUTH_W / 2, cx + s.COVER_MOUTH_W / 2
+        wd = s.COVER_WEDGE
+        bw = s.COVER_BLOCK
+        b, slit, sill = s.COVER_LEAF
+        cl = v["clear"]
+        side = (x0 + cl, x1 - cl)
+        yf = f[1] + s.COVER_RECESS
+        y_lip = f[1] + s.COVER_LIP
+        # 蓋の左右の角は、歯の内の奥の角（＋ 隙）を通る 45° の線で欠く。耳の斜めの面は、その線をそのまま外へ伸ばした物
+        # （手前の面をベッドに刷ったとき、耳が宙から始まらない）。蓋の側面で、線は歯の奥の面から 歯の出 ＋ 隙 だけ奥
+        y_s = y_lip + cl + (s.COVER_TOOTH[0] - cl + s.COVER_CLEAR)
+        y_ear = (y_s, y_s + wd)
+        y_face = y_s + s.COVER_CLEAR - s.COVER_CLEAR * math.sqrt(2.0)   # 溝の手前の面（斜め）が、口の縁で始まる y（面に直角に COVER_CLEAR の隙）
+        y_groove = y_ear[1] + s.COVER_CLEAR
+        za = 0.1 + sill + slit                          # 下の帯は基板の上面から 0.1 浮かす（足だけが基板に着く）
+        zb = za + b + slit
+        band = {"A": (za, za + b), "B": (zb, zb + b)}
+        root = {"A": side[0] + bw, "B": side[1] - bw}
+        tip = {"A": side[1], "B": side[0]}
+        return dict(x0=x0, x1=x1, y0=f[1], y1=f[1] + s.FINGER_NOTCH_DEPTH, y_lip=y_lip, y_groove=y_groove, y_cheek=y_groove + s.COVER_CHEEK,
+                    gx=(x0 - (y_groove - y_face), x1 + (y_groove - y_face)),
+                    tooth=(x0 + s.COVER_TOOTH[0], x1 - s.COVER_TOOTH[0]), ledge={k: z1 + s.COVER_CATCH_GAP for k, (_, z1) in band.items()},
+                    side=side, yf=yf, y_ear=y_ear, y_face=y_face,
+                    z_top=top, z_plate=top - s.COVER_TOP_T, z_sill=(0.1, 0.1 + sill), z_strip=zb + b + slit,
+                    band=band, root=root, tip=tip, leaf_len=tip["A"] - root["A"], t=v["t"],
+                    block=[(side[0], side[0] + bw), (side[1] - bw, side[1])], y_block=self.clip_body()[1] - s.COVER_CLIP_CLEAR,
+                    release=y_lip + 0.1 - yf,           # 棒の先の手前の面が、歯の奥の面の 0.1 奥へ出るまで
+                    holes=sorted(tuple(c) for _, c, kind in self.screws() if kind == "cover"))

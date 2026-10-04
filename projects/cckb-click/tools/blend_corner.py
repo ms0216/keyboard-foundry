@@ -1,4 +1,4 @@
-"""右手前の角を、上からと手前から描く（2 枚。電池の蓋は考え直している途中で、組んだ状態に入れていない）。**Blender の Python で動かす。**
+"""右手前の角を、上からと手前から描く（2 枚。電池の蓋を付けた状態）。**Blender の Python で動かす。**
 
 projects/cckb-click/click_case.py が書いた build/cckb-click/assembly_main/asm__<グループ>.stl と style.json を読む。
 

@@ -4,10 +4,10 @@
   main_top.png        上から（枠の上面の高さで切る）と、枠の下（基板の上 1.5）で切った図。柱・壁・部品・ねじ・継ぎ目
   main_tilt.png       2.25u と 1u の縁を押し切った傾き（公差の端）と、その下の部品
   coupon_screw.png    ねじの試し刷り（本番の枠から切り出した壁と当て板）
-  main_corner.png     右手前の角: つまみの切り欠き・電池の口・ねじで留める蓋を、上から・断面で
+  main_corner.png     右手前の角: つまみの切り欠き・電池の口・落とし込み式の蓋を、上から・断面で
   coupon_corner.png   角の試し刷り（枠の切れ端・当て板・つまみと電池の代わり・蓋）
-  cover_screw.png     **電池の蓋（ねじ 2 本で留める）の説明**: ねじを通る断面・電池の中心の断面・上から・電池の替え方
-  coupon_cover_howto.png  蓋の試し刷り（角の試し刷り）の組み方と、手で見る所
+  cover_latch.png     **電池の蓋（落とし込み式）の説明**: 上から・棒の高さで切った図・手前から・断面・開け方／閉め方／電池の替え方
+  coupon_cover_howto.png  蓋の試し刷り（角の試し刷り・蓋 3 つ）の組み方と、手で見る所・教えてほしいこと
 
     .venv/bin/python3 projects/cckb-click/click_case.py   が呼ぶ
 """
@@ -19,7 +19,6 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 from build123d import Compound, Plane, Pos  # noqa: E402
-from matplotlib.patches import Circle  # noqa: E402
 
 import click_case as C  # noqa: E402
 import click_figs as F  # noqa: E402
@@ -37,7 +36,7 @@ def yz(part, x):
 
 
 def _scene(stem=None, mode="rest", keys=None, cover=True):
-    """[(色, 立体)]。mode = rest（ステムに載る）/ pressed / 傾き（"+x" など。keys に効く）。cover=False で電池の蓋とそのねじを外す。"""
+    """[(色, 立体)]。mode = rest（ステムに載る）/ pressed / 傾き（"+x" など。keys に効く）。cover=False で電池の蓋を外す。"""
     halves = C.frame_halves()
     rest = min(0.0, (S.SW_STEM_TOP if stem is None else stem) - P.levels(S)["pad"])
     caps = []
@@ -53,7 +52,7 @@ def _scene(stem=None, mode="rest", keys=None, cover=True):
         low = C.switch_solids(LAY, sw_stem)
         sws = {n: (low[n] if n in {f"SW{i}" for i in keys} else v) for n, v in sws.items()}
     return [(COL["sheet"], C.sheet_solid()), (COL["pcb"], C.pcb_solid()),
-            (COL["screw"], Compound(list(C.screw_solids(cover=cover).values()))),
+            (COL["screw"], Compound(list(C.screw_solids().values()))),
             (COL["sw"], Compound(list(sws.values()))),
             (COL["part"], Compound([v for n, v in bp.items() if n not in ("U_MCU", "BT1")])),
             (COL["xiao"], bp["U_MCU"]), (COL["bat"], Compound([bp["BT1"], C.cell_solid()])),
@@ -175,7 +174,7 @@ def screw_coupon(out):
 
 
 def corner(out):
-    """右手前の角: 上から（蓋あり・なし）・つまみの高さで切った図・断面 3 枚（電池の中心／蓋のねじ／つまみ）。"""
+    """右手前の角: 上から（蓋あり・なし）・棒の高さで切った図・断面 3 枚（電池の中心／蓋の足／つまみ）。"""
     z = LAY.z()
     f = LAY.frame
     cv = LAY.cover()
@@ -185,21 +184,23 @@ def corner(out):
     knobs = [(COL["knob"], C.knob_solid(1)), ("#888888", C.knob_solid(-1))]
     fig, axs = plt.subplots(2, 3, figsize=(20, 11))
     lim = (106, f[2] + 1.5, f[1] - 1.5, -29)
-    _draw(axs[0][0], with_c, lambda p: F.xy(p, 4.65), lim, "上から（z 4.65）・蓋（橙）を付けた図。枠の上面・外面と面一")
-    _draw(axs[0][1], without, lambda p: F.xy(p, 4.65), lim, "同じ・蓋とねじを外した図（電池の上面が口から見える）")
-    _draw(axs[0][2], with_c + knobs, lambda p: F.xy(p, 0.7), lim, "基板の上 0.7 で切った図。蓋の足 2 つとねじ（黄）・つまみ（黒 = 入・灰 = 切）")
+    _draw(axs[0][0], with_c, lambda p: F.xy(p, 4.65), lim, "上から（z 4.65）・蓋（橙）を付けた図。上面は枠と面一・左右の角に枠の歯")
+    _draw(axs[0][1], without, lambda p: F.xy(p, 4.65), lim, "同じ・蓋を外した図（電池の上面が口から見える。口の左右に耳の溝）")
+    za = sum(cv["band"]["A"]) / 2
+    _draw(axs[0][2], with_c + knobs, lambda p: F.xy(p, za), lim, f"基板の上 {za:.1f}（下の棒の高さ）で切った図。蓋の足・耳・棒／つまみ（黒 = 入・灰 = 切）")
     for ax in axs[0]:
         ax.plot([f[2], f[2]], [lim[2], lim[3]], ":", color="#d00000", lw=0.6)
         ax.plot([lim[0], lim[1]], [f[1], f[1]], ":", color="#d00000", lw=0.6)
     zl = (-2.4, 6.0)
-    _draw(axs[1][0], with_c, lambda p: yz(p, S.CLIP_AT[0]), (-52, -40, *zl), "断面（電池の中心 x）: 手前の板と電池の隙 0.51", lv)
-    _draw(axs[1][1], [s for s in with_c if s[0] != COL["bat"]] + [(COL["bat"], C.cell_solid())] + clip, lambda p: yz(p, cv["screws"][0][0]),
-          (-52, -40, *zl), "断面（蓋のねじ x 115）: 基板の下から M2×4 → 蓋の足。紫 = クリップの板（図面）", lv)
+    _draw(axs[1][0], with_c, lambda p: yz(p, S.CLIP_AT[0]), (-52, -40, *zl), "断面（電池の中心 x）: 手前の板に棒 2 本・上の板", lv)
+    xf = cv["block"][0][0] + 1.5
+    _draw(axs[1][1], [s for s in with_c if s[0] != COL["bat"]] + [(COL["bat"], C.cell_solid())] + clip, lambda p: yz(p, xf),
+          (-52, -40, *zl), f"断面（蓋の足 x {xf:.1f}）: 足は基板に立ち、クリップの板（紫・図面）の手前で終わる（板の下へは入れない）", lv)
     on = _scene() + [(COL["knob"], C.knob_solid(1))]
     _draw(axs[1][2], on, lambda p: F.xz(p, S.PSW_AT[1] + S.PSW_ON * S.PSW_TRAVEL / 2), (136, 148, *zl),
           f"断面（つまみが入の y）: つまみの先は枠の外面（赤の点線）の {f[2] - LAY.psw_knob(1)[2]:.2f} 内側・内側の上の縁は斜め", lv)
     axs[1][2].plot([f[2], f[2]], zl, ":", color="#d00000", lw=0.6)
-    fig.suptitle("右手前の角（作った立体を切った物）: 電源スイッチのつまみの切り欠きと、電池の口・ねじ 2 本で留める蓋（橙）", fontsize=12)
+    fig.suptitle("右手前の角（作った立体を切った物）: 電源スイッチのつまみの切り欠きと、電池の口・落とし込み式の蓋（橙）", fontsize=12)
     fig.tight_layout()
     p = out / "main_corner.png"
     fig.savefig(p, dpi=80)
@@ -207,23 +208,30 @@ def corner(out):
     return p
 
 
+def _coupon_scene(cc, n=None, lift=0.0, deflect=0.0):
+    """角の試し刷りを組んだ [(色, 立体)]。n = 付ける蓋の番号（None で蓋なし）。"""
+    out = [(COL["pcb"], cc["base"]), (COL["frame"], cc["frame"]), (COL["bat"], cc["cell"]), (COL["knob"], cc["knob"])]
+    if n is not None:
+        out.append((COL["cover"], Pos(0, 0, lift) * C.cover_solid(n, deflect, True)))
+    return out
+
+
 def corner_coupon(out):
     """角の試し刷り: 上から（2 つの高さ）と断面 2 枚。"""
     cc = C.corner_coupon()
     box = C.corner_coupon_box()
     cv = LAY.cover()
-    scene = [(COL["pcb"], cc["base"]), (COL["frame"], cc["frame"]), (COL["bat"], cc["cell"]), (COL["knob"], cc["knob"]), (COL["cover"], cc["cover"]),
-             (COL["screw"], Compound(list(C.cover_screw_solids().values())))]
+    scene = _coupon_scene(cc, S.COVER_MAIN)
     fig, axs = plt.subplots(2, 2, figsize=(17, 11))
     lim = (box[0] - 3, box[2] + 1.5, box[1] - 1.5, box[3] + 3)
     _draw(axs[0][0], scene, lambda p: F.xy(p, 4.65), lim, "上から（z 4.65）: 枠の切れ端（灰）・蓋（橙）")
-    axs[0][1].plot(*zip(*cv["screws"]), "o", ms=14, mfc="none", mec=RED)
-    _draw(axs[0][1], scene, lambda p: F.xy(p, 0.7), lim, "当て板の上 0.7: 蓋の足とねじ（赤丸）・スイッチの本体の代わり・クリップの代わり（止めと案内）・電池の代わり")
+    za = sum(cv["band"]["A"]) / 2
+    _draw(axs[0][1], scene, lambda p: F.xy(p, za), lim, f"当て板の上 {za:.1f}: 蓋の足・耳・下の棒／スイッチの本体の代わり・クリップの代わり（止めと案内）・電池の代わり")
     zl = (-2.2, 5.6)
     lv = [(0.0, "当て板の上面 0（基板の上面）"), (5.0, "枠の上面 5.0")]
-    _draw(axs[1][0], scene, lambda p: yz(p, cv["screws"][0][0]), (box[1] - 1, box[3] + 3, *zl), "断面（蓋のねじ x 115）", lv)
+    _draw(axs[1][0], scene, lambda p: yz(p, cv["block"][0][0] + 1.5), (box[1] - 1, box[3] + 3, *zl), "断面（蓋の足）", lv)
     _draw(axs[1][1], scene, lambda p: F.xz(p, S.PSW_AT[1] + S.PSW_TRAVEL / 2), (box[0] - 3, box[2] + 1, *zl), "断面（つまみが入の y）", lv)
-    fig.suptitle("角の試し刷り coupon_corner = 蓋の試し刷り（本番の枠から切り出した右手前の角 ＋ 当て板。緑 = 当て板と代わりの物・橙 = 蓋・黄 = ねじ・黒 = つまみの小片）", fontsize=12)
+    fig.suptitle("角の試し刷り coupon_corner = 蓋の試し刷り（本番の枠から切り出した右手前の角 ＋ 当て板。緑 = 当て板と代わりの物・橙 = 蓋・黒 = つまみの小片）", fontsize=12)
     fig.tight_layout()
     p = out / "coupon_corner.png"
     fig.savefig(p, dpi=85)
@@ -246,109 +254,115 @@ def _label(ax, text, at, to, color="#222"):
                 arrowprops=dict(arrowstyle="->", color=color, lw=0.9), bbox=dict(fc="white", ec="none", pad=0.6, alpha=0.85))
 
 
-def _corner_scene(frame, cover_dy=None, screws=True, cell=True, clip=True, board=None):
-    """右手前の角の [(色, 立体)]。cover_dy = 蓋を手前へずらす量（None で蓋なし）。"""
-    out = [(COL["sheet"], C.sheet_solid()), (COL["pcb"], C.pcb_solid() if board is None else board), (COL["frame"], frame)]
+def _corner_scene(frame, cover=True, lift=0.0, deflect=0.0, cell=True, clip=True):
+    """右手前の角の [(色, 立体)]。lift = 蓋を上へ持ち上げた量・deflect = 棒の先を押し込んだ量。"""
+    out = [(COL["sheet"], C.sheet_solid()), (COL["pcb"], C.pcb_solid()), (COL["frame"], frame)]
     if cell:
         out.append((COL["bat"], C.cell_solid()))
     if clip:
         out.append((COL["clip"], C.clip_solid()))
-    if cover_dy is not None:
-        out.append((COL["cover"], Pos(0, -cover_dy, 0) * C.cover_solid()))
-    if screws:
-        out.append((COL["screw"], Compound(list(C.cover_screw_solids().values()))))
+    if cover:
+        out.append((COL["cover"], Pos(0, 0, lift) * C.cover_solid(None, deflect)))
     return out
 
 
-def cover_screw(out):
+def cover_latch(out):
     """電池の蓋の説明（利用者に見せる絵）。作った立体を切って描く。数は立体・spec から。"""
     cv = LAY.cover()
-    z = LAY.z()
     f = LAY.frame
     frame = C.frame_halves()["right"] & C._box((104.0, f[1] - 1.0, 140.0, -30.0), -1.0, 6.0)
-    sx, sy = cv["screws"][0]
     (cx, cy), r = LAY.cell()
-    d, depth = LAY.pilot()
-    fig = plt.figure(figsize=(16, 13.2))
-    gs = fig.add_gridspec(3, 6, height_ratios=[1.35, 0.8, 1.0], hspace=0.2, wspace=0.12, left=0.02, right=0.985, top=0.94, bottom=0.01)
-    full = _corner_scene(frame, 0.0)
+    num = C.cover_numbers()
+    za, zb = sum(cv["band"]["A"]) / 2, sum(cv["band"]["B"]) / 2
+    fig = plt.figure(figsize=(17, 17.5))
+    gs = fig.add_gridspec(4, 6, height_ratios=[0.95, 0.95, 0.95, 1.05], hspace=0.2, wspace=0.12, left=0.02, right=0.985, top=0.95, bottom=0.01)
+    full = _corner_scene(frame)
+    lim = (cv["x0"] - 5.5, cv["x1"] + 5.5, f[1] - 2.4, -41.5)
 
-    # 1. ねじを通る断面
     ax = fig.add_subplot(gs[0, :3])
-    _draw(ax, full, lambda p: yz(p, sx), (-52.6, -42.0, -2.9, 6.3), "① ねじを通る面で切った図（横から。左が手前 = 外）")
-    _label(ax, "蓋（橙）\n上面は枠と同じ高さ", (-49.6, 4.75), (-50.9, 5.9), RED)
-    _label(ax, f"蓋の足\n（基板の上に立つ）", (-49.2, 1.2), (-51.6, 1.6), RED)
-    _label(ax, f"ねじ M2×4\n（外周と同じ物）", (sy, 1.0), (-45.6, -0.9))
-    _label(ax, "頭は裏（シートの穴の中）", (sy - 1.2, -1.95), (-51.0, -1.1))
-    _label(ax, f"クリップの板（紫）\nいちばん低くて 3.5", (-46.6, 3.6), (-44.6, 5.6), "#5a3ca0")
-    _label(ax, "電池", (-44.0, 1.6), (-43.2, 4.9), "#555")
-    ax.set_xlabel(f"ねじは足の樹脂に {z['screw_grip']:.1f} 掛かる。先は基板の上 {z['screw_grip']:.1f}（基板が薄い側で {z['screw_tip']:.2f}）・下穴の深さ {depth}。"
-                  f"クリップの板まで {S.CLIP_H - S.CLIP_SHEET_T - S.CLIP_TOL - z['screw_tip']:.2f}", fontsize=9.5)
+    _draw(ax, full, lambda p: F.xy(p, 4.65), lim, "① 上から見た所（蓋を付けた所。下が手前）")
+    ax.text(cx, (cv["yf"] + cv["y1"]) / 2, "蓋（上面は枠と同じ高さ）", fontsize=10.5, ha="center", va="center", color="white")
+    _label(ax, "歯（枠）", (cv["x0"] + 0.5, f[1] + 0.5), (cv["x0"] - 3.2, f[1] - 1.6), RED)
+    _label(ax, "歯（枠）", (cv["x1"] - 0.5, f[1] + 0.5), (cv["x1"] + 3.2, f[1] - 1.6), RED)
+    _label(ax, "耳（蓋）が\n枠の溝に入っている", (cv["x0"] - 0.9, cv["y_ear"][1] - 0.5), (cv["x0"] - 3.4, -43.6), RED)
     _plain(ax)
-
-    # 2. 電池の中心の断面
     ax = fig.add_subplot(gs[0, 3:])
-    _draw(ax, full, lambda p: yz(p, cx), (-52.6, -42.0, -2.9, 6.3), "② 電池の真ん中で切った図（横から）")
-    _label(ax, "手前の板\n（口を塞ぐ）", (-50.0, 2.0), (-51.6, -0.9), RED)
-    _label(ax, "上の板\n（電池の上を塞ぐ）", (-47.2, 4.65), (-46.0, 5.9), RED)
-    _label(ax, "爪を掛ける溝", (-49.0, 4.7), (-50.6, 5.9))
-    ax.text(-45.0, 1.6, "電池 CR1632", fontsize=10, ha="center", color="#444")
-    ax.set_xlabel(f"手前の板と電池の縁の隙 {(cy - r) - cv['y_front']:.2f}・上の板とクリップの上面の隙 {cv['z_plate'] - z['clip_top']:.1f}", fontsize=9.5)
+    off = _corner_scene(frame, cover=False)
+    _draw(ax, off, lambda p: F.xy(p, 4.65), lim, "② 蓋を外した所（電池が見える。左右に三角の溝と、手前の角の歯）")
+    ax.annotate("", (cx, f[1] - 2.0), (cx, cy - r + 1.5), arrowprops=dict(arrowstyle="->", color=RED, lw=1.8))
+    ax.text(cx + 1.0, f[1] - 1.5, "電池は手前へ出す", fontsize=9.5, color=RED)
     _plain(ax)
 
-    # 3. 上から（足の高さ・上面）
-    lim = (cv["x0"] - 6.5, cv["x1"] + 6.5, f[1] - 2.2, -37.0)
-    ax = fig.add_subplot(gs[1, :2])
-    _draw(ax, full, lambda p: F.xy(p, 1.0), lim, "③ 基板の上 1.0 で切った図（上から。下が手前）")
-    for (x, y), name in zip(cv["screws"], ("H30", "H31")):
-        _label(ax, f"ねじ {name}", (x, y), (x, y + 6.5))
-    _label(ax, "足", (cv["boss"][0][0] + 0.6, sy - 1.0), (cv["x0"] - 4.0, f[1] - 1.2), RED)
-    _label(ax, "足", (cv["boss"][1][1] - 0.6, sy - 1.0), (cv["x1"] + 4.0, f[1] - 1.2), RED)
-    ax.text(cx, cy + 2.0, "電池", fontsize=10, ha="center", color="#444")
+    ax = fig.add_subplot(gs[1, :3])
+    _draw(ax, full, lambda p: F.xy(p, za), lim, f"③ 基板の上 {za:.1f} で切った図（下の棒の高さ）")
+    _label(ax, "下の棒（左の足から右へ）\n先が右の歯の下に入る", (cx + 2.0, cv["yf"] + 0.5), (cx + 2.5, f[1] - 1.5), RED)
+    _label(ax, "足（電池を止める）", (cv["block"][0][0] + 2.6, -48.0), (cv["x0"] - 1.5, f[1] - 1.7), RED)
+    _label(ax, "耳の斜めの面\n（電池に押されても、ここで止まる）", (cv["x1"] + 1.0, cv["y_ear"][0] + 0.9), (cv["x1"] + 0.6, f[1] - 1.5), RED)
+    ax.text(cx, -44.5, "電池", fontsize=10, ha="center", color="#444")
     _plain(ax)
-    ax = fig.add_subplot(gs[1, 2:4])
-    _draw(ax, full, lambda p: F.xy(p, 4.65), lim, "④ 枠の上面のすぐ下で切った図（蓋を付けた所）")
-    ax.text(cx, (cv["y0"] + cv["y1"]) / 2, "蓋", fontsize=11, ha="center", va="center", color="white")
-    _plain(ax)
-    ax = fig.add_subplot(gs[1, 4:])
-    off = _corner_scene(frame, None, screws=False)
-    _draw(ax, off, lambda p: F.xy(p, 4.65), lim, "⑤ 蓋とねじを外した所（電池が口から見える）")
-    ax.annotate("", (cx, f[1] - 1.8), (cx, cy - r + 1.5), arrowprops=dict(arrowstyle="->", color=RED, lw=1.8))
-    ax.text(cx + 1.0, f[1] - 1.2, "電池は手前へ", fontsize=9.5, color=RED)
+    ax = fig.add_subplot(gs[1, 3:])
+    pushed = _corner_scene(frame, deflect=num["release_max"])
+    _draw(ax, pushed, lambda p: F.xy(p, za), lim, f"④ 同じ高さ・棒の真ん中を指で押し込んだ所（先が {num['release_max']:.1f} 奥へ逃げる）")
+    ax.annotate("", (cx, cv["yf"] + 0.4), (cx, f[1] - 2.0), arrowprops=dict(arrowstyle="->", color=RED, lw=2.0))
+    ax.text(cx + 0.8, f[1] - 1.7, "指で押す", fontsize=10, color=RED)
+    _label(ax, "先が歯の下から\n外れた", (cv["x1"] - 0.9, cv["yf"] + 1.5), (cv["x1"] + 3.0, f[1] - 1.2), RED)
     _plain(ax)
 
-    # 4. 手順
-    ax = fig.add_subplot(gs[2, :2])
-    pulled = _corner_scene(frame, 5.0, screws=False)
-    _draw(ax, pulled, lambda p: yz(p, sx), (-57.5, -42.0, -2.9, 6.3), "⑥ 蓋は手前からまっすぐ滑らせて入れる・抜く")
-    ax.annotate("", (-51.0, 2.4), (-55.8, 2.4), arrowprops=dict(arrowstyle="<->", color=RED, lw=1.6))
+    xl = (cv["x0"] - 5.5, cv["x1"] + 5.5, -2.6, 6.2)
+    ax = fig.add_subplot(gs[2, :3])
+    _draw(ax, full, lambda p: F.xz(p, cv["yf"] + 0.45), xl, "⑤ 手前から見た所（手前の面のすぐ内で切った図）")
+    _label(ax, "上の棒 → 左の歯の下", (cx - 3.0, zb), (cx - 3.0, 5.75), RED)
+    _label(ax, "下の棒 → 右の歯の下", (cx + 3.0, za), (cx + 3.0, -1.7), RED)
+    _label(ax, "歯（枠）", (cv["x0"] + 0.5, 4.5), (cv["x0"] - 3.3, 5.7), RED)
+    _label(ax, "歯（枠）", (cv["x1"] - 0.5, 3.8), (cv["x1"] + 3.3, 5.7), RED)
+    _label(ax, "真ん中のここを押す", (cx, (za + zb) / 2), (cx - 0.5, -2.2))
     _plain(ax)
-    _note(fig.add_subplot(gs[2, 2:4]),
+    ax = fig.add_subplot(gs[2, 3:5])
+    lifted = _corner_scene(frame, lift=2.6, deflect=num["release_max"])
+    _draw(ax, lifted, lambda p: F.xz(p, cv["yf"] + 0.45 + 0.3), (xl[0], xl[1], -2.6, 9.4), "⑥ 棒を押したまま持ち上げた所（まっすぐ上へ抜ける）")
+    ax.annotate("", (cx, 9.2), (cx, 7.8), arrowprops=dict(arrowstyle="->", color=RED, lw=2.0))
+    _plain(ax)
+    ax = fig.add_subplot(gs[2, 5:])
+    _draw(ax, full, lambda p: yz(p, cx), (-52.4, -44.5, -2.6, 6.2), "⑦ 横から（電池の真ん中）")
+    _label(ax, "棒", (cv["yf"] + 0.5, zb), (-51.6, 5.6), RED)
+    _plain(ax)
+
+    _note(fig.add_subplot(gs[3, :2]),
+          "開け方（道具は要らない）\n"
+          "1. 手前の面の真ん中（2 本の棒）を、指の先で押し込む\n"
+          f"   （{num['push']:.1f} mm ほど。軽い力）\n"
+          "2. 押したまま、指を上へずらして蓋を持ち上げる\n"
+          "   → 蓋が上へ出てくる。つまんで抜く\n\n"
+          "閉め方\n"
+          "1. 蓋を、上の板を上・棒を手前にして、口の真上に置く\n"
+          "2. まっすぐ下へ押す。上面が枠と揃うまで\n"
+          "   （棒の先は自分で逃げて、歯の下でパチッと戻る）\n"
+          "3. 上へ引いてみて、抜けないことを確かめる")
+    _note(fig.add_subplot(gs[3, 2:4]),
           "電池の替え方\n"
-          "1. キーボードを裏返す\n"
-          "2. 右手前の角の、ねじ 2 本を外す\n"
-          "   （底のシートに穴が開いている。＋ドライバー）\n"
-          "3. 表に返し、蓋の溝に爪を掛けて手前へ引き抜く\n"
-          "4. 電池を爪で押し下げながら手前へ引き出す\n"
-          "5. 新しい電池を ＋ を上にして奥まで押し込む\n"
-          "6. 蓋を手前から奥まで滑らせる（上面が枠と揃う）\n"
-          "7. 裏返して、ねじ 2 本を止まる所まで締める\n"
-          "   （樹脂に切るねじ。強く締めない）")
-    _note(fig.add_subplot(gs[2, 4:]),
-          "知っておくこと\n"
-          "・ねじは電池の通り道に立つ。だから電池を替える\n"
-          "  たびに 2 本外す（基板の穴の位置は変えられない）\n"
-          "・ねじは上からは入れられない: 基板の穴は素通しで、\n"
-          "  ねじ山を切る相手は蓋の樹脂しか無い\n"
-          "・蓋とねじ 2 本が無くても、キーボードは同じに使える\n"
-          "  （机の上では。持ち運ぶなら蓋が要る）\n"
-          f"・ねじは外周と同じ M2×4。全部で 22 本になる\n"
-          "・樹脂のねじ山は、抜き差しで少しずつ弱る。\n"
-          "  試し刷りで 5 回まで確かめる。弱ったら蓋だけ刷り直す")
-    fig.suptitle("電池の蓋（ねじ 2 本で留める）: 基板はいまのまま・穴 H30・H31 を使う　　橙 = 蓋・黄 = ねじ・緑 = 基板・灰 = 枠と電池・紫 = 電池クリップ・黒 = 底のシート",
+          "1. 蓋を開ける（左）\n"
+          "2. 電池の上面を爪で押さえながら、手前へ引き出す\n"
+          "3. 新しい電池を、＋ を上にして奥まで押し込む\n"
+          "4. 蓋を閉める（左）\n\n"
+          "蓋は必ず付ける。\n"
+          "電池を手前へ止めている物は、この蓋だけ\n"
+          "（金具は電池を上から押さえているだけ）")
+    _note(fig.add_subplot(gs[3, 4:]),
+          "なぜ外れないか\n"
+          "・電池が蓋を手前へ押す力は、蓋の左右の耳が枠の溝の\n"
+          "  斜めの面に当たって止まる。ばねは使っていない\n"
+          "・蓋が外れる向きは「上」だけ。上へは、棒の先が枠の歯の\n"
+          "  下に当たって止まる（直角の面どうし）\n"
+          "・棒を押し込む ＋ 持ち上げる、の 2 つを同時にしないと\n"
+          "  開かない。振る・落とす・電池が中から押す、では開かない\n\n"
+          "数（計算と立体から。刷った物の値ではない）\n"
+          f"・落下 {S.DROP_G:.0f} G で電池が押す力 {num['cell_force']:.0f} N → 耳の面で {num['ear_pressure']:.1f} MPa\n"
+          f"・棒を押す力 2 本で {2 * num['push_force']:.1f} N・付け根のひずみ {num['strain']:.1f} %（限度 {num['strain_limit']:.1f} %）\n"
+          f"・同じ落下で、棒が自分の重さで動く量 {num['drop_tip']:.2f}（外れるのは {num['release'] - S.COVER_RECESS:.2f} から）")
+    fig.suptitle("電池の蓋（道具なし・上から落とし込む）　　橙 = 蓋・緑 = 基板・灰 = 枠と電池・紫 = 電池クリップ・黒 = 底のシート。基板は変えない（穴 H30・H31 は使わない）",
                  fontsize=13)
-    p = out / "cover_screw.png"
-    fig.savefig(p, dpi=96)
+    p = out / "cover_latch.png"
+    fig.savefig(p, dpi=92)
     plt.close(fig)
     return p
 
@@ -358,46 +372,49 @@ def coupon_cover_howto(out):
     cc = C.corner_coupon()
     box = C.corner_coupon_box()
     cv = LAY.cover()
-    sx, sy = cv["screws"][0]
-    plate = C.corner_coupon_plate()
-    fig = plt.figure(figsize=(16, 14.0))
-    gs = fig.add_gridspec(3, 6, height_ratios=[1.0, 1.15, 0.8], hspace=0.16, wspace=0.12, left=0.02, right=0.985, top=0.94, bottom=0.01)
+    (cx, cy), r = LAY.cell()
+    fig = plt.figure(figsize=(16, 16.5))
+    gs = fig.add_gridspec(3, 6, height_ratios=[1.05, 1.0, 1.15], hspace=0.14, wspace=0.12, left=0.02, right=0.985, top=0.95, bottom=0.01)
     ax = fig.add_subplot(gs[0, :3])
-    names = ("電池の代わり", "蓋", "つまみの代わり", "当て板（基板の代わり）", "枠の切れ端")
-    for name, part in zip(names, sorted(plate.solids(), key=lambda q: (round(q.bounding_box().min.Y, 1), q.bounding_box().min.X))):
+    label = {"cell": "電池の代わり", "knob": "つまみの\n代わり", "base": "当て板（基板の代わり）", "frame": "枠の切れ端",
+             "cover1": "蓋 1", "cover2": "蓋 2", "cover3": "蓋 3"}
+    for name, part in C.corner_coupon_layout():
         bb = part.bounding_box()
-        F.fill(ax, F.xy(part, min(0.5, bb.max.Z / 2)), "#d8d8d8", lw=0.5)
-        small = bb.size.Y < 8.0                                    # 小さい物は、名前を手前（下）に出す
-        ax.text((bb.min.X + bb.max.X) / 2, bb.min.Y - 2.2 if small else (bb.min.Y + bb.max.Y) / 2, name, fontsize=10, ha="center", va="center",
+        F.fill(ax, F.xy(part, min(0.5, bb.max.Z / 2)), COL["cover"] if name.startswith("cover") else "#d8d8d8", lw=0.5)
+        small = bb.size.Y < 9.0
+        ax.text((bb.min.X + bb.max.X) / 2, bb.min.Y - 2.6 if small else (bb.min.Y + bb.max.Y) / 2, label[name], fontsize=9.5, ha="center", va="center",
                 color=RED, bbox=dict(fc="white", ec=RED, lw=0.6, pad=1.5))
-    pb = plate.bounding_box()
+    pb = C.corner_coupon_plate().bounding_box()
     ax.set_xlim(pb.min.X - 8, pb.max.X + 8)
-    ax.set_ylim(pb.min.Y - 5, pb.max.Y + 3)
+    ax.set_ylim(pb.min.Y - 6.5, pb.max.Y + 3)
     ax.set_aspect("equal")
-    ax.set_title("0. 刷り上がった板を上から（5 個・サポート無し・向きはそのまま）", fontsize=11)
+    ax.set_title("0. 刷り上がった板を上から（7 個・サポート無し・向きはそのまま）。蓋は手前の面を下にして立っている", fontsize=11)
     _plain(ax)
-    scene = [(COL["pcb"], cc["base"]), (COL["frame"], cc["frame"]), (COL["bat"], cc["cell"]), (COL["knob"], cc["knob"]), (COL["cover"], cc["cover"]),
-             (COL["screw"], Compound(list(C.cover_screw_solids().values())))]
     ax = fig.add_subplot(gs[0, 3:])
-    _draw(ax, scene, lambda p: yz(p, sx), (box[1] - 1.5, -40.0, -2.9, 6.3), "ねじを通る面で切った図（組んだ所。左が手前）")
-    _label(ax, "蓋の足", (-49.2, 1.2), (-51.3, 2.6), RED)
-    _label(ax, "ねじ M2×4", (sy, -0.8), (-45.6, -2.2))
-    _label(ax, "当て板", (-44.0, -0.8), (-42.0, -2.2), "#2a6a30")
+    lim3 = (cv["x0"] - 3.5, cv["x1"] + 3.5, cv["y1"] - 2.2, cv["y1"] + 1.2)
+    for i, n in enumerate(sorted(S.COVER_VARIANTS)):
+        v = S.COVER_VARIANTS[n]
+        part = Pos(0, 3.4 * i - 3.4, 0) * C.cover_solid(n, 0.0, True)
+        F.fill(ax, F.xy(part, 4.65), COL["cover"], lw=0.6)
+        ax.text(cv["x0"] - 1.0, cv["y1"] - 1.6 + 3.4 * i - 3.4, f"蓋 {n}", fontsize=11, ha="right", va="center", color=RED)
+        ax.text(cv["x1"] + 1.0, cv["y1"] - 1.6 + 3.4 * i - 3.4, f"切り欠き {n} 個: 棒の厚さ {v['t']:.1f}・隙 {v['clear']:.2f}", fontsize=10, ha="left", va="center")
+    ax.set_xlim(cv["x0"] - 7, cv["x1"] + 24)
+    ax.set_ylim(cv["yf"] - 4.6, cv["y1"] + 4.2)
+    ax.set_aspect("equal")
+    ax.set_title("蓋の見分け方（上から見た所。上の板の奥の縁の、右寄りの切り欠きの数）", fontsize=11)
     _plain(ax)
-    lim = (box[0] - 3, box[2] + 1.5, box[1] - 6.5, box[3] + 3)
+    lim = (box[0] - 3, box[2] + 1.5, box[1] - 3.0, box[3] + 3)
+    za = sum(cv["band"]["A"]) / 2
     ax = fig.add_subplot(gs[1, :2])
-    pulled = [s if s[0] != COL["cover"] else (COL["cover"], Pos(0, -5.0, 0) * cc["cover"]) for s in scene[:-1]]
-    _draw(ax, pulled, lambda p: F.xy(p, 1.0), lim, "① 当て板に電池の代わりを置き、枠をかぶせ、蓋を手前から")
-    ax.annotate("", ((cv["x0"] + cv["x1"]) / 2, cv["y0"] - 0.4), ((cv["x0"] + cv["x1"]) / 2, cv["y0"] - 4.6), arrowprops=dict(arrowstyle="->", color=RED, lw=1.8))
+    _draw(ax, _coupon_scene(cc), lambda p: F.xy(p, 1.0), lim, "① 当て板に電池の代わりを置き、枠をかぶせた所（蓋なし）")
     _plain(ax)
     ax = fig.add_subplot(gs[1, 2:4])
-    _draw(ax, scene, lambda p: F.xy(p, 1.0), lim, "② 奥まで入れた所（当て板の上 1.0 で切った図）")
-    for x, y in cv["screws"]:
-        ax.add_patch(Circle((x, y), 2.4, fc="none", ec=RED, lw=1.2))
-    ax.text((cv["x0"] + cv["x1"]) / 2, cv["y0"] - 3.0, "赤丸 = 裏からねじを入れる穴", fontsize=9.5, color=RED, ha="center")
+    _draw(ax, _coupon_scene(cc, S.COVER_MAIN), lambda p: F.xy(p, za), lim, "② 蓋を上から落とした所（下の棒の高さで切った図）")
+    ax.annotate("", (cx, cv["yf"] + 0.4), (cx, box[1] - 2.6), arrowprops=dict(arrowstyle="->", color=RED, lw=2.0))
+    ax.text(cx + 1.0, box[1] - 2.3, "開けるときは、ここを押しながら上へ", fontsize=9.5, color=RED)
     _plain(ax)
     ax = fig.add_subplot(gs[1, 4:])
-    _draw(ax, scene, lambda p: F.xy(p, 4.65), lim, "③ 上から見た所（蓋の上面が枠と揃う）")
+    _draw(ax, _coupon_scene(cc, S.COVER_MAIN), lambda p: F.xy(p, 4.65), lim, "③ 上から見た所（蓋の上面が枠と揃う）")
     _plain(ax)
     _note(fig.add_subplot(gs[2, :3]),
           "組み方\n"
@@ -405,24 +422,30 @@ def coupon_cover_howto(out):
           "2. 電池の代わり（丸い板）を、当て板の真ん中の止めに当てて置く\n"
           "3. 枠の切れ端を、平らな面（刷ったときの下の面）を上にしてかぶせる\n"
           "   左と奥の当てに突き当てる\n"
-          "4. 蓋を、平らな面を上にして、手前から奥まで滑らせる\n"
-          "5. 全体を手で押さえたまま裏返す。当て板の手前の縁に穴が 3 つ並んでいる\n"
-          "   角に近い端の 1 つ（枠のねじ）を先に締めると、枠が当て板に留まって楽\n"
-          "   残りの 2 つ（蓋のねじ。電池の左右）に M2×4 を入れて、止まる所まで締める\n"
-          "   （止まってから 1/8 回転まで。樹脂に切るねじなので強く締めない）")
+          "4. 裏返して、角の近くの穴 1 つに M2×4 を締める（枠が当て板に留まる）\n"
+          "   ※ 電池の左右の穴 2 つは使わない（何も入れない）\n"
+          "5. 表に返し、蓋を、上の板を上・棒を手前にして、口へまっすぐ押し下げる\n"
+          "   上面が枠と揃って、パチッと音がすれば入っている\n"
+          "6. 蓋 1 → 2 → 3 の順に、同じことを試す\n\n"
+          "開け方: 手前の面の真ん中（2 本の棒）を指の先で押し込み、\n"
+          "        押したまま指を上へずらす。蓋が上へ出てきたら、つまんで抜く")
     _note(fig.add_subplot(gs[2, 3:]),
-          "手で見る所（結果を教えてください）\n"
-          "a. 蓋が引っ掛からずに奥まで入るか・きつすぎないか\n"
-          "b. ねじ 2 本が、止まる手応えで締まるか（空回りしないか）\n"
-          "c. 締めた後、蓋が動かないか・がたつかないか・内へ落ちないか\n"
-          "d. 蓋の上面・手前の面が、枠と段なく揃うか\n"
-          "e. 蓋の足（ねじの所）に、割れ・白い筋が出ていないか\n"
-          "f. ねじを外して蓋を抜き、もう一度付ける × 5 回。何回目まで止まるか\n"
-          "g. 蓋とねじを外すと、電池の代わりが爪で出し入れできるか\n"
-          "h. 溝に爪を掛けて、蓋を引き抜けるか\n"
-          "※ クリップの板（本物は基板の 3.75 上）の代わりは付いていない。\n"
-          "   足が板の下に入る所は、基板が届いてから本物で見る")
-    fig.suptitle("蓋の試し刷り（coupon_corner_plate_n04.gcode.3mf・A1 mini・0.4 ノズル・サポート無し）の組み方と見る所　　緑 = 当て板・橙 = 蓋・黄 = ねじ",
+          "手で見る所（蓋 1・2・3 のそれぞれで。結果を教えてください）\n"
+          "a. 押し下げるだけで入るか・パチッと留まるか・固すぎないか\n"
+          "b. 入れた後、蓋の上の縁を爪で上へこじっても抜けないか\n"
+          "c. 蓋ががたつかないか・上面と手前の面が枠と段なく揃うか\n"
+          "d. 【振る】全体を持って、上下・前後・左右に強く 10 回ずつ振る。\n"
+          "   裏返して振る。蓋が浮かないか・外れないか\n"
+          "e. 【電池を押す】蓋を付けたまま裏返す。当て板の真ん中の長い穴から、\n"
+          "   細い棒（つまようじ・六角レンチ）を電池の代わりの穴に差して、\n"
+          "   手前（蓋の方）へ強く押す。蓋が動かないか・前へ出てこないか\n"
+          "f. 【落とす】机の高さから、布団か絨毯の上へ 3 回落とす。蓋は付いたままか\n"
+          "g. 開けられるか: 真ん中を押して上へ。片手でできるか・何回で慣れるか\n"
+          "h. 開け閉めを 20 回。棒が白くならないか・戻りが悪くならないか・折れないか\n"
+          "i. 蓋を外して、電池の代わりが爪で出し入れできるか\n\n"
+          "教えてほしいこと: 3 つのうち、どれがよいか（または全部だめか）と、\n"
+          "a〜i でだめだった項目。外れた・浮いた場合は、どの動きでか")
+    fig.suptitle("蓋の試し刷り（coupon_corner_plate_n04.gcode.3mf・A1 mini・0.4 ノズル・サポート無し）の組み方と見る所　　緑 = 当て板・橙 = 蓋",
                  fontsize=13)
     p = out / "coupon_cover_howto.png"
     fig.savefig(p, dpi=96)
@@ -431,5 +454,6 @@ def coupon_cover_howto(out):
 
 
 def render_all(out):
-    (out / "cover_spring.png").unlink(missing_ok=True)          # 前の蓋（ばね）の絵。古い絵を、いまの蓋の絵と見間違えない
-    return [sections(out), top(out), tilt(out), screw_coupon(out), corner(out), corner_coupon(out), cover_screw(out), coupon_cover_howto(out)]
+    for old in ("cover_spring.png", "cover_screw.png"):             # 前の蓋（ばね・ねじ）の絵。古い絵を、いまの蓋の絵と見間違えない
+        (out / old).unlink(missing_ok=True)
+    return [sections(out), top(out), tilt(out), screw_coupon(out), corner(out), corner_coupon(out), cover_latch(out), coupon_cover_howto(out)]
