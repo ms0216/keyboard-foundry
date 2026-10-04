@@ -450,14 +450,16 @@ def _cover_profile(z0, lay=LAY):
 
 
 @lru_cache(maxsize=None)
-def cover_solid(bumps=True):
+def cover_solid(bumps=True, arm=None, bump=None):
     """電池の蓋（組んだ位置・CAD）。L 字: 手前の板（口を塞ぐ）＋ 上の板（指の切り欠きを塞ぐ）。手前の板の上の両端が腕（ばね）で、
-    先の山が、口の上の壁の下面の溝に入る。bumps=False は山の無い形（滑る道の検査）。"""
+    **腕の先だけ**にある山が、口の上の壁の下面の溝に入る。bumps=False は山の無い形（滑る道の検査）。
+    arm・bump は spec.COVER_ARM・COVER_BUMP の代わり（検査が、直す前の形を作って「検査器が気づくか」を見るため）。"""
     lay, s = LAY, S
     cv = lay.cover()
     cl = s.COVER_CLEAR
     y0, yf, yr, y1 = cv["y0"], cv["y_front"], cv["y_root"], cv["y1"] - cl
-    arm_l, arm_t, arm_gap = s.COVER_ARM
+    arm_l, arm_t, arm_gap = arm or s.COVER_ARM
+    bump_h, bump_y, bump_x = bump or s.COVER_BUMP
     xa, xb = cv["x0"] + cl, cv["x1"] - cl
     z_arm = cv["z_slot"] - cl                      # 腕の上面
     z_low = z_arm - arm_t - arm_gap                # 腕の下の隙間の底 = 下の板の上面
@@ -476,9 +478,11 @@ def cover_solid(bumps=True):
     parts = [body]
     if bumps:
         by = cv["bump"][0][1]
-        half = s.COVER_BUMP[1] / 2
-        tri = [(by - half, z_arm - EPS), (by + half, z_arm - EPS), (by, cv["z_slot"] + s.COVER_BUMP[0])]
-        parts += [_prism_x(tri, xa, cv["nx0"] - cl), _prism_x(tri, cv["nx1"] + cl, xb)]
+        half = bump_y / 2
+        tri = [(by - half, z_arm - EPS), (by + half, z_arm - EPS), (by, cv["z_slot"] + bump_h)]
+        # 山は腕の先から bump_x だけ（口の上の壁の下より内へは出さない）。**山の付け根の側の端が、壁の下面に最後まで当たる所**
+        # = ばねの腕の長さはそこまで（cover_spring が立体から測る）。3 回目の監査: 山が壁の下いっぱい（1.5）だと、効く長さは 5.5 でなく 4.0
+        parts += [_prism_x(tri, xa, min(xa + bump_x, cv["nx0"] - cl)), _prism_x(tri, max(xb - bump_x, cv["nx1"] + cl), xb)]
     body = _union(parts)
     gw, gd, gz, gy = s.COVER_GRIP                  # 爪の溝: 手前の壁は垂直（爪が掛かる）・奥は 45° の斜面
     top = cv["z_top"]
@@ -498,16 +502,77 @@ def cover_print(part=None):
     return Pos(-bb.min.X, -bb.min.Y, -bb.min.Z) * part
 
 
-def cover_spring(s=S):
-    """腕（片持ちのばね）の計算 dict(strain=ひずみ, force=山を越えるときの腕 1 本の力 N, hold=蓋を引き抜く力の見積もり N〔2 本〕)。
-    長方形の断面の片持ち梁: ひずみ ε = 1.5·t·δ/L²・力 F = E·b·t³·δ/(4·L³)。引き抜く力は斜面 45°・摩擦 0.3 で F·tan(α＋φ)。
-    E は Bambu PLA Basic の TDS の曲げ弾性率 2750 MPa。**刷った物では測っていない**（角の試し刷りで見る）。"""
-    length, t, _ = s.COVER_ARM
-    d = s.COVER_BUMP[0]
-    e, b = 2750.0, s.COVER_FRONT_T
-    force = e * b * t ** 3 * d / (4 * length ** 3)
-    alpha = math.atan2(s.COVER_CLEAR + d, s.COVER_BUMP[1] / 2)
-    return dict(strain=1.5 * t * d / length ** 2, force=force, hold=2 * force * math.tan(alpha + math.atan(0.3)))
+PLA_E = 2750.0               # Bambu PLA Basic の TDS の曲げ弾性率 [MPa]（ばねの力の見積もり）
+
+
+def _mouth_piece(lay=LAY):
+    """右の枠の、電池の口のまわりだけ（山の当たりを測る相手）。"""
+    cv = lay.cover()
+    return frame_halves()["right"] & _box((cv["x0"] - 1.0, cv["y0"] - 1.0, cv["x1"] + 1.0, cv["y1"] + 1.0), -1.0, cv["z_top"] + 1.0)
+
+
+def cover_detent(frame=None, cover=None, lay=LAY, step=0.1):
+    """蓋を手前へ step ずつ引いて、**枠と蓋の立体の重なりから**山の当たりを測る。腕ごと（左・右）の dict:
+      delta  山を越えるのに腕がたわむ量（重なりの高さの最大）
+      lever  腕の付け根から、**壁の下面が最後まで当たる所（重なりの、付け根の側の端）**まで = 片持ち梁として効く長さ
+      length 付け根から腕の先まで・t 腕の太さ（たわむ向き）・b 腕の幅・gap 腕の下の隙間
+    付け根・太さ・隙間も蓋の立体から測る（spec の数を写さない: 形を変えたのに式が古い長さのまま、を無くす）。"""
+    cover = cover_solid() if cover is None else cover
+    frame = _mouth_piece(lay) if frame is None else frame
+    cv = lay.cover()
+    xm = (cv["x0"] + cv["x1"]) / 2
+    bb = cover.bounding_box()
+    best = {}
+    for i in range(1, int((cv["y1"] - cv["y0"]) / step) + 1):
+        hit = frame & (Pos(0, -step * i, 0) * cover)
+        for sol in (hit.solids() if hit is not None else []):
+            b = sol.bounding_box()
+            side = "left" if b.center().X < xm else "right"
+            if b.size.Z > 1e-4 and (side not in best or b.size.Z > best[side][0] + 1e-6):
+                best[side] = (b.size.Z, b.min.X, b.max.X, b.min.Z)
+    out = {}
+    ym = cv["y0"] + (cv["y_front"] - cv["y0"]) / 2
+    for side, (delta, hx0, hx1, hz) in best.items():
+        sgn = 1.0 if side == "left" else -1.0                       # 付け根へ向かう向き
+        xc = hx1 if side == "left" else hx0                         # 当たりの、付け根の側の端
+        tip = bb.min.X if side == "left" else bb.max.X
+        # 当たりのすぐ内側で、蓋を縦に切る: 上から 腕・隙間・下の板
+        col = cover & _box((min(xc + sgn * 0.05, xc + sgn * 0.15), ym - 0.1, max(xc + sgn * 0.05, xc + sgn * 0.15), ym + 0.1), -1.0, hz + 1e-3)
+        spans = sorted(((q.bounding_box().min.Z, q.bounding_box().max.Z) for q in col.solids()), reverse=True)
+        if len(spans) < 2:
+            raise RuntimeError(f"蓋の腕（{side}）の下に隙間が無い: {spans}")
+        (za, zb), (_, zl) = spans[0], spans[1]
+        t, gap = zb - za, za - zl
+        # 隙間の高さで、当たりから真ん中へ向かって最初に肉がある所 = 付け根
+        slab = cover & _box((min(xc, xm), ym - 0.1, max(xc, xm), ym + 0.1), zl + 0.1 * gap, za - 0.1 * gap)
+        sb = slab.bounding_box()
+        root = sb.min.X if side == "left" else sb.max.X
+        arm = cover & _box((min(tip, root), cv["y0"] - 1.0, max(tip, root), cv["y1"] + 1.0), za + 0.1 * t, zb - 0.1 * t)
+        out[side] = dict(delta=delta, lever=abs(root - xc), length=abs(root - tip), t=t, b=arm.bounding_box().size.Y, gap=gap,
+                         contact=(hx0, hx1))
+    return out
+
+
+def cover_spring(frame=None, cover=None, lay=LAY):
+    """腕（片持ちのばね）の計算。**寸法は cover_detent が立体から測った物**（山の当たる所までを腕の長さに取る）。悪い方の腕の値を返す:
+      strain ひずみ・force 山を越えるときの腕 1 本の力 [N]・hold 蓋を引き抜く力の見積もり [N]（左右の和）・tip 山を越えるときの腕の先の下がり
+      delta・lever・t・b・gap・length は cover_detent と同じ
+    長方形の断面の片持ち梁を、付け根から a（= lever）の所で δ 押す: ひずみ ε = 1.5·t·δ/a²・力 F = E·b·t³·δ/(4·a³)・
+    先（付け根から L）の下がり = δ·(1 ＋ 1.5·(L − a)/a)。引き抜く力は斜面 45°・摩擦 0.3 で F·tan(α＋φ)。
+    **刷った物では測っていない**（角の試し刷りで見る）。蓋は基板の上 0.1 に浮かせてあり、引くと下へ 0.1 逃げうる（たわみ・力はその分減る側）。"""
+    s = lay.s
+    arms = cover_detent(frame, cover, lay)
+    if set(arms) != {"left", "right"}:
+        raise RuntimeError(f"山が枠に掛からない腕がある: {sorted(arms)}")
+    alpha = math.atan2(s.COVER_CLEAR + s.COVER_BUMP[0], s.COVER_BUMP[1] / 2)
+    for a in arms.values():
+        a["strain"] = 1.5 * a["t"] * a["delta"] / a["lever"] ** 2
+        a["force"] = PLA_E * a["b"] * a["t"] ** 3 * a["delta"] / (4 * a["lever"] ** 3)
+        a["tip"] = a["delta"] * (1 + 1.5 * (a["length"] - a["lever"]) / a["lever"])
+    worst = dict(max(arms.values(), key=lambda a: a["strain"]))
+    worst["hold"] = sum(a["force"] for a in arms.values()) * math.tan(alpha + math.atan(0.3))
+    worst["arms"] = arms
+    return worst
 
 
 def notch_strength(lay=LAY, press=10.0):

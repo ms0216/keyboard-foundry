@@ -6,6 +6,7 @@
   coupon_screw.png    ねじの試し刷り（本番の枠から切り出した壁と当て板）
   main_corner.png     右手前の角: つまみの切り欠き・電池の口・蓋（あり／なし）を、上から・手前から・断面で
   coupon_corner.png   角の試し刷り（枠の切れ端・当て板・つまみと電池の代わり・蓋）
+  cover_spring.png    蓋の腕（ばね）を手前から見た断面: 山が壁の下面に当たる所と、ばねとして効く長さ（直す前の形と並べる）
 
     .venv/bin/python3 projects/cckb-click/click_case.py   が呼ぶ
 """
@@ -223,5 +224,38 @@ def corner_coupon(out):
     return p
 
 
+def cover_spring(out):
+    """蓋の腕（ばね）: 山の頂を通る面（y）で、枠の口のまわりと蓋を切って手前から見る。上 = 3 回目の監査の前の形・下 = いまの形。
+    数（当たる所・効く長さ・ひずみ・力）は click_case.cover_spring が立体から測った物。"""
+    cv = LAY.cover()
+    frame = C._mouth_piece()
+    y = cv["bump"][0][1]
+    lim = (cv["x0"] - 1.5, cv["x1"] + 1.5, 1.6, 5.3)
+    shapes = (("直す前（3 回目の監査の指摘）: 山が壁の下いっぱい・腕 5.5", C.cover_solid(True, (5.5, 0.7, 0.5), (0.25, 0.8, 99.0))),
+              ("いま: 山は腕の先の 0.8 だけ・腕 6.3", C.cover_solid()))
+    fig, axs = plt.subplots(2, 1, figsize=(17, 9))
+    for ax, (name, cover) in zip(axs, shapes):
+        sp = C.cover_spring(frame, cover)
+        _draw(ax, [(COL["frame2"], frame), (COL["cover"], cover)], lambda q: F.xz(q, y), lim,
+              f"{name} → 効く長さ {sp['lever']:.2f}・ひずみ {sp['strain'] * 100:.2f} %（許容 {S.PLA_STRAIN_LIMIT * 100:.1f} %）・"
+              f"腕 1 本の力 {sp['force']:.2f} N・引き抜く力 約 {sp['hold']:.1f} N")
+        for side, a in sp["arms"].items():
+            xc = a["contact"][1] if side == "left" else a["contact"][0]
+            root = xc + a["lever"] * (1 if side == "left" else -1)
+            zt = cv["z_slot"] - S.COVER_CLEAR
+            ax.plot([xc, xc], [zt - a["t"] - 0.35, zt + 0.45], "-", color="#d00000", lw=0.9)
+            ax.plot([root, root], [zt - a["t"] - 0.35, zt + 0.45], "-", color="#0040c0", lw=0.9)
+            ax.annotate("", (xc, zt - a["t"] - 0.25), (root, zt - a["t"] - 0.25), arrowprops=dict(arrowstyle="<->", color="#222", lw=0.8))
+            ax.text((xc + root) / 2, zt - a["t"] - 0.42, f"効く長さ {a['lever']:.2f}", ha="center", va="top", fontsize=9)
+        ax.text(lim[0] + 0.1, lim[3] - 0.1, "赤 = 壁の下面が最後まで当たる所（山の、付け根の側の端）・青 = 腕の付け根。山が溝に入った位置（y は山の頂）",
+                fontsize=8, va="top")
+    fig.suptitle("電池の蓋の腕（ばね）を手前から見た断面（作った立体を切った物。灰 = 枠・橙 = 蓋）", fontsize=12)
+    fig.tight_layout()
+    p = out / "cover_spring.png"
+    fig.savefig(p, dpi=90)
+    plt.close(fig)
+    return p
+
+
 def render_all(out):
-    return [sections(out), top(out), tilt(out), screw_coupon(out), corner(out), corner_coupon(out)]
+    return [sections(out), top(out), tilt(out), screw_coupon(out), corner(out), corner_coupon(out), cover_spring(out)]

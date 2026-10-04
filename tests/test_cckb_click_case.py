@@ -742,14 +742,35 @@ def test_the_cover_is_held_by_the_rails_the_back_wall_and_the_detent(halves):
     g = C.detent_groove()
     lip = min(y for y, z in [(g[0][0] + 0.2 / ((g[2][1] - g[0][1]) / (g[2][0] - g[0][0])), 0)]) - LAY.frame[1]
     assert lip == pytest.approx(0.4, abs=0.02)
-    # ばね: ひずみが PLA の許容（spec.PLA_STRAIN_LIMIT・出どころは spec のコメント）の内。引き抜く力の見積もりは 1〜3 N
-    sp = C.cover_spring()
-    assert sp["strain"] <= S.PLA_STRAIN_LIMIT and sp["strain"] == pytest.approx(0.0087, abs=2e-4) and 1.0 < sp["hold"] < 3.0, sp
-    import types
-    short = types.SimpleNamespace(**{k: getattr(S, k) for k in dir(S) if k.isupper()})
-    short.COVER_ARM = (4.0, 0.7, 0.5)
-    assert C.cover_spring(short)["strain"] > S.PLA_STRAIN_LIMIT                # 検査器が生きている: 腕が 4.0 なら超える
+
+
+def test_the_cover_spring_strain_is_measured_from_the_solids_up_to_where_the_wall_bears_on_the_bump(halves):
+    """3 回目の監査: ひずみの式が腕の全長 5.5 を使っていたが、山は腕の先の 1.5 にあり、口の上の壁の下面は山の全体に当たる。
+    最後まで当たるのは山の付け根の側の端 = 効く長さは 4.0・ひずみ 1.64 %（許容 1.0 % を超えていた）。
+    いまは cover_spring が**枠と蓋の立体の重なり**から当たる所を測る。山は腕の先の 0.8 だけ・腕は 6.3 → 効く長さ 5.5。"""
+    frame = corner_piece(halves)
+    sp = C.cover_spring(frame)
+    # 測った寸法が、決めた寸法と同じ（測り方が生きている）。左右の腕は同じ
+    arm_l, arm_t, arm_gap = S.COVER_ARM
+    assert (sp["length"], sp["t"], sp["gap"], sp["b"]) == pytest.approx((arm_l, arm_t, arm_gap, S.COVER_FRONT_T), abs=1e-3)
+    assert sp["delta"] == pytest.approx(S.COVER_BUMP[0], abs=1e-3) and sp["lever"] == pytest.approx(arm_l - S.COVER_BUMP[2], abs=1e-3)
+    left, right = sp["arms"]["left"], sp["arms"]["right"]
+    assert left["strain"] == pytest.approx(right["strain"], rel=1e-3) and left["contact"][1] - left["contact"][0] == pytest.approx(S.COVER_BUMP[2], abs=1e-3)
+    # ひずみが PLA の許容（spec.PLA_STRAIN_LIMIT・出どころは spec のコメント）の内。引き抜く力の見積もりは 1〜3 N
+    assert sp["strain"] <= S.PLA_STRAIN_LIMIT and sp["strain"] == pytest.approx(0.00868, abs=1e-4), sp
+    assert sp["force"] == pytest.approx(0.425, abs=0.01) and 1.0 < sp["hold"] < 3.0 and sp["hold"] == pytest.approx(1.58, abs=0.03), sp
+    # 山を越えるとき、腕の先（山より先は無い = 山の外の端）は腕の下の隙間に収まる
+    assert sp["tip"] < sp["gap"] - 0.1
+    # **直す前の形（山が壁の下いっぱい・腕 5.5）では超える**: 効く長さ 4.0・ひずみ 1.64 %。前の式（全長 5.5 で 0.87 %）は気づかなかった
+    old = C.cover_spring(frame, C.cover_solid(True, (5.5, 0.7, 0.5), (0.25, 0.8, 99.0)))
+    assert old["lever"] == pytest.approx(4.0, abs=1e-3) and old["strain"] == pytest.approx(0.0164, abs=1e-4) and old["strain"] > S.PLA_STRAIN_LIMIT
+    assert 1.5 * 0.7 * 0.25 / 5.5 ** 2 < S.PLA_STRAIN_LIMIT                    # 前の式なら通っていた
+    # 山を縮めただけ（腕 5.5 のまま）でも超える・腕が短い（4.0）とさらに超える
+    assert C.cover_spring(frame, C.cover_solid(True, (5.5, 0.7, 0.5), (0.25, 0.8, 0.8)))["strain"] == pytest.approx(0.0119, abs=1e-4)
+    assert C.cover_spring(frame, C.cover_solid(True, (4.0, 0.7, 0.5), (0.25, 0.8, 0.8)))["strain"] > 2 * S.PLA_STRAIN_LIMIT
+    # 許容の出どころ（spec のコメント）: 曲げ強さ 76 ÷ 曲げ弾性率 2750 = 2.76 % の 0.36 倍。引張強さ 35 ÷ 2750 = 1.27 % よりも下
     assert S.PLA_STRAIN_LIMIT == 0.01 and 76.0 / 2750.0 * 0.36 == pytest.approx(S.PLA_STRAIN_LIMIT, abs=1e-4)
+    assert S.PLA_STRAIN_LIMIT < 35.0 / C.PLA_E and C.PLA_E == 2750.0
 
 
 @pytest.mark.parametrize("kw, word", [

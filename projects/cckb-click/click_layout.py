@@ -438,7 +438,7 @@ class Layout:
           nx0, nx1  指の切り欠き（幅 FINGER_NOTCH[0]）。上の縁にひさし（COVER_RAIL）
           y0        枠の外面・y_front 手前の板の奥の面・y_root 上の板の付け根の奥の端・y1 切り欠きの奥の壁
           z_slot    口の上の壁の下面（= 切り欠きの底）・z_top 枠の上面・z_plate 上の板の下面・z_root 付け根の下面
-          bump      山の中心 [(x, y), (x, y)]（腕の先。口の上の壁の下面の溝と同じ所）"""
+          bump      山の中心 [(x, y), (x, y)]（腕の先の COVER_BUMP[2] の真ん中。口の上の壁の下面の溝と同じ y）"""
         s = self.s
         (cx, _), r = self.cell()
         f = self.frame
@@ -446,7 +446,8 @@ class Layout:
         w, d = s.FINGER_NOTCH
         x0, x1 = cx - r - s.CELL_SLOT_CLEAR, cx + r + s.CELL_SLOT_CLEAR
         nx0, nx1 = cx - w / 2, cx + w / 2
-        bx = (nx0 - x0) / 2                                   # 山は、口の上の壁（口の端から切り欠きの壁まで）の真ん中の下
+        # 山は腕の先（蓋の端 = 口の端 ＋ 隙）から COVER_BUMP[2] だけ。口の上の壁（口の端から切り欠きの壁まで）の下より内へは出ない
+        bx = s.COVER_CLEAR + min(s.COVER_BUMP[2], nx0 - x0 - 2 * s.COVER_CLEAR) / 2
         by = f[1] + s.COVER_FRONT_T - s.COVER_BUMP[1] / 2 - 0.05
         return dict(x0=x0, x1=x1, nx0=nx0, nx1=nx1, y0=f[1], y_front=f[1] + s.COVER_FRONT_T, y_root=f[1] + s.COVER_ROOT[1],
                     y1=f[1] + d, z_slot=s.CELL_T + s.CELL_SLOT_CLEAR + 0.1, z_top=top, z_plate=top - s.COVER_TOP_T,
