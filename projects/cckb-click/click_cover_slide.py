@@ -8,7 +8,9 @@ S は「上へ抜けない」を**ばねを通さず、樹脂の塊どうしの�
 しくみ（座標は CAD・基板の上面 = 0・蓋は**掛けた位置**で書く。x は右・y は奥）:
   入れる   蓋を、掛ける位置より SLIDE だけ右で上から落とす（蓋の右端の「当て」が、枠の板ばねを奥へ押しのける）→ 左へ SLIDE ずらす
            → 板ばねが、当ての端の後ろへ戻る（カチッ）
-  電池の力 電池 → 蓋の足 → 蓋の胴 → 左右の耳（上から下まで）の手前の平らな面 → 口の左右の縁（枠の手前の壁の残り）の奥の面
+  電池の力 電池 → 蓋の手前の塊の、電池に沿った丸い面の真ん中（隙 0.2）→ 蓋の胴 → 左右の耳（上から下まで）の手前の平らな面
+           → 口の左右の縁（枠の手前の壁の残り）の奥の面。**本番の蓋のように左右の足で受けることは、できない**: 蓋を SLIDE 右で落とすので、
+           左の足が電池の上に載る（検査が見つけた）。真ん中で受けるぶん、蓋の胴の曲げは大きい（stresses）
   上へ     耳の奥の「出っ張り」（上面が 45° の斜面）が、枠の屋根（左）と出っ張り（右）の下に入る。持ち上げる力は、斜面で「下へ・手前へ」に変わり、
            手前は縁が受ける = **ばねを通らない**
   留め     枠の右の壁の上面に切れ目で作った板ばね（**前後に撓む・立った板**。先は左）。先の面が、蓋の当ての端面と直角に突き合って、蓋が右へ戻れない。
@@ -54,7 +56,6 @@ SLIDE = 1.6                  # 横へずらす量
 CL = 0.15                    # 蓋と枠の隙（片側。本番の蓋と同じ）
 Y0 = LAY.frame[1]            # 枠の外面
 YF = Y0 + 0.25               # 蓋の手前の面（外面から引っ込める。本番の蓋と同じ）
-FRONT_T = 1.05               # 蓋の手前の板の厚さ（本番の蓋と同じ）
 A0, A1 = 112.5, 131.0        # 口の左右の縁の端（電池 φ16 の道 113.5〜130.5 の外）
 LIP_L, LIP_R = 1.25, 1.0     # 口の左右の縁の厚さ（手前の壁 3.0 のうち、耳の手前に残す分）
 YB = LAY.clip_body()[1] - 0.2          # 耳の奥の面 = 足の奥の端（クリップの板の端の 0.2 手前。これより奥は、板の下を通れない）
@@ -70,8 +71,8 @@ P0 = CLIP_L - SLIDE          # 左の屋根の右の端（落とす位置の出�
 HEAD = (CLIP_R + 0.2, CLIP_R + SLIDE - CL)    # 右の出っ張り（枠）の x の範囲（板の端から 0.4 = PART_CLEAR）
 FLOOR_T = 0.8                # 右の空洞の底（縁の下の端を奥の壁につなぐ。刷るときは橋）
 EAR_LIFT = 1.1               # 右の耳・出っ張りの下面（底の上 0.3）
-FOOT_IN = (117.95, 126.05)   # 足の内の端（本番の蓋と同じ: 電池が足に当たる）
-STRIP_Z = 3.9                # 上の帯の下面（本番の蓋と同じ）
+STRIP_Z = 3.4                # 上の帯の下面（電池の上面 3.2 の 0.2 上。手前の塊の奥・電池の上を、足の奥の端まで詰める = 蓋の胴の梁）
+CELL_PASS = 0.1              # 蓋を落とす位置〜掛ける位置の間で、手前の塊と電池（止めに当てた位置）の間に残す隙
 # 留め（枠の板ばねと、蓋の当て）
 RIB_Y = (Y0 + LIP_R + CL, Y0 + LIP_R + CL + 0.7)   # 蓋の当て（右の耳の端から右へ SLIDE 伸びる縦の板）の前後の範囲 = 右の耳の手前の 0.7
 RIB_Z = 3.7                  # 当ての下面（板ばねの溝の底の 0.4 上: 底は刷るとき橋になる。垂れても擦らないように）
@@ -102,7 +103,8 @@ XTIP = XRE + SLIDE + TIP_CL                       # 板ばねの先
 TRENCH = (RIB_Y[0] - RIB_CL, LEAF_Y[1] + LEAF_ROOM)       # 板ばねの溝の前後の範囲（手前は、当ての通る所。爪を入れる所より右は、切れ目 LEAF_SLIT まで狭める）
 NOSE_Y = RIB_Y[1] - NOSE[1]                               # 鼻の手前の面
 XLANE = XRE + 2 * SLIDE + CL + NAIL_L                     # 当ての通る所 ＋ 爪を入れる所の右の端
-FILL = (109.0, Y0, 135.2, LAY.cover()["y_cheek"])  # 本番の口・溝・歯を埋め直す範囲（奥は、本番の溝の奥の壁の奥の面）
+# 本番の口・溝・歯を埋め直す範囲。奥は、本番の溝の奥の壁の奥の面の 0.3 手前（当て板の、電池の左右の案内〔蓋の耳の奥 ＋ 1.0 から〕に当たらない所まで）
+FILL = (109.0, Y0, 135.2, LAY.cover()["y_cheek"] - 0.3)
 
 
 def roof_z(y):
@@ -235,23 +237,25 @@ def _top_rects():
 
 
 @lru_cache(maxsize=None)
-def cover(variant=2, mark=True):
-    """S の蓋（掛けた位置）。variant = VARIANTS の番号（斜面の隙）。"""
-    gap = VARIANTS[variant]
+def cover(variant=2, mark=True, gap=None):
+    """S の蓋（掛けた位置）。variant = VARIANTS の番号（斜面の隙）。gap を渡すと、その隙の蓋（刷りの誤差の端を見る検査の形）。"""
+    gap = VARIANTS[variant] if gap is None else gap
     zp = TOP - S.COVER_TOP_T
+    (cx, cy), r = LAY.cell()
+    # 手前の塊（基板に立つ・電池を止める）: 口の縁の間を、耳の奥の面まで詰めて、電池の円 ＋ 隙を抜く。さらに、蓋を落とす位置（右へ SLIDE）から
+    # 掛ける位置までの間に電池が通る所（蓋から見て、電池が左へ SLIDE 動く）を、隙 CELL_PASS で抜く
+    rp = r + CELL_PASS
+    keep = _union([Pos(cx, cy, -1.0) * Cylinder(r + S.COVER_CELL_CLEAR, TOP + 2.0, align=P.CEN_MIN),
+                   Pos(cx - SLIDE, cy, -1.0) * Cylinder(rp, TOP + 2.0, align=P.CEN_MIN),
+                   _box((cx - SLIDE, cy - rp, cx, cy + rp), -1.0, TOP + 1.0)])
     parts = [
-        _box((XL, YF, XR, YF + FRONT_T), 0.1, TOP),                                             # 手前の板（切れ目なし）
-        _box((XL, YF, XR, YB), STRIP_Z, TOP),                                                   # 上の帯
-        _box((XL, YF, XR, YB + EPS), zp, TOP),
-        _box((P0 + CL, YB, HEAD[0] - CL - SLIDE, YT), zp, TOP),                                 # 上の板の奥
+        _box((XL, YF, XR, YB), 0.0, zp + EPS) - keep,                                           # 手前の塊
+        _box((XL, YF, XR, YB), STRIP_Z, TOP),                                                   # 上の帯（電池の上）
+        _box((P0 + CL, YB - EPS, HEAD[0] - CL - SLIDE, YT), zp, TOP),                           # 上の板の奥
         _box((XLE, YLL + CL, XL + EPS, YB), 0.0, TOP),                                          # 左の耳（上から下まで）
         _box((XR - EPS, YLR + CL, A1 + EPS, YB), 0.0, TOP),                                     # 右の耳: 縁の端までは上から下まで
         _box((A1, YLR + CL, XRE, YB), EAR_LIFT, TOP),                                           #        縁の裏は、底の上から
     ]
-    (cx, cy), r = LAY.cell()
-    keep = Pos(cx, cy, -1.0) * Cylinder(r + S.COVER_CELL_CLEAR, TOP + 2.0, align=P.CEN_MIN)
-    for xa, xb in ((XL, FOOT_IN[0]), (FOOT_IN[1], XR)):                                          # 足（基板に立つ・電池を止める）
-        parts.append(_box((xa, YF, xb, YB), 0.0, zp + EPS) - keep)
     for x0, x1, z0 in ((XLE, P0, 0.0), (CLIP_R, XRE, EAR_LIFT)):                                 # 出っ張り（上面は 45°・耳の奥の面から生える）
         parts.append(prism_x([(YB - EPS, z0), (YT, z0), (YT, tab_z(YT, gap)), (YB - EPS, tab_z(YB - EPS, gap))], x0, x1))
     body = _union(parts)
@@ -282,6 +286,68 @@ def posed(part, dx=0.0, dy=0.0, dz=0.0, rx=0.0, ry=0.0, rz=0.0, pivot=None):
     """part を、pivot（既定は蓋の真ん中）まわりに回して（度）から、平行に動かす。"""
     px, py, pz = pivot or ((XL + XR) / 2, (YF + YT) / 2, TOP / 2)
     return Pos(px + dx, py + dy, pz + dz) * Rot(rx, ry, rz) * Pos(-px, -py, -pz) * part
+
+
+# ---------------------------------------------------------------------------
+# 動かして探す（検査と絵が使う）
+# ---------------------------------------------------------------------------
+
+@lru_cache(maxsize=None)
+def obstacles(leaf_deflect=0.0, ridges=False, roof=True, with_cell=False):
+    """蓋が当たる相手 [立体]: 枠（口のまわりだけ切り出した物。leaf_deflect = None で板ばね無し）・基板の代わり（当て板）・クリップの金属・（電池の代わり）。"""
+    fr = frame_body(ridges, roof)
+    if leaf_deflect is not None:
+        fr = fr + leaf(leaf_deflect)
+    near = fr & _box((FILL[0] - 3.0, Y0 - 1.0, XTIP + LEAF_L + 2.0, FILL[3] + 2.0), -2.0, TOP + 1.0)
+    cc = C.corner_coupon()
+    return tuple([near, cc["base"], C.clip_solid()] + ([cc["cell"]] if with_cell else []))
+
+
+def hit(part, obst):
+    """part が obst のどれかと重なる体積 [mm3]。"""
+    return sum(vol(part, o) for o in obst)
+
+
+def top_corners(pose):
+    """蓋の上面の四隅（掛けた位置）を pose（posed の引数）で動かした先の、上がった量のいちばん大きい値。"""
+    px, py, pz = (XL + XR) / 2, (YF + YT) / 2, TOP / 2
+    rx, ry, rz = (math.radians(pose.get(k, 0.0)) for k in ("rx", "ry", "rz"))
+    best = -9.0
+    for x, y in ((XLE, YF), (XLE, YT), (XRE, YF), (XRE, YT)):
+        vx, vy, vz = x - px, y - py, TOP - pz
+        # build123d の Rot(rx, ry, rz) = X → Y → Z の順に回す
+        vy, vz = vy * math.cos(rx) - vz * math.sin(rx), vy * math.sin(rx) + vz * math.cos(rx)
+        vx, vz = vx * math.cos(ry) + vz * math.sin(ry), -vx * math.sin(ry) + vz * math.cos(ry)
+        best = max(best, vz + pz + pose.get("dz", 0.0) - TOP)
+    return best
+
+
+def wiggle(part, obst, objective=top_corners, fixed=None, limits=None, iters=350, seed=1, tol=2e-3):
+    """part を 6 つの向き（dx・dy・dz・rx・ry・rz）に少しずつ乱数で動かし、obst に当たらない姿勢のうち objective がいちばん大きい物を探す（山登り）。
+    fixed = 動かさない向きと値 {名前: 値}・limits = 動かす範囲 {名前: (下, 上)}。返り値 (objective の最大, そのときの姿勢)。"""
+    import random
+
+    rnd = random.Random(seed)
+    scale = dict(dx=0.06, dy=0.06, dz=0.06, rx=0.4, ry=0.4, rz=0.3)
+    lim = dict(dx=(-0.5, 0.5), dy=(-0.5, 0.5), dz=(-0.2, 2.5), rx=(-12.0, 12.0), ry=(-8.0, 8.0), rz=(-3.0, 3.0))
+    lim.update(limits or {})
+    cur = dict.fromkeys(scale, 0.0)
+    cur.update(fixed or {})
+    free = [k for k in scale if k not in (fixed or {})]
+    best = (objective(cur), dict(cur))
+    for i in range(iters):
+        new = dict(cur)
+        for k in (free if i % 3 == 0 else rnd.sample(free, min(2, len(free)))):
+            new[k] = min(lim[k][1], max(lim[k][0], cur[k] + rnd.gauss(0.0, scale[k])))
+        val = objective(new)
+        if val < objective(cur) - 0.02:
+            continue
+        if hit(posed(part, **new), obst) > tol:
+            continue
+        cur = new
+        if val > best[0]:
+            best = (val, dict(new))
+    return best
 
 
 # ---------------------------------------------------------------------------
@@ -340,22 +406,22 @@ def section(body, x, step=0.05, y0=None, y1=None, z0=0.0, z1=None, skip=None):
 @lru_cache(maxsize=None)
 def stresses(variant=2):
     """電池が DROP_G で蓋を押すとき（spec.CELL_MASS）の、力の道の応力 [MPa]。**断面は立体から測る**（section）。
-    力の入る所 = 足の内の端（FOOT_IN）・受ける所 = 耳が縁の裏に掛かる範囲の真ん中。左右の受ける力は、つり合いから。
-      body       蓋の胴（足と足の間でいちばん弱い断面）: 曲げモーメント・手前の縁の引っ張り・奥の縁の圧縮
+    力の入る所 = 電池の真ん中（手前の塊の丸い面は電池と同じ中心なので、電池が手前へ動くと、真ん中で当たる）・受ける所 = 耳が縁の裏に掛かる範囲の真ん中。
+      body       蓋の胴（真ん中のまわりでいちばん弱い断面）: 曲げモーメント・手前の縁の引っ張り・奥の縁（上の板の端）の圧縮
       neck_left・neck_right  耳の首（縁の端〜蓋の胴の端。耳だけでつながる所）の曲げ
       lip_left・lip_right    枠の縁（空洞の端を付け根にした片持ち。右は底でつないだ所から先）の曲げ
       ear_bearing  耳と縁の当たる面の面圧（左・右）"""
     force = S.CELL_MASS * S.DROP_G * 9.80665 * 1e-3
     xa, xb = (XLE + A0) / 2, (A1 + XRE) / 2
-    la, lb = FOOT_IN
-    ra = force / 2 * ((xb - la) + (xb - lb)) / (xb - xa)
+    xc = LAY.cell()[0][0]                                           # 力の入る所 = 電池の真ん中（手前の塊の丸い面のいちばん奥）
+    ra = force * (xb - xc) / (xb - xa)
     rb = force - ra
     cv = cover(variant, False)
-    out = dict(force=force, react=(ra, rb), arm=(la - xa, xb - lb))
+    out = dict(force=force, react=(ra, rb), arm=(xc - xa, xb - xc))
     worst = None
-    for i in range(15):
-        x = la + 0.3 + (lb - la - 0.6) * i / 14
-        m = ra * (x - xa) - force / 2 * max(0.0, x - la)
+    for i in range(9):
+        x = xc - 2.0 + 0.5 * i
+        m = ra * (x - xa) - force * max(0.0, x - xc)
         sc = section(cv, x)
         t, cmp_ = m * sc["front"] / sc["inertia"], m * sc["rear"] / sc["inertia"]
         if worst is None or t > worst["tension"]:
