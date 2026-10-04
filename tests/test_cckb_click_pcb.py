@@ -399,7 +399,7 @@ def paste_and_side_problems(geo_board):
 def test_everything_sits_on_top_and_only_the_jlc_parts_get_paste(unrouted):
     board = PROJECT.root / "pcb" / "unrouted" / "cckb-click_main.kicad_pcb"
     assert paste_and_side_problems(board) == []
-    assert len(re.findall(r'\n\t\(footprint ', board.read_text())) == 62 * 2 + 22 + 13 + 30
+    assert len(re.findall(r'\n\t\(footprint ', board.read_text())) == 62 * 2 + 22 + 13 + 32       # 穴: 外周 20・中 8・予備 2・蓋 2
 
 
 def test_the_paste_check_notices_paste_on_a_side_land_and_a_part_on_the_back(tmp_path, unrouted):
@@ -418,7 +418,10 @@ def placement_problems(geo, lay=LAY):
     posts = lay.post_rects()
     key_area = lay.key_area
     feet = [(c, s.HOLDDOWN_D / 2) for _, c, kind in lay.screws() if kind == "holddown"]
-    holes = [(c, s.SCREW_HOLE_D / 2 + 0.2) for _, c, _ in lay.screws()]
+    holes = [(c, s.SCREW_HOLE_D / 2 + 0.2) for _, c, kind in lay.screws() if kind != "cover"]
+    # 蓋のねじ穴は電池クリップのコートヤード（外接の矩形）の中にある。クリップの板の端が基板の 3.7 上に張り出すだけの所なので、
+    # 物（＋のランド・止めに当てた電池）で見る: test_the_corner_parts_face_the_way_the_case_needs
+    cover = [(c, s.SCREW_HOLE_D / 2 + 0.2) for _, c, kind in lay.screws() if kind == "cover"]
     corners = [lay.corner("left"), lay.corner("right")]
     for f in geo["footprints"]:
         box = f["courtyard"].get("front")
@@ -434,7 +437,7 @@ def placement_problems(geo, lay=LAY):
         for p in posts:
             if L.rect_gap(box, p) < 0.2:
                 out.append(f"{f['ref']} が柱 {p} に {L.rect_gap(box, p):.2f}")
-        for c, r in feet + holes:
+        for c, r in feet + holes + ([] if f["ref"] == "BT1" else cover):
             if L.circle_rect_gap(c, r, box) < 0.2:
                 out.append(f"{f['ref']} が足・ねじの穴 {c} に {L.circle_rect_gap(c, r, box):.2f}")
         in_corner = any(L.rect_gap(box, c) < 0 for c in corners)
@@ -476,12 +479,30 @@ def test_the_corner_parts_face_the_way_the_case_needs(unrouted):
     assert LAY.cell_recess() == pytest.approx(1.71)
     # 表の銅を置かない範囲の奥の端は、止めの外面から 1.0（止めに当てた電池の缶の縁から 1.25）
     assert LAY.cell_keepout()[3] - (LAY.cell()[0][1] + LAY.cell()[1]) == pytest.approx(1.25)
-    # 電源スイッチ: 端子は本体の左（内側）・つまみは右。先が枠の外面から PSW_KNOB_PROUD 出る。端子 3 が奥
+    # 蓋のねじ穴（電池クリップのコートヤードの中）: ＋のランドから 1.0 以上・止めに当てた電池の缶の縁から 1.0 以上
+    (cx, cy), r = LAY.cell()
+    cover = [c for _, c, kind in LAY.screws() if kind == "cover"]
+    assert len(cover) == 2
+    for c in cover:
+        assert min(L.circle_rect_gap(c, S.SCREW_HOLE_D / 2, b) for b in LAY.clip_pads()) >= 1.0
+        assert math.dist(c, (cx, cy)) - r - S.SCREW_HOLE_D / 2 == pytest.approx(1.02, abs=0.01)
+    # 電源スイッチ: 端子は本体の左（内側）・つまみは右。端子 3 が奥。**本体は基板の縁から 2.5 以上内側**（JLC の実装の規約）・
+    # つまみの先は、どちらの位置でも基板の縁と枠の外面の内側（外へ出ない）。本体の位置は、板の上の突起の穴（本体の中心線）から取る
     pins = {k[1]: (k[2], k[3]) for k in pads if k[0] == "SW_PWR" and k[1] in "123" and k[1]}
     body = LAY.psw_body()
     assert all(x < body[0] for x, _ in pins.values()) and pins["3"][1] > S.PSW_AT[1] > pins["1"][1]
-    assert LAY.psw_knob(1)[2] - LAY.frame[2] == pytest.approx(S.PSW_KNOB_PROUD)
-    assert body[2] < LAY.pcb[2] - 0.5 and LAY.psw_knob_sweep()[3] - LAY.psw_knob_sweep()[1] == pytest.approx(S.PSW_TRAVEL + S.PSW_KNOB[0])
+    pegs = [p for p in unrouted["pads"] if p["ref"] == "SW_PWR" and p["npth"]]
+    assert len(pegs) == 2 and all(p["x"] == pytest.approx((body[0] + body[2]) / 2) for p in pegs)
+    body_edge = pegs[0]["x"] + MSK_DRAWING["body"][1] / 2
+    assert LAY.pcb[2] - body_edge == pytest.approx(S.PSW_EDGE_MIN) and S.PSW_EDGE_MIN == 2.5 and body[2] == pytest.approx(body_edge)
+    for pos in (1, -1):
+        tip = LAY.psw_knob(pos)[2]
+        assert tip == pytest.approx(body_edge + MSK_DRAWING["knob"][1])
+        assert LAY.pcb[2] - tip == pytest.approx(1.05) and LAY.frame[2] - tip == pytest.approx(1.35)
+    assert LAY.psw_knob_sweep()[3] - LAY.psw_knob_sweep()[1] == pytest.approx(S.PSW_TRAVEL + S.PSW_KNOB[0])
+    assert (S.PSW_TRAVEL_TOL, S.PSW_FORCE_MAX) == (0.2, pytest.approx(0.250 * 9.8, abs=0.01))       # 承認書 4.2・4.1（150 ± 100 gf）
+    # 壊すと落ちる: 前の位置（1.75 外）なら、本体は縁から 0.75・つまみは枠の外
+    assert LAY.pcb[2] - (body_edge + 1.75) < 1.0 and LAY.frame[2] - (LAY.psw_knob(1)[2] + 1.75) < 0
     # XIAO: USB の口が基板の左の縁・枠の外面から USB_RECESS
     assert LAY.usb_shell()[0] == pytest.approx(LAY.frame[0] + S.USB_RECESS) and LAY.usb_shell()[0] == pytest.approx(LAY.pcb[0])
     d = {k[1]: (k[2], k[3]) for k in pads if k[0] == "U_MCU" and not pads[k]["back"]}
@@ -491,7 +512,7 @@ def test_the_corner_parts_face_the_way_the_case_needs(unrouted):
 def test_the_screws_sit_mid_key_on_the_wall_and_the_feet_hang_on_a_post():
     f = LAY.frame
     edge_keys = {"back": [k for k in LAY.keys if k.r == 0], "front": [k for k in LAY.keys if k.r == 4]}
-    n = dict(perimeter=0, holddown=0, spare=0)
+    n = dict(perimeter=0, holddown=0, spare=0, cover=0)
     for ref, (x, y), kind in LAY.screws():
         n[kind] += 1
         if kind == "holddown":
@@ -521,7 +542,11 @@ def test_the_screws_sit_mid_key_on_the_wall_and_the_feet_hang_on_a_post():
                 assert y - half - (k.y + 2.5) == pytest.approx(0.1) and y - k.y == pytest.approx(S.SIDE_SCREW_DY)
             if kind == "spare":                                      # 予備は手前の継ぎ目の両側・継ぎ目から 7 以内
                 assert on_x and y < 0 and abs(x - S.FRAME_SPLIT[-1]) <= 7.0, ref
-    assert n == dict(perimeter=20, holddown=8, spare=2) and S.MOUNTS == {"main": []}
+    assert n == dict(perimeter=20, holddown=8, spare=2, cover=2) and S.MOUNTS == {"main": []}
+    # 蓋のねじ穴: 電池の中心から左右に同じだけ・電池の口の中（枠に下穴は無い）
+    cov = sorted(c for _, c, kind in LAY.screws() if kind == "cover")
+    assert [c[0] - S.CLIP_AT[0] for c in cov] == pytest.approx([-7.0, 7.0]) and all(LAY.cover()["x0"] < c[0] < LAY.cover()["x1"] for c in cov)
+    assert not any(kind == "cover" for _, _, kind in LAY.wall_screws())
     assert sorted(x - S.FRAME_SPLIT[-1] > 0 for _, (x, _), kind in LAY.screws() if kind == "spare") == [False, True]
     # 穴の縁から基板の縁まで 1.0（foundry.pcb の下限。外へ寄せられるのはここまで）・頭 φ4.0 は基板の縁の内側
     edge = S.SCREW_FROM_EDGE - S.PCB_INSET_X

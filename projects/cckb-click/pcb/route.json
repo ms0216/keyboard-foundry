@@ -1,31 +1,22 @@
 {
   "board": "cckb-click_main.kicad_pcb",
   "unrouted": "cckb-click_main.kicad_pcb",
-  "unrouted_fingerprint": "138104509e8dcfd1abf741d61bdb344f3f937c16f7f7bb524dca4dcbd89f8b0f",
-  "unrouted_sha256": "f5e67e6fe9d5f7380006e34b006d41a652f0fffceaf3e89e87a744c1a472794c",
+  "unrouted_fingerprint": "e6cfd437fba35ee3814a04431ca1cd15fdea60d7eb5f2eecff9298ad1f0ea81e",
+  "unrouted_sha256": "0733235d94f93c7050b0f57ae1064fe54c37c1c834c856990b88b8b1c6f2aca4",
   "freerouting": "freerouting-2.3.0.jar",
   "passes": 100,
   "freerouting_options": [
     "--router.optimizer.enabled=false"
   ],
-  "margin_um": 25,
-  "margins_tried": [
-    [
-      30,
-      2
-    ],
-    [
-      35,
-      1
-    ],
-    [
-      25,
-      0
-    ]
-  ],
+  "margin_um": null,
+  "margins_tried": [],
+  "freerouted": "replayed",
+  "freerouted_from": "4dc68901d8121a51eab658a7d47a5e2d5fb8d8b68d8200d587b2cfd26218e533",
+  "freerouted_tracks": 100,
+  "freerouted_vias": 17,
   "matrix_segments": 634,
-  "matrix_vias": 85,
-  "power_segments": 18,
+  "matrix_vias": 87,
+  "power_segments": 26,
   "gnd_fanout": 14,
   "ring": {
     "奥": [
@@ -45,10 +36,10 @@
       11
     ]
   },
-  "fence": 90,
+  "fence": 91,
   "grid": 710,
-  "one_layer_vias_removed": 1,
-  "duplicate_tracks_removed": 6,
+  "one_layer_vias_removed": 0,
+  "duplicate_tracks_removed": 14,
   "band_vias_removed": 28,
   "island_vias": 1,
   "second_island_vias": 0,
@@ -80,8 +71,8 @@
   "joined_vias": 0,
   "orphan_vias_removed": 0,
   "gnd_area_mm2": {
-    "F": 21997.0,
-    "B": 26923.4
+    "F": 21998.5,
+    "B": 26890.7
   },
   "unconnected": 0
 }

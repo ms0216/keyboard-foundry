@@ -204,11 +204,13 @@ class Layout:
 
     def screws(self):
         """[(参照名, (x, y), 種類)]。種類は "perimeter"（外周の壁に M2×4）・"holddown"（中の低い足に M2×3）・
-        "spare"（外周の壁の予備。基板の穴と枠の下穴はあるが、既定では締めない）。基板の H{n} と同じ順（予備は最後に足した）。"""
+        "spare"（外周の壁の予備。基板の穴と枠の下穴はあるが、既定では締めない）・
+        "cover"（電池の蓋をねじで留める日のための穴。**基板の穴だけ**で、枠に下穴は無い）。基板の H{n} と同じ順（足した順）。"""
         s = self.s
-        kinds = ["perimeter"] * len(s.SCREWS_PERIMETER) + ["holddown"] * len(s.HOLDDOWN_AT) + ["spare"] * len(s.SCREWS_SPARE)
+        kinds = (["perimeter"] * len(s.SCREWS_PERIMETER) + ["holddown"] * len(s.HOLDDOWN_AT) + ["spare"] * len(s.SCREWS_SPARE)
+                 + ["cover"] * len(s.SCREWS_COVER))
         return [(f"H{i}", tuple(p), kind)
-                for i, (p, kind) in enumerate(zip(s.SCREWS_PERIMETER + s.HOLDDOWN_AT + s.SCREWS_SPARE, kinds))]
+                for i, (p, kind) in enumerate(zip(s.SCREWS_PERIMETER + s.HOLDDOWN_AT + s.SCREWS_SPARE + s.SCREWS_COVER, kinds))]
 
     def boss_half(self, c):
         """外周のねじ c の所で壁を厚くする幅の半分。奥と手前の壁は SCREW_BOSS_HALF。左右の壁は、隣のキーが幅の広いキー
@@ -405,6 +407,48 @@ class Layout:
         w, out = self.s.PSW_KNOB
         return (b[2], y - w / 2, b[2] + out, y + w / 2)
 
-    def psw_knob_sweep(self):
+    def psw_knob_sweep(self, tol=0.0):
+        """つまみが動く範囲。tol で行程の公差の分だけ両側へ広げる。"""
         a, b = self.psw_knob(-1), self.psw_knob(1)
-        return (a[0], a[1], a[2], b[3])
+        return (a[0], a[1] - tol / 2, a[2], b[3] + tol / 2)
+
+    def psw_notch(self):
+        """つまみの切り欠き（枠の右の壁を上まで抜く範囲）の平面の多角形 [(x, y), ...]。内側の面は本体の縁 ＋ PART_CLEAR。
+        外面の側の角は斜めに落とす（指が入りやすい・角が欠けにくい）。外面の 1.0 外まで。"""
+        s = self.s
+        w, ch = s.PSW_NOTCH
+        x0 = self.psw_body()[2] + s.PART_CLEAR
+        x1 = self.frame[2]
+        y0, y1 = s.PSW_AT[1] - w / 2, s.PSW_AT[1] + w / 2
+        return [(x0, y0), (x1 - ch, y0), (x1, y0 - ch), (x1 + 1.0, y0 - ch), (x1 + 1.0, y1 + ch), (x1, y1 + ch), (x1 - ch, y1), (x0, y1)]
+
+    def psw_nail(self, pos):
+        """爪の入る場所（検査の包絡・平面の矩形）。つまみが pos（+1 奥 / −1 手前）にあるとき、反対の端へ押すために、
+        つまみの脇（押す側）に要る場所: 幅 PSW_NAIL[0]・つまみの先から本体の側へ PSW_NAIL[1] 掛かる所から、枠の外面の 10 外まで。"""
+        s = self.s
+        k = self.psw_knob(pos)
+        w, bite = s.PSW_NAIL
+        y0, y1 = (k[3], k[3] + w) if pos > 0 else (k[1] - w, k[1])
+        return (k[2] - bite, y0, self.frame[2] + 10.0, y1)
+
+    # --- 電池の蓋（差し込み式）--------------------------------------------------
+    def cover(self):
+        """蓋の寸法（CAD・基板の上面 = 0）。枠の切り欠き（click_case.corner_cuts）と蓋（click_case.cover_solid）の両方がここから作る。
+          x0, x1    電池の口（幅 = 電池 ＋ 2 × CELL_SLOT_CLEAR）
+          nx0, nx1  指の切り欠き（幅 FINGER_NOTCH[0]）。上の縁にひさし（COVER_RAIL）
+          y0        枠の外面・y_front 手前の板の奥の面・y_root 上の板の付け根の奥の端・y1 切り欠きの奥の壁
+          z_slot    口の上の壁の下面（= 切り欠きの底）・z_top 枠の上面・z_plate 上の板の下面・z_root 付け根の下面
+          bump      山の中心 [(x, y), (x, y)]（腕の先。口の上の壁の下面の溝と同じ所）"""
+        s = self.s
+        (cx, _), r = self.cell()
+        f = self.frame
+        top = s.FRAME_UNDER + s.FRAME_T
+        w, d = s.FINGER_NOTCH
+        x0, x1 = cx - r - s.CELL_SLOT_CLEAR, cx + r + s.CELL_SLOT_CLEAR
+        nx0, nx1 = cx - w / 2, cx + w / 2
+        bx = (nx0 - x0) / 2                                   # 山は、口の上の壁（口の端から切り欠きの壁まで）の真ん中の下
+        by = f[1] + s.COVER_FRONT_T - s.COVER_BUMP[1] / 2 - 0.05
+        return dict(x0=x0, x1=x1, nx0=nx0, nx1=nx1, y0=f[1], y_front=f[1] + s.COVER_FRONT_T, y_root=f[1] + s.COVER_ROOT[1],
+                    y1=f[1] + d, z_slot=s.CELL_T + s.CELL_SLOT_CLEAR + 0.1, z_top=top, z_plate=top - s.COVER_TOP_T,
+                    z_root=top - s.COVER_ROOT[0],
+                    bump=[(x0 + bx, by), (x1 - bx, by)])

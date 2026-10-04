@@ -360,7 +360,7 @@ def test_no_copper_where_the_antenna_the_xiao_pads_the_screw_heads_and_the_cell_
     names = {z["name"] for z in facts["zones"] if z["rule"]}
     assert names == {"ANTENNA_KEEPOUT", "XIAO_UNDERSIDE", "EDGE_KEEPOUT", "SCREW_HEAD_KEEPOUT", "CELL_KEEPOUT", "SW_BODY_KEEPOUT", "FANOUT_NO_FILL",
                      "XIAO_BACK_NO_FILL", "ANT_FRONT_NO_FILL", "IC_BAND", "TP_VIA_KEEPOUT"}
-    assert sum(1 for z in facts["zones"] if z["name"] == "SCREW_HEAD_KEEPOUT") == 30          # 外周 20 ＋ 中 8 ＋ 予備 2
+    assert sum(1 for z in facts["zones"] if z["name"] == "SCREW_HEAD_KEEPOUT") == 32          # 外周 20 ＋ 中 8 ＋ 予備 2 ＋ 蓋 2
     assert sum(1 for z in facts["zones"] if z["name"] == "SW_BODY_KEEPOUT") == 84
 
 
@@ -1058,6 +1058,129 @@ def test_the_spare_screw_holes_are_in_the_board(facts):
     for ref, c, kind in LAY.wall_screws():
         d = min(c[0] - LAY.pcb[0], LAY.pcb[2] - c[0], c[1] - LAY.pcb[1], LAY.pcb[3] - c[1])
         assert d == pytest.approx(2.1), ref
+
+
+def cover_hole_problems(facts):
+    """蓋のねじ穴（利用者の決定 2026-10-04・既定では使わない）: 非めっき φ2.2 が 2 つ・基板の縁から 2.1・表は電池の道（銅を置かない範囲）の中・
+    裏は頭の円（半径 2.3）から、GND 以外の線・ビアまで 0.2 以上（頭の下に銅が無いことは keepout_problems が全部の穴で見る）。"""
+    out = []
+    cover = [(ref, c) for ref, c, kind in LAY.screws() if kind == "cover"]
+    if len(cover) != 2:
+        out.append(f"蓋のねじ穴が {len(cover)} 個")
+    k = LAY.cell_keepout()
+    for ref, c in cover:
+        hole = [p for p in facts["pads"] if p["ref"] == ref]
+        if len(hole) != 1 or not hole[0]["npth"] or hole[0]["drill"] != S.SCREW_HOLE_D or math.dist(hole[0]["pos"], c) > 1e-3:
+            out.append(f"{ref}: 板の上の穴が {[(p['pos'], p['drill'], p['npth']) for p in hole]}")
+        if abs(c[1] - LAY.pcb[1] - 2.1) > 1e-6:
+            out.append(f"{ref}: 基板の縁から {c[1] - LAY.pcb[1]:.3f}")
+        h = S.SCREW_HOLE_D / 2 + S.METAL_COPPER_CLEAR             # 表: 穴の縁 ＋ 0.3 まで、銅を置かない範囲の中（頭は裏）
+        if not (k[0] + h <= c[0] <= k[2] - h and k[1] <= c[1] <= k[3] - h):
+            out.append(f"{ref}: 穴が、表の銅を置かない範囲 {k} の縁に掛かる")
+        r = S.SCREW_HEAD_D / 2 + S.METAL_COPPER_CLEAR
+        for t in facts["tracks"]:
+            if t["layer"] == "B.Cu" and t["net"] != "GND" and seg_dist(c, c, t["a"], t["b"]) - t.get("w", 0.3) / 2 < r + 0.2:
+                out.append(f"{ref}: 裏の {t['net']} の線が頭の円から {seg_dist(c, c, t['a'], t['b']) - r:.2f}")
+        for v in facts["vias"]:
+            if math.dist(v["pos"], c) - v["d"] / 2 < r + 0.2:
+                out.append(f"{ref}: ビア {v['net']} が頭の円から {math.dist(v['pos'], c) - v['d'] / 2 - r:.2f}")
+    return out
+
+
+def test_the_cover_screw_holes_are_in_the_board_and_clear_of_copper(facts):
+    assert cover_hole_problems(facts) == []
+    assert all(f"head_{ref}" in facts["region"] for ref, _, kind in LAY.screws() if kind == "cover")
+    # 裏の VBAT_IN の線（電池の下をくぐる）は穴の中心から 4.16
+    under = [t for t in facts["tracks"] if t["net"] == "VBAT_IN" and t["layer"] == "B.Cu" and t["a"][1] == t["b"][1]]
+    assert len(under) == 1 and under[0]["a"][1] - S.SCREWS_COVER[0][1] == pytest.approx(4.16)
+
+
+def test_the_cover_hole_check_notices_a_moved_hole_and_a_line_under_the_head(facts):
+    f = copy.deepcopy(facts)
+    for t in f["tracks"]:
+        if t["net"] == "VBAT_IN" and t["layer"] == "B.Cu" and t["a"][1] == t["b"][1]:
+            t["a"][1] = t["b"][1] = S.SCREWS_COVER[0][1] + 2.4
+    assert any("VBAT_IN" in b for b in cover_hole_problems(f))
+    f = copy.deepcopy(facts)
+    next(p for p in f["pads"] if p["ref"] == "H30")["pos"][0] += 0.5
+    assert any("H30" in b for b in cover_hole_problems(f))
+
+
+def jlc_edge_problems(facts):
+    """JLC の実装の規約（Terms and Conditions of JLCPCB Assembly Service・2026-10-04 に読んだ）: 載せる部品の本体は基板の縁から 2.5 mm 以上。
+    縁の近くの部品（電源スイッチ・電池クリップ）を、板の上のパッド・突起の穴の位置と、図面の本体の寸法で見る。縁の外へ出る物が無いこと。"""
+    out = []
+    e = LAY.pcb
+    pegs = [p["pos"] for p in facts["pads"] if p["ref"] == "SW_PWR" and p["npth"]]
+    if len(pegs) != 2:
+        return [f"電源スイッチの突起の穴が {len(pegs)} 個"]
+    cx = pegs[0][0]                                              # 本体の中心線（図面: 突起は本体の中心線の上）
+    body = cx + S.PSW_BODY[1] / 2
+    tip = body + S.PSW_KNOB[1]
+    if e[2] - body < S.PSW_EDGE_MIN - 1e-6:
+        out.append(f"電源スイッチの本体が基板の縁から {e[2] - body:.3f}（{S.PSW_EDGE_MIN} 以上）")
+    if tip > e[2]:
+        out.append(f"電源スイッチのつまみが基板の縁から {tip - e[2]:.3f} 出る")
+    for p in facts["pads"]:
+        if p["ref"] in ("SW_PWR", "BT1") and not p["npth"]:
+            b = p["box"]
+            if min(b[0] - e[0], e[2] - b[2], b[1] - e[1], e[3] - b[3]) < 2.0:
+                out.append(f"{p['ref']}.{p['num']} のランドが基板の縁から 2.0 未満")
+    return out
+
+
+def test_the_power_switch_body_is_2_5_inside_the_board_edge_and_nothing_overhangs(facts):
+    assert jlc_edge_problems(facts) == []
+    assert S.PSW_EDGE_MIN == 2.5
+
+
+def test_the_edge_check_notices_the_old_overhanging_switch(facts):
+    f = copy.deepcopy(facts)
+    for p in f["pads"]:
+        if p["ref"] == "SW_PWR":
+            p["pos"][0] += 1.75                                  # 前の位置
+            p["box"] = [p["box"][0] + 1.75, p["box"][1], p["box"][2] + 1.75, p["box"][3]]
+    bad = jlc_edge_problems(f)
+    assert any("本体" in b for b in bad) and any("つまみ" in b for b in bad), bad
+
+
+def frozen_problems(facts, rec):
+    """SPI・595 どうし・電源の枝は、監査した板（rec["source_sha256"]）で Freerouting が引いた形のまま（pcb/freerouted.json）。
+    その網の線・ビアが、記録と過不足なく同じ（決まった形で引く区間は除く: 記録に無い線は、click_routes の計画に無ければ指摘）。"""
+    out = []
+    nets = {t["net"] for t in rec["tracks"]}
+    key = lambda n, layer, a, b: (n, layer) + tuple(sorted([(round(a[0], 3), round(a[1], 3)), (round(b[0], 3), round(b[1], 3))]))   # noqa: E731
+    have = {key(t["net"], t["layer"], t["a"], t["b"]) for t in facts["tracks"] if t["net"] in nets}
+    want = {key(t["net"], t["layer"], t["a"], t["b"]) for t in rec["tracks"]}
+    if want - have:
+        out.append(f"記録の線 {len(want - have)} 本が板に無い: {sorted(want - have)[:3]}")
+    vh = {(v["net"], round(v["pos"][0], 3), round(v["pos"][1], 3)) for v in facts["vias"] if v["net"] in nets}
+    vw = {(v["net"], round(v["at"][0], 3), round(v["at"][1], 3)) for v in rec["vias"]}
+    if vw - vh:
+        out.append(f"記録のビア {len(vw - vh)} 個が板に無い: {sorted(vw - vh)[:3]}")
+    for n in ("SPI_SCK", "SPI_MOSI", "CS", "U1_U2"):               # 決まった形で引く区間の無い網は、線の数まで同じ
+        if sum(1 for k in have if k[0] == n) != sum(1 for k in want if k[0] == n):
+            out.append(f"{n}: 板の線 {sum(1 for k in have if k[0] == n)} 本・記録 {sum(1 for k in want if k[0] == n)} 本")
+    return out
+
+
+def test_the_freerouted_branches_are_the_audited_ones(facts):
+    rec = json.loads((PCB / "freerouted.json").read_text())
+    assert frozen_problems(facts, rec) == []
+    assert rec["source_sha256"].startswith("4dc68901") and {t["net"] for t in rec["tracks"]} == {"SPI_SCK", "SPI_MOSI", "CS", "U1_U2", "V3V3", "VBAT_SW"}
+    route = json.loads((PCB / "route.json").read_text())
+    assert route["freerouted"] == "replayed" and route["freerouted_from"] == rec["source_sha256"]
+    # 電池の＋は Freerouting の線ではなく、決まった形（直角の 8 区間・ビア 2 個）
+    vin = [t for t in facts["tracks"] if t["net"] == "VBAT_IN"]
+    assert len(vin) == 8 and all(t["a"][0] == t["b"][0] or t["a"][1] == t["b"][1] for t in vin)
+    assert sum(1 for v in facts["vias"] if v["net"] == "VBAT_IN") == 2
+    # 壊すと落ちる: 記録の線を 1 本動かす・板の SPI の線を 1 本足す
+    bad = copy.deepcopy(rec)
+    bad["tracks"][0]["a"][0] += 0.5
+    assert any("板に無い" in b for b in frozen_problems(facts, bad))
+    f = copy.deepcopy(facts)
+    f["tracks"].append(dict(net="CS", layer="F.Cu", a=[0.0, 0.0], b=[1.0, 0.0], w=0.2))
+    assert any("CS" in b for b in frozen_problems(f, rec))
 
 
 # ---------------------------------------------------------------------------

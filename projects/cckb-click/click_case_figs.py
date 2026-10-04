@@ -4,6 +4,8 @@
   main_top.png        上から（枠の上面の高さで切る）と、枠の下（基板の上 1.5）で切った図。柱・壁・部品・ねじ・継ぎ目
   main_tilt.png       2.25u と 1u の縁を押し切った傾き（公差の端）と、その下の部品
   coupon_screw.png    ねじの試し刷り（本番の枠から切り出した壁と当て板）
+  main_corner.png     右手前の角: つまみの切り欠き・電池の口・蓋（あり／なし）を、上から・手前から・断面で
+  coupon_corner.png   角の試し刷り（枠の切れ端・当て板・つまみと電池の代わり・蓋）
 
     .venv/bin/python3 projects/cckb-click/click_case.py   が呼ぶ
 """
@@ -22,15 +24,16 @@ import click_parts as P  # noqa: E402
 
 LAY, S = C.LAY, C.S
 COL = {"frame": "#c8c8c8", "frame2": "#b4bcc6", "cap": "#f2b0b0", "pcb": "#7fb686", "sw": "#555555", "part": "#b98a55",
-       "xiao": "#6f8fd0", "bat": "#d9d9d9", "screw": "#e0b020", "sheet": "#404040", "plug": "#9a9a9a"}
+       "xiao": "#6f8fd0", "bat": "#d9d9d9", "screw": "#e0b020", "sheet": "#404040", "plug": "#9a9a9a", "cover": "#e08a3c",
+       "knob": "#111111"}
 
 
 def yz(part, x):
     return F.section(part, Plane.YZ.offset(x), "Y", "Z")
 
 
-def _scene(stem=None, mode="rest", keys=None):
-    """[(色, 立体)]。mode = rest（ステムに載る）/ pressed / 傾き（"+x" など。keys に効く）。"""
+def _scene(stem=None, mode="rest", keys=None, cover=False):
+    """[(色, 立体)]。mode = rest（ステムに載る）/ pressed / 傾き（"+x" など。keys に効く）。cover=True で電池の蓋を入れる。"""
     halves = C.frame_halves()
     rest = min(0.0, (S.SW_STEM_TOP if stem is None else stem) - P.levels(S)["pad"])
     caps = []
@@ -51,7 +54,7 @@ def _scene(stem=None, mode="rest", keys=None):
             (COL["part"], Compound([v for n, v in bp.items() if n not in ("U_MCU", "BT1")])),
             (COL["xiao"], bp["U_MCU"]), (COL["bat"], Compound([bp["BT1"], C.cell_solid()])),
             (COL["frame"], halves["left"]), (COL["frame2"], halves["right"]),
-            (COL["cap"], Compound(caps))]
+            (COL["cap"], Compound(caps))] + ([(COL["cover"], C.cover_solid())] if cover else [])
 
 
 def _draw(ax, scene, cut, lim, title, levels=()):
@@ -81,9 +84,9 @@ def sections(out):
     _draw(axs[1][0], rest, lambda p: yz(p, sx), (24, 52, *zl), f"奥の壁のねじ（x {sx}）: 基板の下から M2×4・頭はシートの厚さの中", lv)
     _draw(axs[1][1], rest, lambda p: F.xz(p, S.XIAO_AT[1]), (-148, -112, *zl), "左の角: XIAO と USB の切り欠き（y は XIAO の中心）", lv)
     cx = S.CLIP_AT[0]
-    _draw(axs[2][0], rest, lambda p: yz(p, cx), (-52, -26, *zl), "右の角: 電池クリップ・電池の口（手前の壁）・指の切り欠き（x は電池の中心）", lv)
+    _draw(axs[2][0], rest, lambda p: yz(p, cx), (-52, -26, *zl), "右の角: 電池クリップ・電池の口（手前の壁）・指の切り欠き（x は電池の中心・蓋なし）", lv)
     _draw(axs[2][1], rest, lambda p: F.xz(p, S.PSW_AT[1] + S.PSW_ON * S.PSW_TRAVEL / 2), (128, 148, *zl),
-          "右の縁: 電源スイッチ（つまみが入の位置の y）", lv)
+          "右の縁: 電源スイッチ（つまみが入の位置の y）。つまみは枠の外面の内側・壁は上まで切り欠き", lv)
     fig.suptitle("cckb-click の断面（作った立体を切った物。灰 = 枠・赤 = キャップ・緑 = 基板・黒 = スイッチ・茶 = 部品・黄 = ねじ）", fontsize=12)
     fig.tight_layout()
     p = out / "main_sections.png"
@@ -167,5 +170,58 @@ def screw_coupon(out):
     return p
 
 
+def corner(out):
+    """右手前の角: 上から（蓋あり・なし）・つまみの高さで切った図・断面 3 枚（電池の中心／蓋の山／つまみ）。"""
+    z = LAY.z()
+    f = LAY.frame
+    cv = LAY.cover()
+    lv = [(0.0, "基板の上面 0"), (z["frame_under"], "枠の下面 3.0"), (z["frame_top"], "枠の上面 5.0")]
+    with_c, without = _scene(cover=True), _scene()
+    knobs = [(COL["knob"], C.knob_solid(1)), ("#888888", C.knob_solid(-1))]
+    fig, axs = plt.subplots(2, 3, figsize=(20, 11))
+    lim = (106, f[2] + 1.5, f[1] - 1.5, -29)
+    _draw(axs[0][0], with_c, lambda p: F.xy(p, 4.65), lim, "上から（z 4.65 で切った図）・蓋あり（橙）")
+    _draw(axs[0][1], without, lambda p: F.xy(p, 4.65), lim, "同じ・蓋なし（電池の上面が指の切り欠きから見える）")
+    _draw(axs[0][2], without + knobs, lambda p: F.xy(p, 0.7), lim, "つまみの高さ（z 0.7）で切った図。黒 = 入（奥）・灰 = 切（手前）のつまみ")
+    for ax in axs[0]:
+        ax.plot([f[2], f[2]], [lim[2], lim[3]], ":", color="#d00000", lw=0.6)
+        ax.plot([lim[0], lim[1]], [f[1], f[1]], ":", color="#d00000", lw=0.6)
+    zl = (-2.4, 6.0)
+    _draw(axs[1][0], with_c, lambda p: yz(p, S.CLIP_AT[0]), (-52, -40, *zl), "断面（電池の中心 x）・蓋あり: 手前の板と電池の隙 0.51・上の板はクリップの上", lv)
+    _draw(axs[1][1], with_c, lambda p: yz(p, cv["bump"][0][0]), (-52, -44, *zl), "断面（蓋の山の x）: 腕の先の山が、口の上の壁の下面の溝に入る", lv)
+    on = _scene() + [(COL["knob"], C.knob_solid(1))]
+    _draw(axs[1][2], on, lambda p: F.xz(p, S.PSW_AT[1] + S.PSW_ON * S.PSW_TRAVEL / 2), (136, 148, *zl),
+          "断面（つまみが入の y）: つまみの先は枠の外面（赤の点線）の 1.35 内側", lv)
+    axs[1][2].plot([f[2], f[2]], zl, ":", color="#d00000", lw=0.6)
+    fig.suptitle("右手前の角（作った立体を切った物）: 電源スイッチのつまみの切り欠きと、差し込み式の電池の蓋", fontsize=12)
+    fig.tight_layout()
+    p = out / "main_corner.png"
+    fig.savefig(p, dpi=80)
+    plt.close(fig)
+    return p
+
+
+def corner_coupon(out):
+    """角の試し刷り: 上から（2 つの高さ）と断面 2 枚。"""
+    cc = C.corner_coupon()
+    box = C.corner_coupon_box()
+    cv = LAY.cover()
+    scene = [(COL["pcb"], cc["base"]), (COL["frame"], cc["frame"]), (COL["bat"], cc["cell"]), (COL["knob"], cc["knob"]), (COL["cover"], cc["cover"])]
+    fig, axs = plt.subplots(2, 2, figsize=(17, 11))
+    lim = (box[0] - 3, box[2] + 1.5, box[1] - 1.5, box[3] + 3)
+    _draw(axs[0][0], scene, lambda p: F.xy(p, 4.65), lim, "上から（z 4.65）: 枠の切れ端（灰）・蓋（橙）")
+    _draw(axs[0][1], scene, lambda p: F.xy(p, 0.7), lim, "当て板の上 0.7: スイッチの本体の代わり（溝とつまみの小片）・クリップの代わり（止めと案内）・電池の代わり")
+    zl = (-2.2, 5.6)
+    lv = [(0.0, "当て板の上面 0（基板の上面）"), (5.0, "枠の上面 5.0")]
+    _draw(axs[1][0], scene, lambda p: yz(p, S.CLIP_AT[0]), (box[1] - 1, box[3] + 3, *zl), "断面（電池の中心 x）", lv)
+    _draw(axs[1][1], scene, lambda p: F.xz(p, S.PSW_AT[1] + S.PSW_TRAVEL / 2), (box[0] - 3, box[2] + 1, *zl), "断面（つまみが入の y）", lv)
+    fig.suptitle("角の試し刷り coupon_corner（本番の枠から切り出した右手前の角 ＋ 当て板。緑 = 当て板と代わりの物・橙 = 蓋・黒 = つまみの小片）", fontsize=12)
+    fig.tight_layout()
+    p = out / "coupon_corner.png"
+    fig.savefig(p, dpi=85)
+    plt.close(fig)
+    return p
+
+
 def render_all(out):
-    return [sections(out), top(out), tilt(out), screw_coupon(out)]
+    return [sections(out), top(out), tilt(out), screw_coupon(out), corner(out), corner_coupon(out)]

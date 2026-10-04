@@ -1,4 +1,4 @@
-"""cckb-click の本番の刷る物（枠 2 枚・キャップの板 2 枚）を、精度優先の設定で**実際にスライスする**。
+"""cckb-click の本番の刷る物（枠 2 枚・キャップの板 2 枚・電池の蓋）を、精度優先の設定で**実際にスライスする**。
 
     .venv/bin/python3 projects/cckb-click/click_case.py                 # 先に STL を出す
     .venv/bin/python3 projects/cckb-click/tools/slice_main.py            # 0.4 ノズル・Bambu Studio
@@ -21,7 +21,7 @@ sys.path.insert(0, str(HERE.parent))
 
 import slice_precise as SP  # noqa: E402
 
-STEMS = ("frame_left", "frame_right", "caps_1u", "caps_wide")
+STEMS = ("frame_left", "frame_right", "caps_1u", "caps_wide", "cover_battery")
 PLA = 1.24                  # g/cm3
 
 

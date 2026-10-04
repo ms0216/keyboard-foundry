@@ -2,13 +2,15 @@
 
     tools/kb cckb-click pcb                                          # 未配線の板（置く・ネットを張る）
     "$KICAD_PYTHON" projects/cckb-click/tools/route_click.py         # ここ。配線 → ベタ → GND ビア
+    "$KICAD_PYTHON" projects/cckb-click/tools/route_click.py --freeroute   # SPI・電源の枝を Freerouting で引き直す（形が変わる → 監査し直す）
     .venv/bin/python3 -m foundry.drc projects/cckb-click/pcb/cckb-click_main.kicad_pcb
 
 順序（docs/knowledge/pcb.md。CCKB の projects/cckb/tools/route_pcb.py と同じ）:
   1. 行列を決まった形で引く（click_routes.plan。板の上のパッドから）
   2. GND の SMD パッドに同じ層のスタブ → ビア（ベタが偶然被っている接続に頼らない）
-  3. 残り（SPI・595 どうし・電源・電池電圧）を Freerouting 2.3.0 で。行列（行・列・XIAO と 595 からの線まで）は自分で引き切って
-     あるので、網ごと外して線を障害物（protect）として渡す
+  3. 残り（SPI・595 どうし・電源の枝）は、**監査した板で Freerouting 2.3.0 が引いた形を置き直す**（pcb/freerouted.json）。
+     Freerouting は同じ入力でも引くたびに形が変わるので、板のほかの所を直すたびに監査した配線が変わらないようにした（2026-10-04）。
+     `--freeroute` を付けると Freerouting で引き直して freerouted.json を書き直す（行列は網ごと外して線を障害物として渡す）
   4. SES の取り込みは既存の配線を作り直す → 行列と GND のスタブが残っているかを数えて確かめる。ルール領域の層も戻す
   5. 両面の GND ベタ → リング（アンテナの禁止域の縁）→ フェンス → 格子 → 離島 → 塗り直し
   6. 保存と記録（route.json）
@@ -57,7 +59,7 @@ from foundry.project import load                        # noqa: E402
 
 SRC = PROJ / "pcb" / "unrouted" / "cckb-click_main.kicad_pcb"
 OUT = PROJ / "pcb" / "cckb-click_main.kicad_pcb"
-PREWIRED = re.compile(r"GND|SW\d+_D|ROW\d+|COL\d+|VBAT_SENSE")   # 自分で引き切った網（DSN から外す。線は protect）
+PREWIRED = re.compile(r"GND|SW\d+_D|ROW\d+|COL\d+|VBAT_SENSE|VBAT_IN")   # 自分で引き切った網（DSN から外す。線は protect）
 FIXED = re.compile(r"(?!)")                             # 最後の 1 本だけ Freerouting に繋がせる網（いまは無い）
 # Freerouting の「最適化」の段を回さない。行列の 628 本を障害物（protect）として渡すと、最適化の 1 回が 17 分かかり、
 # 点数も配線も変わらなかった（2026-10-03 実測: 配線は 17 秒で未配線 0・最適化 2 回で 34 分）。配線の良し悪しは KiCad の DRC と検査が見る
@@ -225,6 +227,50 @@ def freeroute(board, work):
     return info
 
 
+FROZEN = PROJ / "pcb" / "freerouted.json"
+
+
+def _key(net, layer, a, b):
+    a, b = (round(a[0], 3), round(a[1], 3)), (round(b[0], 3), round(b[1], 3))
+    return (net, layer, min(a, b), max(a, b))
+
+
+def lay_frozen(board):
+    """監査した板で Freerouting が引いた線とビア（pcb/freerouted.json）を置く。(線の数, ビアの数, 記録)。"""
+    rec = json.loads(FROZEN.read_text())
+    for t in rec["tracks"]:
+        if PREWIRED.fullmatch(t["net"]) or board.FindNet(t["net"]) is None:
+            raise SystemExit(f"freerouted.json の網 {t['net']} は置けない（自分で引く網か、板に無い）")
+        rp.lay_segments(board, [(t["net"], t["layer"], tuple(t["a"]), tuple(t["b"]))], width=t["w"])
+    rp.lay_vias(board, [(v["net"], tuple(v["at"])) for v in rec["vias"]])
+    return len(rec["tracks"]), len(rec["vias"]), rec
+
+
+def write_frozen(board, planned, planned_vias):
+    """Freerouting が引いた線とビア（自分で引いた網・決まった線を除く）を pcb/freerouted.json に書く。"""
+    plan = {_key(n, l, a, b) for n, l, a, b in planned}
+    pv = {(n, (round(p[0], 3), round(p[1], 3))) for n, p in planned_vias}
+    tracks, vias = [], []
+    for t in board.GetTracks():
+        n = t.GetNetname()
+        if PREWIRED.fullmatch(n or ""):
+            continue
+        if t.GetClass() == "PCB_VIA":
+            p = rp.cad(t.GetPosition())
+            if (n, (round(p[0], 3), round(p[1], 3))) not in pv:
+                vias.append(dict(net=n, at=[round(p[0], 6), round(p[1], 6)]))
+        else:
+            a, b = rp.cad(t.GetStart()), rp.cad(t.GetEnd())
+            if _key(n, t.GetLayerName(), a, b) not in plan:
+                tracks.append(dict(net=n, layer=t.GetLayerName(), a=[round(a[0], 6), round(a[1], 6)], b=[round(b[0], 6), round(b[1], 6)],
+                                   w=round(pcbnew.ToMM(t.GetWidth()), 4)))
+    tracks.sort(key=lambda t: (t["net"], t["layer"], t["a"], t["b"]))
+    vias.sort(key=lambda v: (v["net"], v["at"]))
+    FROZEN.write_text(json.dumps(dict(note="route_click.py --freeroute が書いた。**形が変わったので監査し直す**", source_sha256=None,
+                                      freerouting=rp.JAR.name, tracks=tracks, vias=vias), ensure_ascii=False, indent=1) + "\n")
+    return len(tracks), len(vias)
+
+
 def drop_one_layer_vias(board):
     """Freerouting が引いた網のビアのうち、片方の層にしか線・パッドが付いていない物を消す（消した数）。
     Freerouting は先にピンの脇へビアを打ち（Fanout）、使わなかったビアを表の線の途中に残す（KiCad の via_dangling）。
@@ -284,7 +330,8 @@ def restore_rule_areas(board):
         raise SystemExit(f"ルール領域が足りない: {set(want) - seen}")
 
 
-def main():
+def main(argv=()):
+    rerun = "--freeroute" in argv or not FROZEN.exists()
     proj = load(PROJ)
     lay = click_layout.Layout(proj)
     work = PROJ / "pcb" / "route_work"
@@ -302,9 +349,15 @@ def main():
                   for t in board.GetTracks() if t.GetClass() == "PCB_TRACK" and t.GetNetname() == "GND"]
     fan_vias = [rp.cad(t.GetPosition()) for t in board.GetTracks() if t.GetClass() == "PCB_VIA" and t.GetNetname() == "GND"]
     print(f"   行列 {n_mx} 区間・ビア {len(mvias)} / 電源の決まった線 {n_pw} 区間 / GND ファンアウト {len(fan)} 個", flush=True)
-    info = freeroute(board, work)
-    print(f"   Freerouting: 外した網 {len(info['stripped'])} 本 / protect の線 {info['protected_wires']}"
-          f" / 採った余裕 {info['margin_um']}µm（試した {info['tried']}）", flush=True)
+    if rerun:
+        info = freeroute(board, work)
+        print(f"   Freerouting: 外した網 {len(info['stripped'])} 本 / protect の線 {info['protected_wires']}"
+              f" / 採った余裕 {info['margin_um']}µm（試した {info['tried']}）", flush=True)
+        frozen = None
+    else:
+        n_ft, n_fv, frozen = lay_frozen(board)
+        info = dict(margin_um=None, tried=[])
+        print(f"   監査した板の Freerouting の線を置き直した: 線 {n_ft}・ビア {n_fv}（{frozen['source_sha256'][:8]}… から）", flush=True)
     restore_rule_areas(board)
     miss = rp.tracks_present(board, segs)
     if miss:
@@ -333,6 +386,8 @@ def main():
     n_dup = drop_duplicate_tracks(board)
     n_thin = rp.widen_thin(board)
     n_dangling = drop_one_layer_vias(board)
+    if rerun:
+        print("   freerouted.json を書き直した: 線 %d・ビア %d" % write_frozen(board, segs + wide, mvias), flush=True)
     print(f"   片方の層にしか繋がっていない Freerouting のビアを消した: {n_dangling}", flush=True)
     print(f"   SES 後に置き直した: 行列 {len(miss)} / ビア {n_mv} / GND スタブ {len(have_gnd)} / 細い線 {n_thin} / 重なった線を消した {n_dup}", flush=True)
 
@@ -386,6 +441,8 @@ def main():
     rec = dict(board=OUT.name, unrouted=SRC.name, unrouted_fingerprint=boardhash.fingerprint(SRC),
                unrouted_sha256=hashlib.sha256(SRC.read_bytes()).hexdigest(),
                freerouting=rp.JAR.name, passes=rp.PASSES, freerouting_options=[OPTIMIZER_OFF], margin_um=info["margin_um"], margins_tried=info["tried"],
+               freerouted="rerun" if rerun else "replayed", freerouted_from=None if rerun else frozen["source_sha256"],
+               freerouted_tracks=None if rerun else len(frozen["tracks"]), freerouted_vias=None if rerun else len(frozen["vias"]),
                matrix_segments=n_mx, matrix_vias=len(mvias), power_segments=n_pw, gnd_fanout=len(fan), ring=n_ring, fence=n_fence, grid=n_grid,
                one_layer_vias_removed=n_dangling, duplicate_tracks_removed=n_dup, band_vias_removed=len(in_band), island_vias=n_is, second_island_vias=n_dbl, declared_vias=n_decl,
                single_via_islands=[dict(layer="F.Cu" if l_ == pcbnew.F_Cu else "B.Cu", area_mm2=round(a, 2), length_mm=round(L, 2))
@@ -399,4 +456,4 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(sys.argv[1:]))

@@ -9,7 +9,8 @@
 **板の上のパッドの実際の位置から引く**（pcbnew が回転まで解いた世界座標。tools/route_pcb.py が板を読んで渡す）。
 線と板の物（パッド・穴・ねじの頭の禁止域・外形）の間隔は、CCKB の matrix_routes.Obstacles で自分で確かめる（近ければ落とす）。
 XIAO（D2〜D6）から行のバスまでも決まった形で引く（spec.XIAO_ESCAPE）。最後の判定は KiCad の DRC。
-595 から列までも決まった形で引く（fanout）。SPI・電源は Freerouting が引く。
+595 から列までも決まった形で引く（fanout）。電池の＋（VBAT_IN）も決まった形（vbat_in_run）。
+SPI・595 どうし・電源の枝は、監査した板で Freerouting が引いた形を置き直す（pcb/freerouted.json・tools/route_click.py）。
 
 KiCad の Python（3.9）からも読むので標準ライブラリだけ。座標は CAD（Y 上向き・mm）。
 """
@@ -206,6 +207,39 @@ def cap_land_run(lay, by, wide, segs, obs):
     if bad:
         raise ValueError(f"{net} {a}->{b} が近い: {bad[:3]}")
     return [(net, F, _r(a), _r(b))]
+
+
+def vbat_in_run(lay, by, segs, obs_f, obs_b, put_via):
+    """電池の＋（spec.VBAT_IN_RUN）。クリップの左右の＋のランドを電池の下の裏で結び、右のランドから電源スイッチの共通の端子へ。
+    [(net, layer, a, b)]（電源の太さ）。"""
+    s = lay.s
+    how = s.VBAT_IN_RUN
+    net = how["net"]
+    plus = sorted(by[(how["clip"], "1")], key=lambda q: q["x"])
+    t = by[tuple(how["to"])][0]
+    if len(plus) != 2 or any(q["net"] != net for q in plus + [t]):
+        raise ValueError(f"{net}: クリップの＋のランド {len(plus)} 個・網 {[q['net'] for q in plus + [t]]}")
+    le, ri = plus
+    if abs(le["y"] - ri["y"]) > 1e-3 or not (ri["x"] < how["riser_x"] < t["x"]) or not (how["under_y"] < ri["y"] < t["y"]):
+        raise ValueError(f"{net}: ランドと端子の並びが想定と違う（左 {le['x'], le['y']}・右 {ri['x'], ri['y']}・端子 {t['x'], t['y']}）")
+    va = (round(le["x"] - how["left_via_dx"], 4), le["y"])
+    vb = (how["right_via_x"], how["under_y"])
+    runs = ((F, obs_f, (le["x"], le["y"]), va), (B, obs_b, va, (va[0], vb[1])), (B, obs_b, (va[0], vb[1]), vb),
+            (F, obs_f, vb, (ri["x"], vb[1])), (F, obs_f, (ri["x"], vb[1]), (ri["x"], ri["y"])),
+            (F, obs_f, (ri["x"], ri["y"]), (how["riser_x"], ri["y"])), (F, obs_f, (how["riser_x"], ri["y"]), (how["riser_x"], t["y"])),
+            (F, obs_f, (how["riser_x"], t["y"]), (t["x"], t["y"])))
+    half = s.POWER_TRACK_W / 2
+    out = []
+    for layer, obs, p, q in runs:
+        bad = obs.problems(net, layer, p, q, half=half)
+        bad += [(m, c, d) for m, lyr, c, d in segs
+                if lyr == layer and m != net and mr.seg_seg_dist(p, q, c, d) < mr.CLEAR + half + mr.HALF_W - 1e-9]
+        if bad:
+            raise ValueError(f"{net} {layer} {p}->{q} が近い: {bad[:3]}")
+        out.append((net, layer, _r(p), _r(q)))
+    put_via(net, va)
+    put_via(net, vb)
+    return out
 
 
 def v3v3_run(lay, by, segs, obs_f, obs_b, put_via):
@@ -409,6 +443,7 @@ def plan(project, pads, edge=None, head_keepouts=None):
         put_via("GND", (x, s.PART_AT["U1"][1]))
     wide = power_run(lay, by, segs, obs_f)
     wide += cap_land_run(lay, by, wide, segs, obs_f)
+    wide += vbat_in_run(lay, by, segs + wide, obs_f, obs_b, put_via)
     wide += v3v3_run(lay, by, segs, obs_f, obs_b, put_via)
     wide += gnd_return_run(lay, by, segs + wide, obs_f, obs_b, put_via)
 
