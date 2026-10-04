@@ -11,6 +11,7 @@ G-code から確かめること（1 つでも外れたら NG・刷るファイ�
      - 切れ目 3 本（下の帯と下の棒の間・棒と棒の間・上の棒と上の帯の間）の真ん中に、1 層目でも中ほどの層でも線が無い（線の中心まで 0.3 以上）
      - 棒の真ん中には線がある
      - 棒の厚さより上の層では、棒のあった所に線が無い（棒は厚さぶんで終わる = 奥へ撓める）
+     - 棒の先の下の、硬い受けとの隙（0.2 = いちばん狭い切れ目）にも線が無い
 絵: build/cckb-click/slice_cover.png（蓋 3 つの 1 層目と中ほどの層の線。見ること）。
 """
 
@@ -30,6 +31,7 @@ import slice_v2 as SV  # noqa: E402
 
 STEMS = ("coupon_corner_plate", "cover_battery")
 SLIT_CLEAR = 0.3            # 切れ目の真ん中から、いちばん近い線の中心まで（切れ目 0.4 の半分 ＋ 線の幅 0.42 の半分 = 0.41 が設計）
+REST_CLEAR = 0.24           # 棒の先の下の受けとの隙 0.2 の真ん中から（0.1 ＋ 0.21 = 0.31 が設計。1 層目は面取りで広い）
 
 
 def covers(stem):
@@ -37,8 +39,9 @@ def covers(stem):
     import click_case as C
 
     if stem == "cover_battery":
-        part = C.cover_print()
-        return part.bounding_box(), {"cover": (part.bounding_box(), C.S.COVER_MAIN)}
+        plate = C.printables()["cover_battery"]                             # 予備を含めて COVER_SPARE 個
+        return plate.bounding_box(), {f"cover{i + 1}of{C.S.COVER_SPARE}": (q.bounding_box(), C.S.COVER_MAIN)
+                                      for i, q in enumerate(sorted(plate.solids(), key=lambda q: q.bounding_box().min.Y))}
     layout = dict(C.corner_coupon_layout())
     return C.corner_coupon_plate().bounding_box(), {n: (p.bounding_box(), int(n[-1])) for n, p in layout.items() if n.startswith("cover")}
 
@@ -53,7 +56,10 @@ def probes(bb, n):
     at = lambda z: (x, bb.max.Y - z)                                    # noqa: E731
     (a0, a1), (b0, b1) = cv["band"]["A"], cv["band"]["B"]
     return dict(slit={"下の帯と下の棒の間": at((cv["z_sill"][1] + a0) / 2), "棒と棒の間": at((a1 + b0) / 2), "上の棒と上の帯の間": at((b1 + cv["z_strip"]) / 2)},
-                leaf={"下の棒": at((a0 + a1) / 2), "上の棒": at((b0 + b1) / 2)}, t=cv["t"])
+                leaf={"下の棒": at((a0 + a1) / 2), "上の棒": at((b0 + b1) / 2)}, t=cv["t"], b=a1 - a0,
+                # 棒の先の下の受けとの隙（COVER_TIP_REST 0.2 = いちばん狭い切れ目）: 右は下の棒の下・左は上の棒の下
+                rest={"下の棒の先の下（右）": (bb.max.X - 5.0, bb.max.Y - (a0 - C.S.COVER_TIP_REST / 2)),
+                      "上の棒の先の下（左）": (bb.min.X + 5.0, bb.max.Y - (b0 - C.S.COVER_TIP_REST / 2))})
 
 
 def nearest(layer, x, y):
@@ -90,11 +96,16 @@ def check(stem, gcode, rc, slit_clear=SLIT_CLEAR, shift=(0.0, 0.0)):
             facts[f"{name}: 切れ目（{label}）の真ん中から線まで（z {low}・{mid}）"] = tuple(d.values())
             if min(d.values()) < slit_clear:
                 problems.append(f"{name}: 切れ目（{label}）が線で埋まっている {d}（{slit_clear} 以上）")
+        for label, (x, y) in pr["rest"].items():
+            d = {z: round(nearest(layers[z], x + ox, y + oy), 3) for z in (low, mid)}
+            facts[f"{name}: {label}の隙の真ん中から線まで（z {low}・{mid}）"] = tuple(d.values())
+            if min(d.values()) < REST_CLEAR:
+                problems.append(f"{name}: {label}の隙（0.2）が線で埋まっている {d}（{REST_CLEAR} 以上）")
         for label, (x, y) in pr["leaf"].items():
             d_in, d_up = round(nearest(layers[mid], x + ox, y + oy), 3), round(nearest(layers[above], x + ox, y + oy), 3)
             facts[f"{name}: {label}の真ん中から線まで（z {mid}・棒より上の z {above}）"] = (d_in, d_up)
-            if d_in > 0.25:
-                problems.append(f"{name}: {label}の所に線が無い（z {mid}・{d_in}）")
+            if d_in > pr["b"] / 2 - 0.15:                       # 棒の中（縁から 0.15 より内）に、線の中心が 1 本はある
+                problems.append(f"{name}: {label}の所に線が無い（z {mid}・{d_in}・棒の高さ {pr['b']:.1f}）")
             if d_up < 0.5:
                 problems.append(f"{name}: {label}が厚さ {pr['t']} より上の層（z {above}）にもある（{d_up}）= 奥へ撓めない")
     return problems, facts

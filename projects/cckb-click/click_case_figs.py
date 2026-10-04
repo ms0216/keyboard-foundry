@@ -288,7 +288,7 @@ def cover_latch(out):
     _plain(ax)
     ax = fig.add_subplot(gs[0, 3:])
     off = _corner_scene(frame, cover=False)
-    _draw(ax, off, lambda p: F.xy(p, 4.65), lim, "② 蓋を外した所（電池が見える。左右に三角の溝と、手前の角の歯）")
+    _draw(ax, off, lambda p: F.xy(p, 4.65), lim, "② 蓋を外した所（電池が見える。左右に耳の溝と、手前の角の歯）")
     ax.annotate("", (cx, f[1] - 2.0), (cx, cy - r + 1.5), arrowprops=dict(arrowstyle="->", color=RED, lw=1.8))
     ax.text(cx + 1.0, f[1] - 1.5, "電池は手前へ出す", fontsize=9.5, color=RED)
     _plain(ax)
@@ -301,8 +301,8 @@ def cover_latch(out):
     ax.text(cx, -44.5, "電池", fontsize=10, ha="center", color="#444")
     _plain(ax)
     ax = fig.add_subplot(gs[1, 3:])
-    pushed = _corner_scene(frame, deflect=num["release_max"])
-    _draw(ax, pushed, lambda p: F.xy(p, za), lim, f"④ 同じ高さ・棒の真ん中を指で押し込んだ所（先が {num['release_max']:.1f} 奥へ逃げる）")
+    pushed = _corner_scene(frame, deflect=num["release_seated"])
+    _draw(ax, pushed, lambda p: F.xy(p, za), lim, f"④ 同じ高さ・棒を押し込んだ所（先が {num['release_seated']:.1f} 奥へ逃げて、歯の下から外れる）")
     ax.annotate("", (cx, cv["yf"] + 0.4), (cx, f[1] - 2.0), arrowprops=dict(arrowstyle="->", color=RED, lw=2.0))
     ax.text(cx + 0.8, f[1] - 1.7, "指で押す", fontsize=10, color=RED)
     _label(ax, "先が歯の下から\n外れた", (cv["x1"] - 0.9, cv["yf"] + 1.5), (cv["x1"] + 3.0, f[1] - 1.2), RED)
@@ -315,10 +315,10 @@ def cover_latch(out):
     _label(ax, "下の棒 → 右の歯の下", (cx + 3.0, za), (cx + 3.0, -1.7), RED)
     _label(ax, "歯（枠）", (cv["x0"] + 0.5, 4.5), (cv["x0"] - 3.3, 5.7), RED)
     _label(ax, "歯（枠）", (cv["x1"] - 0.5, 3.8), (cv["x1"] + 3.3, 5.7), RED)
-    _label(ax, "真ん中のここを押す", (cx, (za + zb) / 2), (cx - 0.5, -2.2))
+    _label(ax, "2 本にまたがって押す（爪の先）", (cx, (za + zb) / 2), (cx - 0.5, -2.1))
     _plain(ax)
     ax = fig.add_subplot(gs[2, 3:5])
-    lifted = _corner_scene(frame, lift=2.6, deflect=num["release_max"])
+    lifted = _corner_scene(frame, lift=2.6, deflect=num["release_seated"])
     _draw(ax, lifted, lambda p: F.xz(p, cv["yf"] + 0.45 + 0.3), (xl[0], xl[1], -2.6, 9.4), "⑥ 棒を押したまま持ち上げた所（まっすぐ上へ抜ける）")
     ax.annotate("", (cx, 9.2), (cx, 7.8), arrowprops=dict(arrowstyle="->", color=RED, lw=2.0))
     _plain(ax)
@@ -327,17 +327,19 @@ def cover_latch(out):
     _label(ax, "棒", (cv["yf"] + 0.5, zb), (-51.6, 5.6), RED)
     _plain(ax)
 
+    beam = C.cover_beam()
     _note(fig.add_subplot(gs[3, :2]),
-          "開け方（道具は要らない）\n"
-          "1. 手前の面の真ん中（2 本の棒）を、指の先で押し込む\n"
-          f"   （{num['push']:.1f} mm ほど。軽い力）\n"
-          "2. 押したまま、指を上へずらして蓋を持ち上げる\n"
+          "開け方（道具は要らない。爪を使う）\n"
+          "1. 手前の面の、上下に並んだ 2 本の棒を、爪の先で\n"
+          f"   2 本いっしょに押し込む（真ん中で {num['mid_push']:.1f} mm・約 {num['mid_force'] * 102:.0f} g の力）\n"
+          "   ※ 1 本だけ押しても開かない（片側が 1 mm ほど浮くだけ）\n"
+          "2. 押したまま、爪を上へずらして蓋を持ち上げる\n"
           "   → 蓋が上へ出てくる。つまんで抜く\n\n"
           "閉め方\n"
           "1. 蓋を、上の板を上・棒を手前にして、口の真上に置く\n"
           "2. まっすぐ下へ押す。上面が枠と揃うまで\n"
-          "   （棒の先は自分で逃げて、歯の下でパチッと戻る）\n"
-          "3. 上へ引いてみて、抜けないことを確かめる")
+          "   （少し固い: 左右の耳の裏の細い筋が、がたつきを取る）\n"
+          "3. パチッと 2 回（左右）。上へこじって、抜けないことを確かめる")
     _note(fig.add_subplot(gs[3, 2:4]),
           "電池の替え方\n"
           "1. 蓋を開ける（左）\n"
@@ -346,19 +348,22 @@ def cover_latch(out):
           "4. 蓋を閉める（左）\n\n"
           "蓋は必ず付ける。\n"
           "電池を手前へ止めている物は、この蓋だけ\n"
-          "（金具は電池を上から押さえているだけ）")
+          "（金具は電池を上から押さえているだけ）\n\n"
+          "蓋は小さい（0.2 g）。予備を 1 つ一緒に刷ってある")
     _note(fig.add_subplot(gs[3, 4:]),
-          "なぜ外れないか\n"
-          "・電池が蓋を手前へ押す力は、蓋の左右の耳が枠の溝の\n"
-          "  斜めの面に当たって止まる。ばねは使っていない\n"
-          "・蓋が外れる向きは「上」だけ。上へは、棒の先が枠の歯の\n"
-          "  下に当たって止まる（直角の面どうし）\n"
-          "・棒を押し込む ＋ 持ち上げる、の 2 つを同時にしないと\n"
-          "  開かない。振る・落とす・電池が中から押す、では開かない\n\n"
+          "外れにくさ（正直な所）\n"
+          "・電池が蓋を手前へ押す力は、左右の耳が枠の溝の斜めの面に\n"
+          "  当たって止まる。ばねは使っていない\n"
+          "・上へは、2 本の棒の先が枠の歯の下に当たる（直角の面）\n"
+          "・開くのは「2 本とも押し込む ＋ 持ち上げる」とき。\n"
+          "  ただし爪 1 つでできる = 細い物が 2 本にまたがって\n"
+          "  押しながら上へ擦れば、開きうる。力も小さい\n\n"
           "数（計算と立体から。刷った物の値ではない）\n"
-          f"・落下 {S.DROP_G:.0f} G で電池が押す力 {num['cell_force']:.0f} N → 耳の面で {num['ear_pressure']:.1f} MPa\n"
-          f"・棒を押す力 2 本で {2 * num['push_force']:.1f} N・付け根のひずみ {num['strain']:.1f} %（限度 {num['strain_limit']:.1f} %）\n"
-          f"・同じ落下で、棒が自分の重さで動く量 {num['drop_tip']:.2f}（外れるのは {num['release'] - S.COVER_RECESS:.2f} から）")
+          f"・落下 {S.DROP_G:.0f} G で電池が押す力 {num['cell_force']:.0f} N → 蓋の胴の引っ張り {beam['tension']:.0f} MPa\n"
+          f"  （強さ {S.PLA_TENSILE:.0f} の {beam['tension'] / S.PLA_TENSILE:.2f} 倍）\n"
+          f"・棒の付け根のひずみ {num['mid_strain']:.1f} %（上限 {num['strain_use']:.1f} %）\n"
+          f"・同じ落下で、棒が自分の重さで揺れる量 {num['drop_tip']:.2f}\n"
+          f"  （外れるのは {num['release_seated'] - 0.1:.2f} から = 余裕 {(num['release_seated'] - 0.1) / num['drop_tip']:.1f} 倍）")
     fig.suptitle("電池の蓋（道具なし・上から落とし込む）　　橙 = 蓋・緑 = 基板・灰 = 枠と電池・紫 = 電池クリップ・黒 = 底のシート。基板は変えない（穴 H30・H31 は使わない）",
                  fontsize=13)
     p = out / "cover_latch.png"
@@ -391,13 +396,12 @@ def coupon_cover_howto(out):
     ax.set_title("0. 刷り上がった板を上から（7 個・サポート無し・向きはそのまま）。蓋は手前の面を下にして立っている", fontsize=11)
     _plain(ax)
     ax = fig.add_subplot(gs[0, 3:])
-    lim3 = (cv["x0"] - 3.5, cv["x1"] + 3.5, cv["y1"] - 2.2, cv["y1"] + 1.2)
     for i, n in enumerate(sorted(S.COVER_VARIANTS)):
         v = S.COVER_VARIANTS[n]
         part = Pos(0, 3.4 * i - 3.4, 0) * C.cover_solid(n, 0.0, True)
         F.fill(ax, F.xy(part, 4.65), COL["cover"], lw=0.6)
         ax.text(cv["x0"] - 1.0, cv["y1"] - 1.6 + 3.4 * i - 3.4, f"蓋 {n}", fontsize=11, ha="right", va="center", color=RED)
-        ax.text(cv["x1"] + 1.0, cv["y1"] - 1.6 + 3.4 * i - 3.4, f"切り欠き {n} 個: 棒の厚さ {v['t']:.1f}・隙 {v['clear']:.2f}", fontsize=10, ha="left", va="center")
+        ax.text(cv["x1"] + 1.0, cv["y1"] - 1.6 + 3.4 * i - 3.4, f"切り欠き {n} 個: 歯との隙 {v['gap']:.1f}・筋 {v['rib']:.2f}", fontsize=10, ha="left", va="center")
     ax.set_xlim(cv["x0"] - 7, cv["x1"] + 24)
     ax.set_ylim(cv["yf"] - 4.6, cv["y1"] + 4.2)
     ax.set_aspect("equal")
@@ -425,26 +429,31 @@ def coupon_cover_howto(out):
           "4. 裏返して、角の近くの穴 1 つに M2×4 を締める（枠が当て板に留まる）\n"
           "   ※ 電池の左右の穴 2 つは使わない（何も入れない）\n"
           "5. 表に返し、蓋を、上の板を上・棒を手前にして、口へまっすぐ押し下げる\n"
-          "   上面が枠と揃って、パチッと音がすれば入っている\n"
-          "6. 蓋 1 → 2 → 3 の順に、同じことを試す\n\n"
-          "開け方: 手前の面の真ん中（2 本の棒）を指の先で押し込み、\n"
-          "        押したまま指を上へずらす。蓋が上へ出てきたら、つまんで抜く")
+          "   上面が枠と揃って、パチッと 2 回（左右）鳴れば入っている\n"
+          "6. 蓋 1 → 2 → 3 の順に、同じことを試す\n"
+          "   （1 = 歯との隙が狭い・筋が低い／3 = 隙が広い・筋が高い）\n\n"
+          "開け方: 手前の面の、上下に並んだ 2 本の棒を、爪の先で 2 本いっしょに\n"
+          "        押し込み、押したまま爪を上へずらす。蓋が上へ出てきたら、つまんで抜く", size=10)
     _note(fig.add_subplot(gs[2, 3:]),
           "手で見る所（蓋 1・2・3 のそれぞれで。結果を教えてください）\n"
-          "a. 押し下げるだけで入るか・パチッと留まるか・固すぎないか\n"
-          "b. 入れた後、蓋の上の縁を爪で上へこじっても抜けないか\n"
+          "a. 押し下げるだけで入るか・左右ともパチッと留まるか・固すぎないか\n"
+          "b. 入れた後、上の縁を爪で上へこじっても抜けないか（左の端・右の端・真ん中）\n"
           "c. 蓋ががたつかないか・上面と手前の面が枠と段なく揃うか\n"
-          "d. 【振る】全体を持って、上下・前後・左右に強く 10 回ずつ振る。\n"
-          "   裏返して振る。蓋が浮かないか・外れないか\n"
-          "e. 【電池を押す】蓋を付けたまま裏返す。当て板の真ん中の長い穴から、\n"
-          "   細い棒（つまようじ・六角レンチ）を電池の代わりの穴に差して、\n"
-          "   手前（蓋の方）へ強く押す。蓋が動かないか・前へ出てこないか\n"
-          "f. 【落とす】机の高さから、布団か絨毯の上へ 3 回落とす。蓋は付いたままか\n"
-          "g. 開けられるか: 真ん中を押して上へ。片手でできるか・何回で慣れるか\n"
-          "h. 開け閉めを 20 回。棒が白くならないか・戻りが悪くならないか・折れないか\n"
-          "i. 蓋を外して、電池の代わりが爪で出し入れできるか\n\n"
+          "d. 【片方だけ押す】右の端の近くで、下の棒だけを押し込み、右の端を上へこじる。\n"
+          "   どこまで浮くか（mm）・指を離すと戻るか・浮いたままか。左（上の棒）でも同じ\n"
+          "e. 【擦る】ペンの先か、USB の端子の角で、手前の面を下から上へ強く擦る。\n"
+          "   棒の上・端の近く・真ん中。蓋が浮かないか・開かないか\n"
+          "f. 【振る】全体を上下・前後・左右に強く 10 回ずつ。裏返して同じ。\n"
+          "   d で片方が浮いたままになるなら、その状態からも振る\n"
+          "g. 【電池を押す】裏返して、当て板の長い穴から、つまようじを電池の代わりの穴に\n"
+          "   差し、手前（蓋の方）へ強く押す。蓋が動かないか。耳の付け根が白くならないか\n"
+          "h. 【落とす】机の高さ（70 cm）から、板の間か机の上へ、向きを変えて 5 回。\n"
+          "   蓋は付いたままか・片方が浮いていないか（布団の上では試しにならない）\n"
+          "i. 開けられるか: 爪 1 つでできるか・固さ。開け閉めを 20 回して、棒が白く\n"
+          "   ならないか・戻りが悪くならないか\n"
+          "j. 蓋を外して、電池の代わりが爪で出し入れできるか\n\n"
           "教えてほしいこと: 3 つのうち、どれがよいか（または全部だめか）と、\n"
-          "a〜i でだめだった項目。外れた・浮いた場合は、どの動きでか")
+          "a〜j でだめだった項目。外れた・浮いた場合は、どの動きでか", size=10)
     fig.suptitle("蓋の試し刷り（coupon_corner_plate_n04.gcode.3mf・A1 mini・0.4 ノズル・サポート無し）の組み方と見る所　　緑 = 当て板・橙 = 蓋",
                  fontsize=13)
     p = out / "coupon_cover_howto.png"

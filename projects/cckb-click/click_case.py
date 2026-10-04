@@ -211,8 +211,8 @@ def corner_cuts(lay=LAY):
     out["cell_slot"] = _box((cv["x0"], f[1] - 1.0, cv["x1"], cv["y1"]), -1.0, top + 1.0)
     # 蓋の耳の溝（口の左右の壁を、上から下まで縦に）。手前の面は、口の縁から外へ 45° で奥へ下がる = 電池に押された蓋の耳を受ける面
     yl, yg = cv["y_face"], cv["y_groove"]
-    left = [(cv["x0"] + EPS, yl - EPS), (cv["x0"] + EPS, yg), (cv["gx"][0], yg)]
-    right = [(cv["x1"] - EPS, yl - EPS), (cv["gx"][1], yg), (cv["x1"] - EPS, yg)]
+    left = [(cv["x0"] + EPS, yl - EPS), (cv["x0"] + EPS, yg), (cv["gx"][0], yg), (cv["gx"][0], yl + cv["x0"] - cv["gx"][0])]
+    right = [(cv["x1"] - EPS, yl - EPS), (cv["gx"][1], yl + cv["gx"][1] - cv["x1"]), (cv["gx"][1], yg), (cv["x1"] - EPS, yg)]
     out["cover_groove"] = _union([_prism_z(left, -1.0, top + 1.0), _prism_z(right, -1.0, top + 1.0)])
     pb = lay.psw_body()
     pp = lay.psw_pads()                                                                          # パッドの外接 ＋ PART_CLEAR（本体はその中）
@@ -479,77 +479,100 @@ def _leaf_ends(name, cv):
     return xr, xt, (1 if xt > xr else -1)
 
 
+def _bevel(yf, z, up, x_lo, x_hi, c):
+    """手前の面（ベッドの面）の、高さ z の横の縁を c だけ斜めに落とす立体。up = +1: z から上の側の物の下の縁・−1: z から下の側の物の上の縁。"""
+    pts = [(yf - EPS, z - up * EPS), (yf + c, z - up * EPS), (yf - EPS, z + up * c)]
+    return _prism_x(pts if up > 0 else pts[::-1], x_lo, x_hi)
+
+
 @lru_cache(maxsize=None)
-def cover_solid(variant=None, deflect=0.0, mark=False):
-    """電池の蓋（組んだ位置・CAD）。variant = spec.COVER_VARIANTS の番号（既定は COVER_MAIN）。
-      硬い所  手前の板（下の帯・上の帯）＋ 上の板 ＋ 左右の足（基板に立つ・電池を止める）＋ 左右の耳（45° のくさび。口の壁の溝に入る）。
-              手前の左右の角は、枠の歯の所だけ欠いてある
-      棒      手前の面の 2 本（A = 左の足から右へ・B = 右の足から左へ）。先が枠の歯の下に入る。先の側の足は、棒の高さで抜いてある（先が奥へ逃げる）
-    deflect = 棒の先を奥へ押し込んだ量（検査と絵のための形: 棒は付け根から先へまっすぐ傾く）。
+def cover_solid(variant=None, deflect=0.0, mark=False, ribs=True, press="AB"):
+    """電池の蓋（組んだ位置・CAD。耳の斜めの面と溝の間に隙 COVER_CLEAR を置いた、名目の位置）。variant = spec.COVER_VARIANTS の番号（既定は COVER_MAIN）。
+      硬い所  手前の板（下の帯・上の帯）＋ 上の板 ＋ 左右の足（基板に立つ・電池を止める）＋ 耳の付け根の柱 ＋ 左右の耳（45° のくさび。口の壁の溝に入る）。
+              上の帯は、足の奥の端まで詰まった梁。手前の左右の角は、枠の歯の所だけ欠いてある
+      棒      手前の面の 2 本（A = 左の足から右へ・B = 右の足から左へ）。先が枠の歯の下に入る。先の側の足は、棒の高さで抜いてある（先が奥へ逃げる）。
+              先は COVER_STOP で、耳の付け根の柱に当たって止まる
+      筋      耳の奥の面の、つぶれる筋（ribs=False で無し = 枠との重なりを見る検査の形）
+    deflect = 棒の先を奥へ押し込んだ量（検査と絵のための形: 棒は付け根から先へまっすぐ傾く）。press = 押し込む棒（"AB"・"A"・"B"）。
     mark = 上の板の奥の縁に、variant の数だけ切り欠き（試し刷りで見分ける）。"""
     lay, s = LAY, S
     cv = lay.cover(variant)
     xl, xr = cv["side"]
     yf, top = cv["yf"], cv["z_top"]
     cl = xl - cv["x0"]
-    b, slit, _ = s.COVER_LEAF
     t = cv["t"]
+    yb_ = cv["y_block"]
     parts = [
         _box((xl, yf, xr, yf + s.COVER_FRONT_T), cv["z_sill"][0], top),                       # 手前の板（棒の所は下で抜く）
         _box((xl, yf, xr, cv["y1"] - cl), cv["z_plate"], top),                                # 上の板
+        _box((xl, yf, xr, yb_), cv["z_strip"], top),                                          # 上の帯 = 横向きの梁（足の奥の端まで詰まっている）
     ]
     ya, yb = cv["y_ear"]
-    wd = s.COVER_WEDGE
-    for xs, sg in ((xl, -1), (xr, 1)):                                                        # 耳: 蓋の側面から外へ 45° に広がるくさび（上から下まで）
-        tri = [(xs - sg * EPS, ya - EPS), (xs + sg * wd, yb), (xs - sg * EPS, yb)]
-        parts.append(_prism_z(tri if sg > 0 else tri[::-1], 0.0, top))
+    we = s.COVER_WEDGE - s.COVER_EAR_END
+    for xs, sg in ((xl, -1), (xr, 1)):                                                        # 耳: 側面から外へ 45° に広がるくさび（上から下まで・先は平ら）
+        quad = [(xs - sg * EPS, ya - EPS), (xs + sg * we, ya + we), (xs + sg * we, yb), (xs - sg * EPS, yb)]
+        parts.append(_prism_z(quad if sg > 0 else quad[::-1], 0.0, top))
+        xa_, xb_ = (xs, xs + s.COVER_RIB) if sg < 0 else (xs - s.COVER_RIB, xs)
+        parts.append(_box((xa_, yf, xb_, yb), 0.0, top))                                      # 耳の付け根の柱（上から下まで・耳の奥の面まで）
     (cx, cy), r = lay.cell()
     keep = Pos(cx, cy, -1.0) * Cylinder(r + s.COVER_CELL_CLEAR, top + 2.0, align=CEN_MIN)
     for xa, xb in cv["block"]:                                                                # 足: クリップの板の手前まで（板の下へは入れない）
-        parts.append(_box((xa, yf, xb, cv["y_block"]), 0.0, cv["z_plate"] + EPS) - keep)
+        parts.append(_box((xa, yf, xb, yb_), 0.0, cv["z_plate"] + EPS) - keep)
     body = _union(parts)
-    # 棒の通る所を抜く: 手前の板は、棒の高さ ± 切れ目の幅で、付け根から先の側の側面まで全部。先の側の足も、同じ高さで手前から奥まで抜く
-    # （棒の先が奥へ逃げる場所。足は、耳を通して上下がつながっている）
+    # 棒の通る所を抜く。A: 下の帯の上から B の下の端まで・付け根から右の側面まで。B: B の下の端 − COVER_TIP_REST から上の帯まで・左の側面から付け根まで。
+    # 先の側の足は、同じ高さで奥まで抜く（柱は、棒の先が COVER_STOP 動いた所から奥を残す = 行き過ぎの止め）
+    zr = {"A": (cv["z_sill"][1], cv["band"]["B"][0]), "B": (cv["band"]["B"][0] - s.COVER_TIP_REST, cv["z_strip"])}
     for name in ("A", "B"):
         xa, xt, sg = _leaf_ends(name, cv)
-        z0, z1 = cv["band"][name]
+        z0, z1 = zr[name]
         xe = xt + sg * EPS                                                                    # 蓋の側面まで（耳は抜かない）
-        cut = [_box((min(xa, xe), yf - 1.0, max(xa, xe), yf + s.COVER_FRONT_T + EPS), z0 - slit, z1 + slit)]
+        cut = [_box((min(xa, xe), yf - 1.0, max(xa, xe), yf + s.COVER_FRONT_T + EPS), z0, z1)]
         xb0, xb1 = cv["block"][1 if sg > 0 else 0]
-        cut.append(_box((min(xb0, xe) if sg < 0 else xb0, yf - 1.0, max(xb1, xe) if sg > 0 else xb1, cv["y_block"] + EPS), z0 - slit, z1 + slit))
-        # 歯の所の角は、上から下まで 45° に欠く（歯の内の奥の角を通る線。蓋を上へ抜くとき、歯の下を通る物を残さない。
-        # 欠いた面は 45° なので、手前の面をベッドに刷って支えが要らない）
+        xin = xt - sg * s.COVER_RIB                                                           # 柱の内の面
+        cut.append(_box((min(xb0 if sg > 0 else xin, xin), yf - 1.0, max(xin, xb1 if sg < 0 else xin), yb_ + EPS), z0, z1))   # 足（柱を除く）
+        cut.append(_box((min(xin, xe), yf - 1.0, max(xin, xe), yf + t + s.COVER_STOP), z0, z1))   # 柱の手前（棒の先が動く所）
+        # 歯の所の角は、上から下まで 45° に欠く（歯の内の奥の角を通る線）
         xn, yn = cv["tooth"][1 if sg > 0 else 0] - sg * cl, cv["y_lip"] + cl
         tri = [(xn - sg * (yn - yf + 1.0), yf - 1.0), (xt + sg * EPS, yf - 1.0), (xt + sg * EPS, cv["y_ear"][0])]
         cut.append(_prism_z(tri if sg > 0 else tri[::-1], -1.0, top + 1.0))
         body = body - _union(cut)
+    # 棒の先の下の、硬い受け（A の先の下 = 右の足の手前。B の先の下は、左の足が B の下の端 − COVER_TIP_REST まで詰まっている）
+    xb0, xb1 = cv["block"][1]
+    body = body + _box((xb0, yf, xb1 - 1.2, yf + s.COVER_FRONT_T), cv["z_sill"][1] - EPS, cv["band"]["A"][0] - s.COVER_TIP_REST)
+    fr = s.COVER_FILLET
     for name in ("A", "B"):                                                                   # 棒。先の下の手前の角は 45°（上から落とすと自分で奥へ逃げる）
         xa, xt, sg = _leaf_ends(name, cv)
         z0, z1 = cv["band"][name]
-        d = deflect
+        d = deflect if name in press else 0.0
         leaf = [(xa - sg * 0.3, yf), (xt, yf + d), (xt, yf + d + t), (xa - sg * 0.3, yf + t)]
         body = body + _prism_z(leaf if sg > 0 else leaf[::-1], z0, z1)
-        ramp = b - 0.2
+        for zc, up in ((z0, -1), (z1, 1)):                                                    # 付け根の丸み（平面の形）: 切れ目の端の角を三角で埋める
+            lim = zr[name][0] if up < 0 else zr[name][1]
+            h = min(fr, abs(lim - zc) - 0.05)
+            if h > 0.1:
+                body = body + _fillet_tri(xa, sg, zc, up, fr, h, yf, t)
+        ramp = min(z1 - z0 - 0.2, 1.0)
         xn = cv["tooth"][1 if sg > 0 else 0] - sg * (cl + 0.5)
-        body = body - _prism_x([(yf + d - 0.2, z0 + ramp), (yf + d - 0.2, z0 - EPS), (yf + d + ramp, z0 - EPS)], min(xn, xt + sg), max(xn, xt + sg))
-    # 指を当てる所（真ん中）: 上の帯の下の縁と、下の帯の上の縁を斜めに落とす
-    dw, d_hi, d_lo = s.COVER_DISH
-    xm = (xl + xr) / 2
-    zs, zt = cv["z_strip"], cv["z_sill"][1]
+        body = body - _prism_x([(yf + d - EPS, z0 + ramp), (yf + d - EPS, z0 - EPS), (yf + d + ramp, z0 - EPS)], min(xn, xt + sg), max(xn, xt + sg))
+    # 爪を当てる所（棒の先の近く）: 棒の上下の硬い所の、手前の縁を斜めに落とす
+    nl, nc = s.COVER_NAIL
+    za, zb = cv["band"]["A"], cv["band"]["B"]
     body = body - _union([
-        _prism_x([(yf - EPS, zs - EPS), (yf + d_hi, zs - EPS), (yf - EPS, zs + d_hi)], xm - dw / 2, xm + dw / 2),
-        _prism_x([(yf - EPS, zt + EPS), (yf - EPS, zt - d_lo), (yf + d_lo, zt + EPS)], xm - dw / 2, xm + dw / 2)])
+        _bevel(yf, za[0] - s.COVER_TIP_REST, -1, xr - nl, xr + 1.0, nc), _bevel(yf, zb[0], 1, xr - nl, xr + 1.0, nc),      # 右（A の先）: 下の受け・上は B の付け根
+        _bevel(yf, zb[0] - s.COVER_TIP_REST, -1, xl - 1.0, xl + nl, nc), _bevel(yf, cv["z_strip"], 1, xl - 1.0, xl + nl, nc)])   # 左（B の先）
     if deflect == 0.0:
-        # 手前の面（ベッドの面）の、棒の縁を落とす: 1 層目が太っても切れ目が埋まらない
+        # 手前の面（ベッドの面）の横の縁を、全部落とす: 1 層目が太っても、歯との隙・切れ目・基板との間を食わない
         fc = s.COVER_FOOT
-        bev = []
-        for name in ("A", "B"):
-            xa, xt, sg = _leaf_ends(name, cv)
-            x_lo, x_hi = min(xa, cv["tooth"][1 if sg > 0 else 0] - sg * (cl + 0.5)), max(xa, cv["tooth"][1 if sg > 0 else 0] - sg * (cl + 0.5))
-            for z, up in ((cv["band"][name][0], 1), (cv["band"][name][1], -1)):               # 棒の下の縁（up = 1）・上の縁（−1）
-                pts = [(yf - EPS, z - up * EPS), (yf + fc, z - up * EPS), (yf - EPS, z + up * fc)]
-                bev.append(_prism_x(pts if up > 0 else pts[::-1], x_lo, x_hi))
-        body = body - _union(bev)
+        edges = [(0.0, 1), (cv["z_sill"][1], -1), (za[0], 1), (za[1], -1), (zb[0], 1), (zb[1], -1), (cv["z_strip"], 1), (top, -1)]
+        body = body - _union([_bevel(yf, z, up, xl - 3.0, xr + 3.0, fc) for z, up in edges])
+    if ribs:
+        rw, rl = s.COVER_CRUSH
+        h = cv["rib"]
+        for xs, sg in ((xl, -1), (xr, 1)):
+            for off in (0.45, 1.25):
+                xc = xs + sg * off
+                rib = _prism_z([(xc - rw / 2, yb - EPS), (xc + rw / 2, yb - EPS), (xc, yb + h)], 0.3, top - 0.3)
+                body = body + (rib - _prism_x([(yb - 0.1, 0.3 - EPS), (yb + h + 0.1, 0.3 - EPS), (yb + h + 0.1, 0.3 + rl)], xc - rw, xc + rw))   # 下の端を斜めに（入れ始め）
     if mark:
         mw, md, mp = s.COVER_MARK
         n = s.COVER_MAIN if variant is None else variant
@@ -561,38 +584,108 @@ def cover_solid(variant=None, deflect=0.0, mark=False):
     return body
 
 
+def _fillet_tri(xa, sg, zc, up, fr, h, yf, t):
+    """棒の付け根の角を埋める三角柱（x–z の三角を、棒の厚さぶん奥へ）。"""
+    lo, hi = min(xa, xa + sg * fr), max(xa, xa + sg * fr)
+    blk = _box((lo, yf, hi, yf + t), min(zc, zc + up * h), max(zc, zc + up * h))
+    # 斜めに落とす: 付け根の面（x = xa）で高さ h・xa から fr 離れた所で 0
+    far = xa + sg * fr
+    cut = [(far, zc + up * EPS), (far, zc + up * (h + EPS)), (xa - sg * EPS, zc + up * (h + EPS))]
+    return blk - _prism_y(cut if sg * up < 0 else cut[::-1], yf - 0.5, yf + t + 0.5)
+
+
 def cover_print(part=None):
     """蓋を刷る向き（**手前の面をベッドに**。棒と切れ目が平面の形になる）。"""
     part = cover_solid() if part is None else part
     return P.to_bed(Rot(90, 0, 0) * part)
 
 
+def shock_gain(freq, ms):
+    """半波の正弦の衝撃（長さ ms）を受けた、固有の振動数 freq [Hz] の振り子（減衰なし）の、静的な値に対する揺れの倍率（数値で解く）。"""
+    w = 2 * math.pi * freq
+    tau = ms * 1e-3
+    dt = min(tau, 1.0 / freq) / 400.0
+    x = v = best = 0.0
+    for i in range(int((tau + 2.0 / freq) / dt)):
+        tt = i * dt
+        a = math.sin(math.pi * tt / tau) if tt < tau else 0.0
+        v += (w * w * (a - x)) * dt                                  # 静的な変位を 1 とした運動方程式 x'' = w²(a − x)
+        x += v * dt
+        best = max(best, abs(x))
+    return best
+
+
 def cover_numbers(variant=None, lay=LAY):
-    """棒（板ばね）の計算。片持ち梁（付け根は足・先は自由）。**材料の値は TDS・断面は名目**（刷った物を測った値ではない）。
-      k_tip        先を押す固さ [N/mm]
-      release      棒の先が歯の奥へ逃げるのに要る押し込み（名目）・release_max 蓋が前へ寄り切ったとき
-      push_force   真ん中を押して、先を release_max だけ動かす力（棒 1 本）[N]
-      strain       そのときの付け根のひずみ [%]・strain_limit 曲げ強さ ÷ 曲げ弾性率 [%]
-      drop_tip     DROP_G の加速度が棒の厚さの向きに掛かったとき、棒の自分の重さで先が動く量（静的）[mm]
+    """棒（板ばね）と、蓋の胴の計算。片持ち梁（付け根は足・先は自由）。**材料の値は TDS・断面は名目**（刷った物を測った値ではない）。
+      release      棒の先が歯の奥へ逃げるのに要る押し込み（名目の位置）・release_seated 蓋が溝に座っているとき（つぶれる筋が押している = ふだん）
+      tip_force    棒の先の近く（先から 1.5）を押して、先を release_seated 動かす力（棒 1 本）[N]・tip_strain そのときの付け根のひずみ [%]
+      mid_force    真ん中を押して同じだけ動かす力（**2 本ぶん**）[N]・mid_strain 付け根のひずみ [%]・mid_push 真ん中の押し込み [mm]
+      stop_strain  先が COVER_STOP まで行き過ぎたとき（真ん中を押して）のひずみ [%]・strain_limit 曲げ強さ ÷ 曲げ弾性率 [%]・strain_use 上限に置いた値 [%]
+      freq         棒の 1 次の固有の振動数 [Hz]・gain 半波 DROP_MS の衝撃での揺れの倍率
+      drop_static  DROP_G が棒の厚さの向きに掛かったとき、自分の重さで先が動く量（静的）[mm]・drop_tip それに gain を掛けた量
       cell_force   同じ加速度で電池が蓋を押す力 [N]・cover_force 蓋の自分の重さの力 [N]
       ear_pressure 電池の力の半分を、耳の斜めの面（45°）が受けるときの面圧 [MPa]"""
     s = lay.s
     cv = lay.cover(variant)
-    t, b, length = cv["t"], s.COVER_LEAF[0], cv["leaf_len"]
+    t, length = cv["t"], cv["leaf_len"]
+    b = cv["band"]["A"][1] - cv["band"]["A"][0]
     e = s.PLA_E
     inertia = b * t ** 3 / 12
-    rel = cv["release"] + s.COVER_RECESS
-    # 真ん中 a = L/2 を P で押すと、先は P a²(3L − a)/(6EI) = (5/48) P L³/EI 動く。付け根の曲げモーメントは P a
-    p = rel * e * inertia / (5 / 48 * length ** 3)
-    acc = s.DROP_G * 9.80665                                    # m/s²（g の質量に掛けると mN）
-    w = PLA_DENSITY * b * t * acc * 1e-3                        # N/mm
+    rel = cv["release_seated"]
+
+    def press(a, d):                                             # 付け根から a の所を押して先を d 動かす: (力, 付け根のひずみ %, 押す所の動き)
+        return (6 * e * inertia * d / (a * a * (3 * length - a)), 3 * t * d / (a * (3 * length - a)) * 100, d * 2 * a / (3 * length - a))
+
+    tip = press(length - 1.5, rel)
+    mid = press(length / 2, rel)
+    acc = s.DROP_G * 9.80665                                     # m/s²（g の質量に掛けると mN）
+    area = b * t
+    w = PLA_DENSITY * area * acc * 1e-3                          # N/mm
+    static = w * length ** 4 / (8 * e * inertia)
+    # E [N/mm²] × I [mm⁴] ÷ (ρ [g/mm³] × A [mm²] × L⁴ [mm⁴]) = N/(g·mm) = 1e6 /s²
+    freq = 1.875104 ** 2 / (2 * math.pi) * math.sqrt(e * inertia / (PLA_DENSITY * area * length ** 4) * 1e6)
+    gain = shock_gain(freq, s.DROP_MS)
     cell = s.CELL_MASS * acc * 1e-3
-    face = s.COVER_WEDGE * math.sqrt(2.0) * cv["z_top"]                   # 耳の斜めの面の面積
-    return dict(k_tip=3 * e * inertia / length ** 3, release=cv["release"], release_max=rel, push=rel / 2.5, push_force=p,
-                strain=(p * length / 2) * (t / 2) / (e * inertia) * 100, strain_limit=s.PLA_BEND / e * 100,
-                drop_tip=w * length ** 4 / (8 * e * inertia),
+    face = (s.COVER_WEDGE - s.COVER_EAR_END) * math.sqrt(2.0) * cv["z_top"]
+    return dict(k_tip=3 * e * inertia / length ** 3, release=cv["release"], release_seated=rel,
+                tip_force=tip[0], tip_strain=tip[1], mid_force=2 * mid[0], mid_strain=mid[1], mid_push=mid[2],
+                stop_strain=press(length / 2, s.COVER_STOP)[1], strain_limit=s.PLA_BEND / e * 100, strain_use=s.PLA_STRAIN_USE * s.PLA_BEND / e * 100,
+                freq=freq, gain=gain, drop_static=static, drop_tip=static * gain,
                 cell_force=cell, cover_force=cover_solid(variant).volume * PLA_DENSITY * acc * 1e-3,
                 ear_pressure=(cell / 2 * math.sqrt(2.0)) / face)
+
+
+@lru_cache(maxsize=None)
+def cover_beam(variant=None, step=0.05):
+    """蓋の胴を、横向きの梁として見た強さ。**断面は立体から測る**（真ん中の x で切って、step の格子で中か外かを数える）。
+    電池の力（左右の足の、内の奥の角に半分ずつ）を、左右の耳が受ける = 4 点曲げ。腕 = 足の内の面から、耳の斜めの面の真ん中まで（左右へ測る）。
+      area 断面積・inertia 上下の軸まわりの断面二次モーメント・far 図心からいちばん遠い縁まで・arm 腕・moment 曲げモーメント [N·mm]・stress 曲げ応力のいちばん大きい所 [MPa]・
+      tension 手前の縁（引っ張り）・compression 奥の縁（圧縮）
+    棒は数えない（切れ目で胴から離れている）。"""
+    lay, s = LAY, S
+    cv = lay.cover(variant)
+    body = cover_solid(variant, 0.0, False, False)
+    xm = (cv["x0"] + cv["x1"]) / 2
+    yf, y1 = cv["yf"], cv["y1"]
+    bands = [cv["band"]["A"], cv["band"]["B"]]
+    pts = []
+    for i in range(int(round((y1 - yf) / step))):
+        y = yf + (i + 0.5) * step
+        for j in range(int(round(cv["z_top"] / step))):
+            z = (j + 0.5) * step
+            if y < yf + cv["t"] + 0.01 and any(z0 - 0.01 <= z <= z1 + 0.01 for z0, z1 in bands):
+                continue                                         # 棒
+            if body.is_inside((xm, y, z)):
+                pts.append(y)
+    da = step * step
+    yc = sum(pts) / len(pts)
+    inertia = sum((y - yc) ** 2 for y in pts) * da
+    far = max(max(pts) - yc, yc - min(pts)) + step / 2
+    arm = (cv["block"][0][1] - cv["side"][0]) + (s.COVER_WEDGE - s.COVER_EAR_END) / 2
+    moment = cover_numbers(variant)["cell_force"] / 2 * arm
+    front, rear = yc - min(pts) + step / 2, max(pts) - yc + step / 2
+    return dict(area=len(pts) * da, inertia=inertia, far=far, arm=arm, moment=moment, stress=moment * far / inertia,
+                tension=moment * front / inertia, compression=moment * rear / inertia)
 
 
 def _section(pts):
@@ -969,7 +1062,8 @@ def printables():
     """刷る物（STL の名前 → 刷る向きの立体）。"""
     halves = frame_halves()
     out = {f"frame_{side}": frame_print(halves[side]) for side in SIDES}
-    out["cover_battery"] = cover_print()                          # 電池の蓋（落とし込み式。1 個・手前の面をベッドに）
+    one = cover_print()                                           # 電池の蓋（落とし込み式・手前の面をベッドに）。無くしやすいので COVER_SPARE 個並べる
+    out["cover_battery"] = Compound([Pos(0, i * (one.bounding_box().size.Y + 4.0), 0) * one for i in range(S.COVER_SPARE)])
     out["coupon_screw_plate"] = screw_coupon_plate()
     out["coupon_corner_plate"] = corner_coupon_plate()
     out.update(caps_plates())

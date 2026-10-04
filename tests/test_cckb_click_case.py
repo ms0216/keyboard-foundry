@@ -728,13 +728,18 @@ def test_a_fingertip_reaches_past_the_knob_tip_on_the_real_frame(halves):
 
 
 # ---------------------------------------------------------------------------
-# 電池の蓋（道具なし・上から落とし込む。利用者の決定 2026-10-04・決定記録 2026-10-04-cover-latch）
-# 利用者の条件: **電池は、押しても振っても出ない。人が、しっかり付いた蓋を先に外したときだけ出せる。**蓋の留めは形で止まる物（摩擦だけの留めにしない）。
+# 電池の蓋（道具なし・上から落とし込む。利用者の決定 2026-10-04・決定記録 2026-10-04-cover-latch。v2 = 独立の見直しを受けて直した形）
+# 利用者の条件: **電池は、押しても振っても出ない。人が、しっかり付いた蓋を先に外したときだけ出せる。**
 # 外の事実: クリップの図面 MY-CP-0247（板厚 0.25・高さ 4.0・止めの折れ 2.80・未注の公差 ± 0.25）・CR1632 φ16 × 3.2・1.8 g（Energizer のデータシート）・
-# Bambu PLA Basic の TDS（曲げ弾性率 2750・曲げ強さ 76）・落下の仮定 JEDEC JESD22-B111 条件 B（1500 G・0.5 ms）
+# Bambu PLA Basic の TDS（曲げ弾性率 2750・曲げ強さ 76・引っ張り強さ 35）・落下の仮定 JEDEC JESD22-B111 条件 B（1500 G・半波 0.5 ms）
 # ---------------------------------------------------------------------------
 DIRS = {"手前": (0, -1, 0), "奥": (0, 1, 0), "左": (-1, 0, 0), "右": (1, 0, 0), "上": (0, 0, 1), "下": (0, 0, -1),
         "左手前": (-0.7071, -0.7071, 0), "右手前": (0.7071, -0.7071, 0), "手前上": (0, -0.7071, 0.7071), "手前下": (0, -0.7071, -0.7071)}
+
+
+def bare(variant=None, deflect=0.0, press="AB"):
+    """つぶれる筋の無い蓋（枠との重なりを見る形。筋は、わざと枠に食い込む）。"""
+    return C.cover_solid(variant, deflect, False, False, press)
 
 
 def clip_nominal():
@@ -757,7 +762,7 @@ def cover_things(frame):
             "枠のねじ": Compound(list(C.screw_solids().values())),
             "キャップ": Compound([C.cap_pose(k, m) for k in near for m in ("latched",) + C.POSES]),
             # 電池を押さえる舌（図面に寸法が無い）は電池の円の中にある: 電池の上面の少し上まで、電池の円 ＋ 隙（− 0.05）に蓋が入らないことで見る
-            "電池の円（舌の来る所）": Pos(cx, cy, 0) * Cylinder(r + S.COVER_CELL_CLEAR - 0.05, S.CELL_T + 0.6, align=C.CEN_MIN)}
+            "電池の円（舌の来る所）": Pos(cx, cy, 0) * Cylinder(r + S.COVER_CELL_CLEAR - 0.05, S.CELL_T + 0.25, align=C.CEN_MIN)}
 
 
 def moved(part, d, k):
@@ -773,15 +778,17 @@ def first_hit(part, others, d, steps):
 
 
 def cover_problems(frame, cover=None, opened=None, shift=(0.0, 0.0, 0.0), things=None, variant=None):
-    """蓋を組んだ位置で:
+    """蓋（筋の無い形）を組んだ位置で:
       - 枠・電池・クリップ・基板・ほかの部品・シート・ねじ・キャップに当たらない。上面は枠と面一・手前の面は枠の外面から出ない・足は基板に着く
-      - **電池の止め**: 蓋は手前へ COVER_RECESS より多くは動けない（耳が溝の斜めの面に座る）。棒を押し込んだ蓋（opened）でも同じ = 止めは棒に頼っていない
-      - **留め**: 棒を押し込まない蓋は、上へ COVER_CATCH_GAP ＋ 0.1 より多くは動けない（棒の先が歯の下に当たる）
-      - **入れられる・外せる**: 棒を release_max 押し込んだ蓋は、まっすぐ上へ 7 mm、何にも当たらずに動く（0.25 おき）"""
+      - **電池の止め**: 蓋は手前へ 0.3 より多くは動けない（耳が溝の斜めの面に座る）。棒を押し込んだ蓋（opened）でも同じ = 止めは棒に頼っていない
+      - **留め**: 棒を押し込まない蓋は、上へ「歯との隙 ＋ 0.1」より多くは動けない（棒の先が歯の下に当たる）
+      - **入れられる・外せる**: 棒の先を release_seated 押し込んだ蓋は、まっすぐ上へ 7 mm、枠・クリップ・基板・部品に当たらずに動く（0.25 おき）。
+        （押し込んだ形は、棒を付け根からまっすぐ傾けた物で、真ん中が本物より奥へ出る。電池との重なりは見ない: 本物の棒の真ん中は 0.35〜0.42 しか動かない）"""
     out = []
-    rel = C.cover_numbers(variant)["release_max"]
-    cover = Pos(*shift) * (C.cover_solid(variant) if cover is None else cover)
-    opened = Pos(*shift) * (C.cover_solid(variant, rel) if opened is None else opened)
+    cv = LAY.cover(variant)
+    rel = cv["release_seated"]
+    cover = Pos(*shift) * (bare(variant) if cover is None else cover)
+    opened = Pos(*shift) * (bare(variant, rel) if opened is None else opened)
     things = things or cover_things(frame)
     for name, v in things.items():
         if vol(v, cover) > TOL:
@@ -795,12 +802,12 @@ def cover_problems(frame, cover=None, opened=None, shift=(0.0, 0.0, 0.0), things
         out.append(f"蓋が枠の上面と面一でない・手前の面が引っ込みすぎ・足が基板に着かない（上 {b.max.Z:.3f}・手前 {b.min.Y:.3f}・下 {b.min.Z:.3f}）")
     for name, c in (("棒を押し込まない蓋", cover), ("棒を押し込んだ蓋", opened)):
         k = first_hit(c, things["枠"], DIRS["手前"], (0.1, 0.2, 0.3, 0.4, 0.6, 1.0, 2.0, 3.0))
-        if k is None or k > S.COVER_RECESS + 0.16:
-            out.append(f"{name}が手前へ止まらない（{k} 動いて枠に当たる。{S.COVER_RECESS + 0.15:.2f} 以内）")
-    k = first_hit(cover, things["枠"], DIRS["上"], (0.1, 0.2, 0.3, 0.4, 0.6, 1.0, 2.0, 3.0, 4.0, 4.9))
-    if k is None or k > S.COVER_CATCH_GAP + 0.11:
-        out.append(f"蓋が上へ抜ける（{k} 動いて枠に当たる。{S.COVER_CATCH_GAP + 0.1:.2f} 以内）")
-    on_path = ("枠", "電池", "クリップ", "基板", "ほかの部品")
+        if k is None or k > 0.3 + 1e-9:
+            out.append(f"{name}が手前へ止まらない（{k} 動いて枠に当たる。0.3 以内）")
+    k = first_hit(cover, things["枠"], DIRS["上"], (0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 1.0, 2.0, 3.0, 4.0, 4.9))
+    if k is None or k > cv["gap"] + 0.11:
+        out.append(f"蓋が上へ抜ける（{k} 動いて枠に当たる。{cv['gap'] + 0.1:.2f} 以内）")
+    on_path = ("枠", "クリップ", "基板", "ほかの部品")
     obstacles = Compound([things[n] for n in on_path])               # まとめて当てる（当たった所だけ、相手を 1 つずつ調べる）
     for i in range(0, 29):
         up = Pos(0, 0, 0.25 * i) * opened
@@ -817,44 +824,50 @@ def cover_env(halves):
 
 
 def test_the_drop_in_battery_cover_fits_and_all_three_variants_fit_the_same_frame(halves, cover_env):
-    """蓋は上からまっすぐ落とす。試し刷りの 3 つ（棒の厚さ・隙の違い）は、同じ枠に入る。**基板は変えない**（穴 H30・H31 は使わない）。"""
+    """蓋は上からまっすぐ落とす。試し刷りの 3 つ（歯との上下の隙・つぶれる筋の高さの違い）は、同じ枠に入る。**基板は変えない**（穴 H30・H31 は使わない）。"""
     frame = corner_piece(halves)
     for n in sorted(S.COVER_VARIANTS):
         assert cover_problems(frame, things=cover_env, variant=n) == [], n
         cover = C.cover_solid(n)
         assert len(cover.solids()) == 1 and cover.is_valid, n
     assert sorted(S.COVER_VARIANTS) == [1, 2, 3] and S.COVER_MAIN == 2
+    # 振っているのは「分からない寸法」: 歯と棒の上下の隙 0.2／0.3／0.4（1 層目の太りと刷りの誤差で食われる）と、つぶれる筋 0.40／0.50／0.60
+    assert [(v["gap"], v["rib"], v["clear"]) for _, v in sorted(S.COVER_VARIANTS.items())] == [(0.2, 0.4, 0.15), (0.3, 0.5, 0.15), (0.4, 0.6, 0.15)]
     cv = LAY.cover()
-    cover = C.cover_solid()
+    cover = bare()
     b = cover.bounding_box()
-    # 口: 幅 19.0（歯の間 17.0 = 電池 16 の左右に 0.5）・外面から奥行き 4.5。蓋は口の中に片側 0.15・手前の面は外面の 0.15 内・上面は枠と同じ高さ
+    # 口: 幅 19.0（歯の間 17.0 = 電池 16 の左右に 0.5）・外面から奥行き 4.5。蓋は口の中に片側 0.15・手前の面は外面の 0.25 内・上面は枠と同じ高さ
     assert (cv["x1"] - cv["x0"], cv["tooth"][1] - cv["tooth"][0]) == pytest.approx((19.0, 17.0)) and cv["y1"] - cv["y0"] == pytest.approx(4.5)
-    assert (b.min.Y - LAY.frame[1], b.max.Z, b.min.Z) == pytest.approx((S.COVER_RECESS, 5.0, 0.0), abs=1e-6)
+    assert (b.min.Y - LAY.frame[1], b.max.Z, b.min.Z) == pytest.approx((S.COVER_RECESS, 5.0, 0.0), abs=1e-6) and S.COVER_RECESS == 0.25
     assert cv["side"] == pytest.approx((cv["x0"] + 0.15, cv["x1"] - 0.15))
-    # 棒: 高さ 0.8・切れ目 0.4・長さ 13.7。下の棒 A は基板の上 1.7〜2.5（先は右）・上の棒 B は 2.9〜3.7（先は左）。歯の下面は棒の上面の 0.2 上
-    assert cv["band"] == {"A": pytest.approx((1.7, 2.5)), "B": pytest.approx((2.9, 3.7))} and cv["leaf_len"] == pytest.approx(13.7)
-    assert cv["ledge"] == {"A": pytest.approx(2.7), "B": pytest.approx(3.9)} and (cv["z_sill"], cv["z_strip"]) == (pytest.approx((0.1, 1.3)), pytest.approx(4.1))
+    # 棒: 高さ 1.0・厚さ 1.05・長さ 13.4。下の棒 A は基板の上 1.1〜2.1（先は右）・上の棒 B は 2.5〜3.5（先は左）。歯の下面は棒の上面の 0.3 上（枠で決まる）。
+    # 蓋 1・3 は、棒の上の端が 0.1 高い・低い（隙 0.2・0.4）
+    assert cv["band"] == {"A": pytest.approx((1.1, 2.1)), "B": pytest.approx((2.5, 3.5))} and (cv["leaf_len"], cv["t"]) == pytest.approx((13.4, 1.05))
+    assert cv["ledge"] == {"A": pytest.approx(2.4), "B": pytest.approx(3.8)} and (cv["z_sill"], cv["z_strip"]) == (pytest.approx((0.1, 0.7)), pytest.approx(3.9))
+    assert LAY.cover(1)["band"]["A"][1] == pytest.approx(2.2) and LAY.cover(3)["band"]["B"][1] == pytest.approx(3.4) and LAY.cover(1)["ledge"] == cv["ledge"]
     yf = cv["yf"]
-    za, zb = 2.1, 3.3
-    assert cover.is_inside((cv["tip"]["A"] - 0.3, yf + 0.5, za)) and not cover.is_inside((cv["tip"]["A"] - 0.3, yf + 0.5, zb))     # 右の先にいるのは下の棒
-    assert cover.is_inside((cv["tip"]["B"] + 0.3, yf + 0.5, zb)) and not cover.is_inside((cv["tip"]["B"] + 0.3, yf + 0.5, za))     # 左の先は上の棒
+    za, zb = 1.6, 3.0
+    assert cover.is_inside((cv["tip"]["A"] - 0.3, yf + 0.5, za)) and not cover.is_inside((cv["tip"]["A"] - 0.3, yf + 0.5, 2.3))     # 右の先にいるのは下の棒（その上は切れ目）
+    assert cover.is_inside((cv["tip"]["B"] + 0.3, yf + 0.5, zb)) and not cover.is_inside((cv["tip"]["B"] + 0.3, yf + 0.5, 3.7))     # 左の先は上の棒
     xm = (cv["x0"] + cv["x1"]) / 2
-    assert all(cover.is_inside((xm, yf + 0.5, z)) for z in (0.7, za, zb, 4.6)) and not any(cover.is_inside((xm, yf + 0.5, z)) for z in (1.5, 2.7, 3.9))
-    # 棒の先の後ろは空いている: 先の側の足は、棒の高さ ± 切れ目の幅だけ、手前から奥まで抜いてある（奥行き 2.5 − 棒の厚さ 1.0 = 1.5 ≧ 外すたわみ 1.1 ＋ 0.2）。
-    # その上と下の足は詰まっている。付け根の側の足は、棒の高さでも詰まっている
+    assert all(cover.is_inside((xm, yf + 0.5, z)) for z in (0.4, za, zb, 4.5)) and not any(cover.is_inside((xm, yf + 0.5, z)) for z in (0.9, 2.3, 3.7))
+    # 棒の先の後ろは空いていて、COVER_STOP 1.2 動いた所で、耳の付け根の柱に当たって止まる（行き過ぎの止め）。足の、棒の先の側は、棒の高さで奥まで抜けている
     t = cv["t"]
-    xr_, xl_ = cv["tip"]["A"] - 1.0, cv["tip"]["B"] + 1.0
-    assert not any(cover.is_inside((xr_, yf + t + d, za)) for d in (0.3, 0.8, 1.4)) and cover.is_inside((xr_, yf + 2.0, 0.7)) and cover.is_inside((xr_, yf + 2.0, zb))
-    assert not any(cover.is_inside((xl_, yf + t + d, zb)) for d in (0.3, 0.8, 1.4)) and cover.is_inside((xl_, yf + 2.0, za)) and cover.is_inside((xl_, yf + 2.0, 4.2))
-    assert cv["y_block"] - (yf + t) >= C.cover_numbers()["release_max"] + 0.2 and S.COVER_FRONT_T == 1.0
-    # 棒・下の帯と電池の縁の隙 0.56・上の板はクリップの上 4.1 から 0.2。足の内の奥の角と電池の縁の隙は COVER_CELL_CLEAR 0.3（足が先に当たる）
+    for x, z, sg in ((cv["tip"]["A"] - 0.35, za, -1), (cv["tip"]["B"] + 0.35, zb, 1)):
+        assert not any(cover.is_inside((x, yf + t + d, z)) for d in (0.2, 0.6, 1.1)) and cover.is_inside((x, yf + t + S.COVER_STOP + 0.15, z))
+        assert not any(cover.is_inside((x + sg * 2.5, yf + t + d, z)) for d in (0.2, 0.8, 1.25))
+    assert S.COVER_STOP >= cv["release_seated"] + 0.1
+    # 棒の先の下には、硬い受けが 0.2 下にある（蓋を持ち上げると、棒だけが撓む前に、ここが詰まる）
+    assert cover.is_inside((cv["tip"]["A"] - 2.0, yf + 0.5, 1.1 - S.COVER_TIP_REST - 0.05)) and not cover.is_inside((cv["tip"]["A"] - 2.0, yf + 0.5, 1.1 - 0.1))
+    assert cover.is_inside((cv["tip"]["B"] + 2.0, yf + 0.5, 2.5 - S.COVER_TIP_REST - 0.05)) and not cover.is_inside((cv["tip"]["B"] + 2.0, yf + 0.5, 2.5 - 0.1))
+    # 棒・下の帯と電池の縁の隙 0.41 以上・上の板はクリップの上 4.1 から 0.2。足の内の奥の角と電池の縁の隙は COVER_CELL_CLEAR 0.2（足が先に当たる）
     (cx, cy), r = LAY.cell()
-    corner = (cv["block"][0][1], cv["y_block"])
-    assert math.hypot(corner[0] - cx, corner[1] - cy) - r == pytest.approx(S.COVER_CELL_CLEAR, abs=0.01)
-    assert (cy - r) - (yf + t) == pytest.approx(0.56) and cv["z_plate"] - LAY.z()["clip_top"] == pytest.approx(0.2)
+    assert (cy - r) - (yf + max(t, S.COVER_FRONT_T)) == pytest.approx(0.41) and cv["z_plate"] - LAY.z()["clip_top"] == pytest.approx(0.2)
+    assert first_hit(cover_env["電池"], cover, DIRS["左手前"], (0.1, 0.15, 0.25, 0.3)) == 0.25 and S.COVER_CELL_CLEAR == 0.2
     # 足は、クリップの板（外接の矩形）の 0.2 手前で終わる。**板の下へは入れない**（上へ抜くとき、板に当たる）: 上の板より下の蓋は、板の端より手前だけ
-    low = cover & C._box((cv["side"][0] + 0.05, -60, cv["side"][1] - 0.05, -30), -1.0, cv["z_plate"] - 0.05)
+    low = cover & C._box((cv["side"][0] + S.COVER_RIB + 0.05, -60, cv["side"][1] - S.COVER_RIB - 0.05, -30), -1.0, cv["z_plate"] - 0.05)
     assert low.bounding_box().max.Y == pytest.approx(cv["y_block"]) and LAY.clip_body()[1] - cv["y_block"] == pytest.approx(S.COVER_CLIP_CLEAR)
+    assert cv["side"][0] + S.COVER_RIB < LAY.clip_body()[0] - 0.15                                       # 耳の付け根の柱（奥まである）は、クリップの板の脇
     clip = cover_env["クリップ"]
     assert vol(cover, Pos(0, 0, -3.0) * clip) < TOL                                                     # 板がどれだけ低くても、足には当たらない
     assert vol(cover, Pos(0, 0, 0.15) * clip) < TOL and vol(cover, Pos(0, 0, 0.3) * clip) > 0.01        # 板が 0.3 高ければ、上の板に当たる（隙 0.2）
@@ -867,47 +880,87 @@ def test_the_drop_in_battery_cover_fits_and_all_three_variants_fit_the_same_fram
     assert LAY.z()["total"] == pytest.approx(8.1) and vol(cover, cell_path()) > 10.0
 
 
-def test_the_cell_is_stopped_by_solid_plastic_and_the_load_does_not_pass_through_the_springs(halves, cover_env):
-    """**電池が押す向き（手前）と、蓋が外れる向き（上）が直角。**電池の力の道: 電池 → 蓋の足 → 耳の 45° の面 → 枠の溝の手前の壁。棒は道に無い。"""
+def test_the_bed_face_edges_are_relieved_so_first_layer_squish_cannot_eat_the_latch_gap():
+    """見直しの指摘 1: 蓋は手前の面をベッドに刷る。1 層目は太る（0.2〜0.3）。**歯のすぐ下に来る棒の先の上の縁・基板に載る足の下の縁・枠の上面と並ぶ上の縁**が
+    落としてなかった（歯との隙 0.2 が食われて、棒が歯の下へ戻れない = 見た目は入っているのに留まっていない、が 3 つの蓋に共通で起きうる）。
+    → 手前の面の横の縁を全部 0.25 落とした。手前の面のすぐ内（0.05）では、どの縁も 0.2 引っ込んでいる。"""
+    cv = LAY.cover()
+    cover = bare()
+    yf, c = cv["yf"], S.COVER_FOOT
+    assert c == 0.25
+    edges = {"棒 A の上（先のすぐ内）": (cv["tip"]["A"] - 0.2, cv["band"]["A"][1], -1), "棒 B の上（先のすぐ内）": (cv["tip"]["B"] + 0.2, cv["band"]["B"][1], -1),
+             "棒 A の下": (cv["tip"]["A"] - 6.0, cv["band"]["A"][0], 1), "足の下（左）": (cv["side"][0] + 2.0, 0.0, 1), "足の下（右）": (cv["side"][1] - 2.0, 0.0, 1),
+             "上の縁": ((cv["x0"] + cv["x1"]) / 2, cv["z_top"], -1), "上の帯の下": ((cv["x0"] + cv["x1"]) / 2, cv["z_strip"], 1)}
+    for name, (x, z, up) in edges.items():
+        assert not cover.is_inside((x, yf + 0.05, z + up * 0.1)), name                 # 手前の面のすぐ内では、縁から 0.1 の所はもう空
+        assert cover.is_inside((x, yf + c + 0.05, z + up * 0.05)), name                # 面取りの奥は、縁まで詰まっている
+        assert "先" in name or cover.is_inside((x, yf + 0.05, z + up * 0.3)), name      # （棒の先は、下の手前の角も斜めなので、ここは見ない）
+    # 検査器が生きている: 面取りの無い形（押し込んだ形は、面取りをしない）では、同じ点が詰まっている
+    raw = bare(None, 1e-6)
+    assert raw.is_inside((cv["tip"]["A"] - 0.2, yf + 0.05, cv["band"]["A"][1] - 0.1)) and raw.is_inside((cv["side"][0] + 2.0, yf + 0.05, 0.1))
+
+
+def test_the_cell_is_stopped_by_solid_plastic_and_the_load_does_not_pass_through_the_springs(halves, cover_env, monkeypatch):
+    """**電池が押す向き（手前）と、蓋が外れる向き（上）が直角。**電池の力の道: 電池 → 蓋の足の内の奥の角 → 蓋の胴（横向きの梁）→ 耳の 45° の面 → 枠の溝の手前の壁。
+    棒は道に無い。**耳は、蓋の胴に、上から下までの柱でつながっている**（見直しの指摘 4: 前の形は、幅 0.53 の首と上の板だけでつながり、右の耳は棒の高さで離れ小島だった）。"""
     frame = corner_piece(halves)
     cv = LAY.cover()
-    cover, opened = C.cover_solid(), C.cover_solid(None, C.cover_numbers()["release_max"])
+    cover, opened = bare(), bare(None, cv["release_seated"])
     cell = C.cell_solid()
-    # 電池は手前へ 0.35 で蓋に当たる。当たるのは足の奥の角（手前の面から 2.0 より奥）で、棒・手前の板ではない。**棒を切り取った蓋でも同じ所で止まる**
-    # = 止めは棒に頼っていない
+    # 電池は手前へ 0.25 で蓋に当たる。当たるのは足の奥の角（手前の面から 1.5 より奥）で、棒・手前の板ではない。棒を切り取った蓋でも同じ所で止まる
+    no_leaves = cover - C._box((cv["root"]["A"] + 0.6, cv["yf"] - 1, cv["root"]["B"] - 0.6, cv["yf"] + 1.2), cv["z_sill"][1] + 0.05, cv["z_strip"] - 0.05)
     xm = (cv["x0"] + cv["x1"]) / 2
-    no_leaves = cover - C._box((cv["tooth"][0] - 2.0, cv["yf"] - 1, cv["tooth"][1] + 2.0, cv["yf"] + 1.05), cv["z_sill"][1] + 0.05, cv["z_strip"] - 0.05)
-    assert not no_leaves.is_inside((xm, cv["yf"] + 0.5, 2.1)) and not no_leaves.is_inside((xm, cv["yf"] + 0.5, 3.3)) and len(no_leaves.solids()) == 1
+    assert not no_leaves.is_inside((xm, cv["yf"] + 0.5, 1.6)) and not no_leaves.is_inside((xm, cv["yf"] + 0.5, 3.0))
     for c in (cover, no_leaves):
-        assert first_hit(cell, c, DIRS["手前"], (0.1, 0.2, 0.3, 0.4, 0.5)) == pytest.approx(0.4)                # 0.3 と 0.4 の間（計算では 0.35）
-        hit = moved(cell, DIRS["手前"], 0.5) & c
-        assert hit.bounding_box().min.Y > cv["yf"] + 2.0 and hit.bounding_box().max.Z > S.CELL_T - 0.1 and hit.bounding_box().min.Z < 0.1     # 電池の高さいっぱいで当たる
-    # 蓋は手前へ 0.21（斜めの面の隙 0.15 を前後に測った量）で枠に座る。座っても枠の外面から出ない（0.15 引っ込めてある分より 0.06 多いだけ: 下の数）
-    seat = S.COVER_CLEAR * math.sqrt(2.0)
+        assert first_hit(cell, c, DIRS["手前"], (0.1, 0.2, 0.3, 0.4)) == pytest.approx(0.3)                    # 0.2 と 0.3 の間（計算では 0.23）
+        hit = moved(cell, DIRS["手前"], 0.35) & c
+        assert hit.bounding_box().min.Y > cv["yf"] + 1.5 and hit.bounding_box().max.Z > S.CELL_T - 0.1 and hit.bounding_box().min.Z < 0.1
+    # 蓋は手前へ 0.21（斜めの面の隙 0.15 を前後に測った量）で枠に座る。座っても、手前の面は枠の外面の 0.04 内（0.25 引っ込めてある）
+    seat = cv["seat"]
+    assert seat == pytest.approx(S.COVER_CLEAR * math.sqrt(2.0))
     assert vol(frame, moved(cover, DIRS["手前"], seat - 0.02)) < TOL and vol(frame, moved(cover, DIRS["手前"], seat + 0.03)) > TOL
-    assert seat - S.COVER_RECESS == pytest.approx(0.062, abs=0.001)
-    # 受ける面: 左右の耳の斜めの面（45°・上から下まで 5.0・長さ 2.0 × √2）。0.3 押し込んだ重なりのうち、口の左右の外にある 2 つ。
-    # （0.3 から先は、蓋の角の斜めの面が歯の奥の角にも当たる = 2 つ目の止め: 重なりは口の中にもう 2 つ）
+    assert S.COVER_RECESS - seat == pytest.approx(0.038, abs=0.001)
+    # 受ける面: 左右の耳の斜めの面（45°・上から下まで 5.0・左右へ測って 1.7）。0.3 押し込んだ重なりのうち、口の左右の外にある 2 つ
     over = (moved(cover, DIRS["手前"], 0.3) & frame).solids()
     sides = sorted((q for q in over if q.bounding_box().max.X < cv["x0"] + 0.01 or q.bounding_box().min.X > cv["x1"] - 0.01), key=lambda q: q.bounding_box().min.X)
-    assert len(sides) == 2 and len(over) == 4 and sides[0].bounding_box().max.X < cv["x0"] + 0.01 and sides[1].bounding_box().min.X > cv["x1"] - 0.01
+    assert len(sides) == 2
     for q in sides:
         bb = q.bounding_box()
-        assert bb.size.Z == pytest.approx(5.0, abs=0.01) and bb.size.X == pytest.approx(S.COVER_WEDGE, abs=0.25), bb
-    # 刷った物が ± 0.15 ずれ、蓋が片側へ寄り切っても掛かりが残る: 隙 0.20 の蓋（蓋 3）を、さらに 0.3 右へ寄せて手前へ押す → 左の耳も 1.4 以上掛かる
-    loose = Pos(0.3, 0, 0) * C.cover_solid(3)
-    over = moved(loose, DIRS["手前"], 1.0) & frame
+        assert bb.size.Z == pytest.approx(5.0, abs=0.01) and bb.size.X == pytest.approx(S.COVER_WEDGE - S.COVER_EAR_END, abs=0.2), bb
+    # 刷りが ± 0.15 ずれ、蓋が片側へ寄り切っても掛かりが残る: 蓋を 0.3 右へ寄せて手前へ押す → 左の耳も 1.1 以上掛かる
+    over = moved(Pos(0.3, 0, 0) * cover, DIRS["手前"], 1.0) & frame
     left = [q for q in over.solids() if q.bounding_box().max.X < cv["x0"] + 0.01]
-    assert left and max(q.bounding_box().size.X for q in left) >= 1.4 and S.COVER_WEDGE - 0.3 - 0.3 >= 1.4 - 1e-9
+    assert left and max(q.bounding_box().size.X for q in left) >= 1.1
+    # 耳の付け根: 蓋の側面のすぐ内の柱（幅 0.7・上から下まで・耳の奥の面まで）。棒の先が動く高さでも、柱は「止め」より奥が詰まっていて、耳とつながる
+    for sg, xs, key in ((-1, cv["side"][0], "B"), (1, cv["side"][1], "A")):
+        zb_ = sum(cv["band"][key]) / 2
+        for z in (0.3, zb_, 4.0):
+            assert cover.is_inside((xs - sg * 0.35, cv["y_ear"][1] - 0.4, z)) and cover.is_inside((xs + sg * 0.5, cv["y_ear"][1] - 0.4, z)), (key, z)
+        joint = cover & C._box((xs - 0.05, cv["y_ear"][0], xs + 0.05, cv["y_ear"][1]), 0.0, 5.0)        # 側面の位置で切った、耳の付け根の面
+        assert joint.volume / 0.1 >= 0.85 * (cv["y_ear"][1] - cv["y_ear"][0]) * 5.0, (key, joint.volume / 0.1)
     # 外れる向きは上だけ: 棒を押し込んだ蓋は、上へは動き（cover_problems）、手前・奥・左右・下へは 0.3 以内で止まる
     held = Compound([frame, cover_env["基板"]])
     for name in ("手前", "奥", "左", "右", "下"):
         assert first_hit(opened, held, DIRS[name], (0.1, 0.2, 0.3)) is not None, name
     assert sum(a * b for a, b in zip(DIRS["手前"], DIRS["上"])) == 0
-    # 力の見積もり（計算。刷った物の値ではない）: 1500 G で電池 1.8 g が押す力 26.5 N。耳の斜めの面の面圧 1.3 MPa（曲げ強さ 76 の 1/50）
-    num = C.cover_numbers()
-    assert S.CELL_MASS == 1.8 and S.DROP_G == 1500.0 and num["cell_force"] == pytest.approx(26.5, abs=0.1)
-    assert num["ear_pressure"] == pytest.approx(1.32, abs=0.02) and num["ear_pressure"] < S.PLA_BEND / 50
+    # 力の見積もり（計算。刷った物の値ではない）: 1500 G で電池 1.8 g が押す力 26.5 N。耳の斜めの面の面圧 1.6 MPa。
+    # **蓋の胴は、横向きの梁として曲がる**（4 点曲げ・腕 6.15・曲げモーメント 81 N·mm）。断面は立体から測る: 手前の縁の引っ張り 23.7 MPa（引っ張り強さ 35 の 0.68 倍 =
+    # 余裕 1.5 倍）・奥の縁（上の板の端）の圧縮 34.1 MPa（曲げ強さ 76 の 0.45 倍）。**余裕は大きくない**（1500 G は借りた仮定。半分の 750 G なら余裕 3 倍）
+    num, beam = C.cover_numbers(), C.cover_beam()
+    assert S.CELL_MASS == 1.8 and S.DROP_G == 1500.0 and num["cell_force"] == pytest.approx(26.5, abs=0.1) and num["ear_pressure"] == pytest.approx(1.56, abs=0.02)
+    assert (beam["arm"], beam["moment"]) == pytest.approx((6.15, 81.4), abs=0.1) and beam["area"] == pytest.approx(4.4, abs=0.1)
+    assert (beam["tension"], beam["compression"]) == pytest.approx((23.7, 34.1), abs=0.5)
+    assert beam["tension"] < S.PLA_TENSILE / 1.45 and beam["compression"] < S.PLA_BEND / 2.2
+    # 検査器が生きている: 上の板を 0.4 に薄くした蓋では、奥の縁の応力が 40 MPa を超える
+    monkeypatch.setattr(S, "COVER_TOP_T", 0.4)
+    C.cover_solid.cache_clear()
+    C.cover_beam.cache_clear()
+    try:
+        assert C.cover_beam()["compression"] > 40.0
+    finally:
+        monkeypatch.undo()
+        C.cover_solid.cache_clear()
+        C.cover_beam.cache_clear()
 
 
 def test_with_the_cover_locked_the_cell_has_no_way_out_in_any_direction(halves, cover_env):
@@ -915,13 +968,13 @@ def test_with_the_cover_locked_the_cell_has_no_way_out_in_any_direction(halves, 
     当たり、その先 3 mm（手前の向きは、電池の半分の 8 mm）まで当たり続ける（すり抜けない）。蓋が無ければ、手前へは 22 mm 何にも当たらない（電池を替える道）。"""
     frame = corner_piece(halves)
     cell = C.cell_solid()
-    cage = Compound([frame, C.cover_solid(), clip_nominal(), cover_env["基板"]])
+    cage = Compound([frame, bare(), clip_nominal(), cover_env["基板"]])
     assert vol(cage, cell) < TOL
     for name, d in DIRS.items():
         k = first_hit(cell, cage, d, (0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.8, 1.0))
         far = (1.5, 2.0, 3.0) + ((5.0, 8.0) if name == "手前" else ())
         assert k is not None and all(vol(cage, moved(cell, d, s)) > TOL for s in far), name
-    assert first_hit(cell, cage, DIRS["手前"], (0.3, 0.4)) == 0.4 and first_hit(cell, cage, DIRS["上"], (0.5, 0.6)) == 0.6     # 手前は 0.35 で足・上は 0.55 でクリップの板
+    assert first_hit(cell, cage, DIRS["手前"], (0.2, 0.3)) == 0.3 and first_hit(cell, cage, DIRS["上"], (0.4, 0.5, 0.6)) == 0.6     # 手前は 0.23 で足・上は 0.5 で蓋の上の帯
     # 検査器が生きている: 蓋を外すと、手前へ出る（歯の間 17.0 を電池 16.0 が通る）
     open_cage = Compound([frame, clip_nominal(), cover_env["基板"]])
     assert all(vol(open_cage, moved(cell, DIRS["手前"], s)) < TOL for s in (0.5, 1.0, 2.0, 5.0, 12.0, 22.0))
@@ -935,94 +988,155 @@ def tipped(part, axis, deg, pivot):
     return piv * Rot(*[deg if a == axis else 0 for a in "xyz"]) * piv.inverse() * part
 
 
-def lock_problems(frame, board, cover=None, variant=None, deflect=(0.0,)):
+def lock_problems(frame, board, cover=None, variant=None, deflect=0.0):
     """**留まっているか**: 棒を deflect だけ押し込んだ蓋が、枠と基板の中で、平行に動かしても・回しても出てこない。
-      平行: 手前・奥・左右・下は 0.3 以内、上は 0.3 以内で当たる
+      平行: 手前・奥・左右・下は 0.3 以内、上は「歯との隙 ＋ 0.2」以内で当たる
       回す: 手前の上の縁・手前の下の縁（x の軸）、左の下の角・右の下の角（y の軸 = 片側だけ持ち上がる動き）、真ん中（z の軸）のまわりに ± 4〜12°
-            （± 2° までは隙の中の遊び: 上の縁が 0.17 動く）"""
+            （± 2° までは隙の中の遊び）"""
     out = []
     cv = LAY.cover(variant)
     f = LAY.frame
     held = Compound([frame, board])
     xm = (cv["x0"] + cv["x1"]) / 2
-    for d in deflect:
-        c = C.cover_solid(variant, d) if cover is None else cover
-        for name in ("手前", "奥", "左", "右", "下", "上"):
-            k = first_hit(c, held, DIRS[name], (0.1, 0.2, 0.3))
-            if k is None:
-                out.append(f"棒を {d} 押し込んだ蓋が、{name}へ 0.3 動く")
-        for label, axis, pivot in (("手前の上の縁", "x", (xm, f[1], 5.0)), ("手前の下の縁", "x", (xm, f[1], 0.0)), ("左の下の角", "y", (cv["x0"], f[1], 0.0)),
-                                   ("右の下の角", "y", (cv["x1"], f[1], 0.0)), ("真ん中", "z", (xm, f[1] + 1.5, 0.0))):
-            for deg in (4.0, 8.0, 12.0, -4.0, -8.0, -12.0):
-                if vol(held, tipped(c, axis, deg, pivot)) < 0.01:
-                    out.append(f"棒を {d} 押し込んだ蓋が、{label}のまわりに {deg}° 回る")
+    c = bare(variant, deflect) if cover is None else cover
+    for name in ("手前", "奥", "左", "右", "下", "上"):
+        steps = (0.1, 0.2, 0.3) + ((0.4, 0.5, 0.6) if name == "上" else ())
+        k = first_hit(c, held, DIRS[name], steps)
+        if k is None or (name == "上" and k > cv["gap"] + 0.21):
+            out.append(f"棒を {deflect} 押し込んだ蓋が、{name}へ {steps[-1]} 動く")
+    for label, axis, pivot in (("手前の上の縁", "x", (xm, f[1], 5.0)), ("手前の下の縁", "x", (xm, f[1], 0.0)), ("左の下の角", "y", (cv["x0"], f[1], 0.0)),
+                               ("右の下の角", "y", (cv["x1"], f[1], 0.0)), ("真ん中", "z", (xm, f[1] + 1.5, 0.0))):
+        for deg in (4.0, 8.0, 12.0, -4.0, -8.0, -12.0):
+            if vol(held, tipped(c, axis, deg, pivot)) < 0.01:
+                out.append(f"棒を {deflect} 押し込んだ蓋が、{label}のまわりに {deg}° 回る")
     return out
 
 
-def test_the_cover_cannot_come_out_unless_the_springs_are_pushed_in_and_it_is_lifted(halves, cover_env):
-    """留め: 棒の先が、枠の歯の下に**直角の面で**当たる（摩擦で留める所は無い）。外すには、棒の先を 0.95（蓋が前へ寄り切っていれば 1.1）押し込んで、
-    そのまま持ち上げる = **2 つの動きを同時に**（Energizer のデータシートの「電池の蓋は、道具か、同時に行う 2 つの独立した動きで開く形に」と同じ形）。
-    試し刷りの 4 つの蓋は「内側へ落ちる」ことがよくあった → 倒れる向き・片側だけ浮く向きも、立体を回して見る。"""
+def end_rise(cover, held, end, degs=(1, 2, 3, 4, 5, 6, 8, 10)):
+    """蓋の片方の端（end = "right" / "left"）が、枠と基板に当たらずに持ち上がる量のいちばん大きい物を、姿勢を振って探す。
+    反対の端の下の角を支点に、前後の軸（y）のまわりに回し、そこから左右 ± 0.3・前後 −0.2〜＋0.15・上 0〜0.3 ずらす。上下の軸まわりの ± 1° も足す。
+    返り値 (上がる量, 姿勢)。**探すのは格子の上だけ**（角度は 1° おき = 上がる量で 0.33 おき）。"""
+    cv = LAY.cover()
+    width = cv["side"][1] - cv["side"][0]
+    pivot = (cv["side"][0] if end == "right" else cv["side"][1], LAY.frame[1], 0.0)
+    sg = -1 if end == "right" else 1                     # Rot(0, deg, 0) は +deg で右が下がる
+    xm = (cv["x0"] + cv["x1"]) / 2
+    best = (0.0, None)
+    for deg in degs:
+        rolled = tipped(cover, "y", sg * deg, pivot)
+        for yaw in (0.0, 1.0, -1.0):
+            base = rolled if yaw == 0.0 else tipped(rolled, "z", yaw, (xm, LAY.frame[1] + 2.0, 0.0))
+            for dx in (-0.3, -0.15, 0.0, 0.15, 0.3):
+                for dy in ((-0.2, 0.0, 0.15) if yaw == 0.0 else (0.0,)):
+                    for dz in ((0.0, 0.15, 0.3) if yaw == 0.0 else (0.15,)):
+                        rise = width * math.sin(math.radians(deg)) + dz
+                        if rise > best[0] and vol(held, Pos(dx, dy, dz) * base) < TOL:
+                            best = (round(rise, 2), (deg, yaw, dx, dy, dz))
+    return best
+
+
+def test_the_cover_cannot_come_out_unless_both_springs_are_pushed_in_and_it_is_lifted(halves, cover_env):
+    """留め: 棒の先が、枠の歯の下に**直角の面で**当たる。外すには、**2 本とも**押し込んで（先で 0.85〜1.06）、そのまま持ち上げる。
+    試し刷りの 4 つの蓋は「内側へ落ちる」ことがよくあった → 倒れる向き・片側だけ浮く向きも、立体を回して見る。
+    **この蓋は、指 1 本でも開く**（真ん中を、2 本の棒にまたがる物で 0.43 押し込み、押したまま持ち上げる）。電池メーカーの注意書きの
+    「同時に行う 2 つの独立した動き」には当たらない（見直しの指摘 2。その根拠には使わない）。"""
     frame = corner_piece(halves)
     board = cover_env["基板"]
-    num = C.cover_numbers()
     cv = LAY.cover()
-    assert (num["release"], num["release_max"]) == pytest.approx((0.95, 1.1))
+    num = C.cover_numbers()
+    assert (num["release"], num["release_seated"]) == pytest.approx((0.85, 1.062), abs=0.001)
     for n in sorted(S.COVER_VARIANTS):
         assert lock_problems(frame, board, variant=n) == [], n
-    # 棒を押し込む量が足りないと抜けない: 0.5・0.8 では上へ 0.3 以内で歯に当たる。0.95（名目）で初めて上へ抜ける
-    cover = C.cover_solid()
-    for d in (0.5, 0.8):
-        assert first_hit(C.cover_solid(None, d), frame, DIRS["上"], (0.1, 0.2, 0.3)) is not None, d
-    assert all(vol(frame, Pos(0, 0, 0.25 * i) * C.cover_solid(None, 0.95)) < TOL for i in range(29))
-    # 片方の棒だけ押し込んでも抜けない: 押し込んだ蓋の右半分 ＋ 押し込まない蓋の左半分（左の歯に上の棒が掛かったまま）
-    xm = (cv["x0"] + cv["x1"]) / 2
-    half = (C.cover_solid(None, 1.1) & C._box((xm, -60, 140, -30), -1, 6)) + (cover & C._box((100, -60, xm, -30), -1, 6))
-    assert first_hit(half, frame, DIRS["上"], (0.1, 0.2, 0.3)) is not None
-    # 掛かり: 歯は口の壁から 1.0 出ている。棒の先は蓋の側面まで = 歯の下に 0.85 入る（左右に 0.15 寄っても 0.7・刷りが 0.15 ずれても 0.55）。
-    # 前後は、歯の厚さ 1.0 のうち 0.85（蓋の手前の面が 0.15 引っ込んでいる分を除く）
-    over = Pos(0, 0, 0.5) * cover & frame
-    tips = sorted(over.solids(), key=lambda q: q.bounding_box().min.X)
-    assert len(tips) == 2
-    for q, key in zip(tips, ("B", "A")):
-        bb = q.bounding_box()
-        assert (bb.size.X, bb.size.Y) == pytest.approx((S.COVER_TOOTH[0] - S.COVER_CLEAR, S.COVER_LIP - S.COVER_RECESS), abs=0.02), key
-        assert bb.min.Z == pytest.approx(cv["ledge"][key], abs=0.01)
-    # 歯の下面も棒の上面も水平（直角に当たる。斜めの面で外れる向きの力が出ない）: 棒の先の真上 0.1 は空・0.3 は枠
+    # 棒を押し込む量が足りないと抜けない: 0.6 では上へ 0.5 以内で歯に当たる。0.85（名目）で初めて上へ抜ける
+    assert first_hit(bare(None, 0.6), frame, DIRS["上"], (0.1, 0.2, 0.3, 0.4, 0.5)) is not None
+    assert all(vol(frame, Pos(0, 0, 0.25 * i) * bare(None, 0.85)) < TOL for i in range(29))
+    # 歯の下面も棒の上面も水平（直角に当たる）: 棒の先の真上は、歯の下面まで空・その上は枠
+    cover = bare()
     for key, x in (("A", cv["tip"]["A"] - 0.4), ("B", cv["tip"]["B"] + 0.4)):
         z1 = cv["band"][key][1]
-        for y in (cv["yf"] + 0.1, cv["yf"] + 0.4, cv["yf"] + 0.75):
-            assert cover.is_inside((x, y, z1 - 0.05)) and not frame.is_inside((x, y, z1 + 0.1)) and frame.is_inside((x, y, z1 + 0.3)), (key, y)
-    # 蓋を持ち上げようとすると、棒の先のすぐ下に蓋の硬い所が来る（棒だけが撓んで蓋が浮く、にならない）: 棒の先の 1.5 内で、切れ目 0.4 の下は詰まっている
-    slit = S.COVER_LEAF[1]
-    assert cover.is_inside((cv["tip"]["A"] - 1.8, cv["yf"] + 0.5, cv["band"]["A"][0] - slit - 0.1))        # 下の棒の下 = 下の帯
-    assert cover.is_inside((cv["tip"]["B"] + 1.8, cv["yf"] + 0.5, cv["band"]["B"][0] - slit - 0.1))        # 上の棒の下 = 下の棒の付け根（左の足）
-    assert S.COVER_CATCH_GAP + slit == pytest.approx(0.6)                                                   # 蓋が上へ動ける量の上限（歯の隙 ＋ 切れ目）
+        for y in (cv["yf"] + 0.4, cv["yf"] + 0.7):
+            assert cover.is_inside((x, y, z1 - 0.05)) and not frame.is_inside((x, y, z1 + cv["gap"] - 0.1)) and frame.is_inside((x, y, z1 + cv["gap"] + 0.1)), (key, y)
+
+
+def test_the_latch_engagement_survives_print_error_measured_on_the_solids(halves, cover_env):
+    """見直しの指摘 6: 掛かりを、設計値の足し算ではなく**立体で**測る。蓋を 0.6 持ち上げたときの、棒の先と歯の重なり（左右・前後の大きさ）。
+    名目: 左右 0.85（歯の出 1.0 − 側面の隙 0.15）・前後 0.73。蓋が左右に 0.3・奥へ 0.15 寄り切っても（刷りの誤差 0.15 ＋ 隙）、遠い側で 左右 0.55・前後 0.59。"""
+    frame = corner_piece(halves)
+    cv = LAY.cover()
+
+    def bites(dx, dy, variant=None):
+        over = (Pos(dx, dy, 0.6) * bare(variant)) & frame
+        out = {}
+        for q in over.solids():
+            bb = q.bounding_box()
+            for key in ("A", "B"):
+                if abs(bb.min.Z - cv["ledge"][key]) < 0.02 and bb.size.Z > 0.05:
+                    out[key] = (round(bb.size.X, 2), round(bb.size.Y, 2))
+        return out
+
+    assert bites(0.0, 0.0) == {"A": pytest.approx((0.85, 0.73), abs=0.03), "B": pytest.approx((0.85, 0.73), abs=0.03)}
+    far = {**{k: v for k, v in bites(0.3, 0.15).items() if k == "B"}, **{k: v for k, v in bites(-0.3, 0.15).items() if k == "A"}}
+    assert far == {"A": pytest.approx((0.55, 0.59), abs=0.04), "B": pytest.approx((0.55, 0.59), abs=0.04)}
+    assert all(x >= 0.5 and y >= 0.5 for x, y in far.values())
+    # 検査器が生きている: 0.9 寄せれば、遠い側の掛かりは無くなる（重なりに、歯の下面の高さの物が出ない）
+    assert "B" not in bites(0.9, 0.15)
+    # 3 つの蓋とも同じ掛かり（隙の違いは上下だけ）
+    assert all(bites(0.0, 0.0, n)["A"] == pytest.approx((0.85, 0.73), abs=0.03) for n in (1, 3))
+
+
+def test_pressing_only_one_spring_cannot_open_the_cover_and_one_end_can_rise_only_a_bounded_amount(halves, cover_env):
+    """見直しの指摘 2: 前の形は、**棒を 1 本押すだけで**、その側の端が 6〜7° 傾いて 2〜3 mm 上がった（探すと 1.8 以上: 2026-10-05 に同じ探し方で確かめた）。
+    → 耳の先を平らに落として、溝の先の壁と隙 0.15 で向き合わせた（左右の案内）。**棒 1 本を止めまで押し込んでも**:
+      - まっすぐ上へは抜けない（もう 1 本が歯に掛かっている）
+      - 押した側の端が上がる量は、探した格子の上で 1.13（3°）= 上限を 1.5 と置く。電池の高さ 3.2 の半分に届かない。押していない側の端は上がらない
+    **上がる量を 0 にはできていない**: 高さ 5 の蓋が、左右の隙の合計 0.3 の中で傾く角度（0.3 ÷ 5 = 3.4°）は、上から落とす形の限り残る。
+    上がったままで止まることもある（棒の先が歯の奥の面に寄り掛かる）。そこから、もう 1 本も押せば開く = **端を 1 つずつ、2 回に分けて開けられる**。"""
+    frame = corner_piece(halves)
+    held = Compound([frame, cover_env["基板"]])
+    for press, end, other in (("A", "right", "left"), ("B", "left", "right")):
+        one = bare(None, S.COVER_STOP, press)
+        assert first_hit(one, frame, DIRS["上"], (0.1, 0.2, 0.3, 0.4, 0.5)) is not None, press
+        rise, pose = end_rise(one, held, end)
+        assert 0.5 < rise <= 1.5, (press, rise, pose)
+        assert end_rise(one, held, other, degs=(1, 2, 3))[0] == 0.0, press
+    # 棒を押していない蓋は、どちらの端も上がらない（格子の最小 = 1° ＝ 0.33 でも当たる）
+    assert end_rise(bare(), held, "right", degs=(1, 2, 3))[0] == 0.0
+    # 検査器が生きている: 溝の先の壁を 0.6 外へ広げた枠（左右の案内が無い = 前の形）では、1.5 を超えて上がる
+    cv = LAY.cover()
+    wide = frame - Compound([C._box((cv["gx"][1] - 0.05, cv["y_face"], cv["gx"][1] + 0.6, cv["y_groove"]), -1, 6),
+                             C._box((cv["gx"][0] - 0.6, cv["y_face"], cv["gx"][0] + 0.05, cv["y_groove"]), -1, 6)])
+    assert end_rise(bare(None, S.COVER_STOP, "A"), Compound([wide, cover_env["基板"]]), "right")[0] > 1.5
 
 
 def test_the_spring_numbers_and_what_a_drop_can_do_to_them():
-    """棒（板ばね）の計算。**計算は、前の 4 つの蓋で外れた。ここの数は目安で、決めるのは試し刷り**（だから 3 つ刷る）。
-    前の蓋と違う所: 棒は電池の力を受けない・掛かりは直角の面・長さ 13.7（前は 6.3 以下）・外すたわみ 0.95〜1.1 に対して付け根のひずみ 1.4 %。"""
-    n1, n2, n3 = (C.cover_numbers(n) for n in (1, 2, 3))
+    """棒（板ばね）の計算。**計算は、前の 4 つの蓋で外れた。ここの数は目安で、決めるのは試し刷り。**
+    見直しの指摘 3: 前の記録は、落下で棒が動く量を静的に見ていた（余裕 2.3 倍）。棒の固有の振動数と、半波 0.5 ms の衝撃での揺れの倍率を入れると、
+    前の形（厚さ 1.0・0.8）は 0.60・0.82 で、外れ始め 0.80 に対して余裕 1.3 倍・0（蓋 1 は、自分の仮定で外れる）。
+    → 棒を 1 種類（厚さ 1.05・高さ 1.0）にし、蓋が溝に座った位置（つぶれる筋が押している）での外れる量を 1.06 に増やした。"""
+    n = C.cover_numbers()
     cv = LAY.cover()
-    # 蓋 2（本番の候補）: 先を押す固さ 0.21 N/mm・真ん中を押して外す力は棒 1 本 0.75 N（2 本で 1.5 N = 150 gf）・付け根のひずみ 1.41 %
-    # （曲げ強さ ÷ 曲げ弾性率 = 2.76 % の 0.51 倍。0.55 倍を上限に置く: 外すときに一瞬だけ掛かる・何百回も繰り返さない）
-    assert (n2["k_tip"], n2["push_force"], n2["strain"]) == pytest.approx((0.214, 0.753, 1.407), abs=0.005)
-    assert n2["strain_limit"] == pytest.approx(2.76, abs=0.01) and n2["strain"] < 0.55 * n2["strain_limit"] and n1["strain"] < n2["strain"]
-    assert n2["push"] == pytest.approx(0.44) and n2["push"] < 0.56                       # 真ん中の押し込みは、棒と電池の隙より小さい
-    # 落下 1500 G が棒の厚さの向き（奥向き）に掛かったとき、棒が自分の重さで動く量（静的）: 蓋 2 は 0.35・蓋 1 は 0.55。外れ始めは 0.80（蓋が奥へ寄り切ったとき）。
-    # 余裕は 蓋 2 で 2.3 倍・蓋 1 で 1.5 倍。**衝撃は静的な値より大きく揺らすことがある**（半波 0.5 ms は棒の固有の周期と同じ桁）= 余裕の全部は当てにしない。
-    # 棒が一瞬外れても、蓋は同時に上へ 0.8（棒の高さ）動かないと抜けない
-    need = n2["release"] - S.COVER_RECESS
-    assert need == pytest.approx(0.80) and (n1["drop_tip"], n2["drop_tip"], n3["drop_tip"]) == pytest.approx((0.55, 0.35, 0.34), abs=0.01)
-    assert need / n2["drop_tip"] > 2.2 and need / n1["drop_tip"] > 1.4
-    # 蓋の自分の重さ 0.20 g が 1500 G で出す力 2.9 N は、上向きなら歯（直角の面）が受ける。電池の力 26.5 N は耳が受ける
-    assert n2["cover_force"] == pytest.approx(2.94, abs=0.05) and n2["cell_force"] == pytest.approx(26.5, abs=0.1)
-    assert C.cover_solid().volume * C.PLA_DENSITY == pytest.approx(0.200, abs=0.005)
-    # 検査器が生きている: 棒を 0.6 に薄くすると、1500 G で外れ始めを超える。1.2 に厚くすると、ひずみが上限を超える
-    b, length = S.COVER_LEAF[0], cv["leaf_len"]
-    assert C.PLA_DENSITY * b * 0.6 * S.DROP_G * 9.80665e-3 * length ** 4 / (8 * S.PLA_E * b * 0.6 ** 3 / 12) > need
-    assert n2["strain"] * 1.2 > 0.55 * n2["strain_limit"]
+    # 押す力: 2 本を真ん中で 2.2 N（約 230 gf・真ん中の押し込み 0.43）。先の近くを 1 本ずつなら 0.42 N。**小さい**（キーボードの重さ 約 1.9 N と同じ桁）。
+    # 上げられない理由: 力は ひずみの上限 × 断面 で決まる（付け根のひずみ 1.49 % = 上限 1.52 % いっぱい。棒を厚く・短くすると、外すときに上限を超える）
+    assert (n["mid_force"], n["mid_push"], n["tip_force"]) == pytest.approx((2.25, 0.425, 0.42), abs=0.01)
+    assert (n["mid_strain"], n["tip_strain"], n["stop_strain"]) == pytest.approx((1.49, 0.99, 1.68), abs=0.01)
+    assert n["strain_use"] == pytest.approx(1.52, abs=0.01) and n["mid_strain"] <= n["strain_use"] and n["stop_strain"] < 0.62 * n["strain_limit"]
+    assert n["mid_push"] < 0.41 + cv["seat"]                              # 真ん中の押し込みは、蓋が座っているときの、棒と電池の隙（0.62）より小さい
+    # 落下 1500 G・半波 0.5 ms が棒の厚さの向き（奥向き）に掛かったとき: 固有の振動数 1407 Hz・揺れの倍率 1.75・静的 0.29 → 0.51。
+    # 外れる量は、蓋が座っていれば 1.06 − 0.1（検査の余り）= 0.96 → 余裕 1.9 倍。蓋が奥へ寄り切っていれば 0.75 → 1.5 倍。
+    # 刷りで棒が 0.15 薄く（0.90）出ると、揺れは 0.68 → 余裕 1.4／1.1 倍（下で計算する）。**棒が一瞬外れても、その瞬間に蓋が「歯との隙」より多く浮かなければ戻る**
+    assert n["freq"] == pytest.approx(1407.0, abs=3.0) and n["gain"] == pytest.approx(1.75, abs=0.02)
+    assert (n["drop_static"], n["drop_tip"]) == pytest.approx((0.291, 0.510), abs=0.005)
+    seated, back = n["release_seated"] - 0.1, n["release"] - 0.1
+    assert seated / n["drop_tip"] > 1.85 and back / n["drop_tip"] > 1.45
+    thin = 0.90
+    f_thin = n["freq"] * thin / cv["t"]
+    tip_thin = n["drop_static"] * (cv["t"] / thin) ** 2 * C.shock_gain(f_thin, S.DROP_MS)
+    assert tip_thin == pytest.approx(0.68, abs=0.02) and seated / tip_thin > 1.35 and back / tip_thin > 1.05
+    # 揺れの倍率の計算が合っているか: 衝撃が固有の周期よりずっと長ければ 1（静的）・ずっと短ければ小さい・同じ桁なら 1.5〜1.8
+    assert C.shock_gain(100000.0, 0.5) == pytest.approx(1.0, abs=0.03) and C.shock_gain(100.0, 0.5) < 0.35 and 1.6 < C.shock_gain(1300.0, 0.5) < 1.8
+    # 蓋の自分の重さ 0.22 g が 1500 G で出す力 3.3 N は、上向きなら歯（直角の面）が受ける。電池の力 26.5 N は耳が受ける
+    assert n["cover_force"] == pytest.approx(3.23, abs=0.06) and n["cell_force"] == pytest.approx(26.5, abs=0.1)
+    assert C.cover_solid().volume * C.PLA_DENSITY == pytest.approx(0.219, abs=0.005)
 
 
 def _mutated_cover(monkeypatch, variant=None, deflect=0.0, **spec):
@@ -1030,20 +1144,20 @@ def _mutated_cover(monkeypatch, variant=None, deflect=0.0, **spec):
         monkeypatch.setattr(S, k, v)
     C.cover_solid.cache_clear()
     try:
-        return C.cover_solid(variant, deflect)
+        return bare(variant, deflect)
     finally:
         C.cover_solid.cache_clear()
 
 
 @pytest.mark.parametrize("kw, word", [
-    (dict(shift=(0.0, 0.0, 0.3)), "上面"),                                   # 0.3 浮いた蓋: 上面から出る・歯に当たる
+    (dict(shift=(0.0, 0.0, 0.3)), "上面"),                                   # 0.3 浮いた蓋: 上面から出る
     (dict(shift=(0.0, 0.3, 0.0)), "枠"),                                     # 0.3 奥: 口の奥の壁・溝の奥の面
     (dict(shift=(0.4, 0.0, 0.0)), "枠"),                                     # 0.4 右
     (dict(shift=(0.0, -0.3, 0.0)), "枠"),                                    # 0.3 手前: 耳が溝の斜めの面に食い込む
     (dict(shift=(0.0, 0.0, -0.2)), "基板"),                                  # 0.2 沈んだ蓋
     (dict(under_clip=True), "持ち上げた所"),                                 # 足がクリップの板の下まで入っている蓋: 置いた位置では当たらないが、上へ抜けない
-    (dict(spec=dict(COVER_BLOCK=5.8, COVER_CELL_CLEAR=-0.5)), "電池"),       # 足が広くて、電池の縁に食い込む
-    (dict(spec=dict(COVER_BLOCK=5.8, COVER_CELL_CLEAR=0.1)), "電池の円"),    # 足が広くて、電池との隙が 0.1（電池には当たらないが、舌の来る所に入る）
+    (dict(spec=dict(COVER_BLOCK=6.1, COVER_CELL_CLEAR=-0.5)), "電池"),       # 足が広くて、電池の縁に食い込む
+    (dict(spec=dict(COVER_BLOCK=6.1, COVER_CELL_CLEAR=0.05)), "電池の円"),   # 足が広くて、電池との隙が 0.05（電池には当たらないが、舌の来る所に入る）
     (dict(spec=dict(COVER_TOP_T=1.0)), "クリップ"),                          # 上の板が厚い: クリップの上面に当たる
     (dict(spec=dict(COVER_RECESS=-0.1)), "外面"),                            # 手前の面が枠の外面から 0.1 出ている
     (dict(clip_high=0.3), "クリップ"),                                       # クリップが 0.3 高い（はんだで浮いた）なら、上の板に当たる
@@ -1056,7 +1170,7 @@ def test_the_cover_check_notices_a_break(halves, cover_env, monkeypatch, kw, wor
     frame = corner_piece(halves)
     cv = LAY.cover()
     args = dict(things=dict(cover_env))
-    rel = C.cover_numbers()["release_max"]
+    rel = cv["release_seated"]
     if "shift" in kw:
         args["shift"] = kw["shift"]
     if "spec" in kw:
@@ -1065,20 +1179,20 @@ def test_the_cover_check_notices_a_break(halves, cover_env, monkeypatch, kw, wor
     if "clip_high" in kw:
         args["things"]["クリップ"] = Pos(0, 0, kw["clip_high"]) * cover_env["クリップ"]
     if kw.get("under_clip"):
-        lump = C._box((cv["block"][0][0], cv["y_block"] - 0.1, cv["block"][0][0] + 3.0, cv["y_block"] + 1.2), 0.0, 3.1)
-        args["cover"], args["opened"] = C.cover_solid() + lump, C.cover_solid(None, rel) + lump
+        lump = C._box((cv["block"][0][0] + 1.0, cv["y_block"] - 0.1, cv["block"][0][0] + 4.0, cv["y_block"] + 1.2), 0.0, 3.1)
+        args["cover"], args["opened"] = bare() + lump, bare(None, rel) + lump
     if kw.get("no_ears"):
         inside = C._box((cv["side"][0], -60, cv["side"][1], -30), -1, 6)
-        args["cover"], args["opened"] = C.cover_solid() & inside, C.cover_solid(None, rel) & inside
+        args["cover"], args["opened"] = bare() & inside, bare(None, rel) & inside
     if kw.get("no_teeth"):
         args["things"]["枠"] = frame - Compound(list(C.cover_teeth().values()))
     if kw.get("short_leaf"):
-        cut = Compound([C._box((cv["x0"] - 1, cv["yf"] - 1, cv["tooth"][0] + 0.3, cv["yf"] + 1.1), 1.4, 3.9),
-                        C._box((cv["tooth"][1] - 0.3, cv["yf"] - 1, cv["x1"] + 1, cv["yf"] + 1.1), 1.4, 3.9)])
-        args["cover"] = C.cover_solid() - cut
+        cut = Compound([C._box((cv["x0"] - 1, cv["yf"] - 1, cv["tooth"][0] + 0.3, cv["yf"] + 1.2), 1.0, 3.7),
+                        C._box((cv["tooth"][1] - 0.3, cv["yf"] - 1, cv["x1"] + 1, cv["yf"] + 1.2), 1.0, 3.7)])
+        args["cover"] = bare() - cut
     if kw.get("sill_corner"):
-        lump = C._box((cv["tooth"][1] - 0.5, cv["yf"], cv["side"][1], cv["yf"] + 0.8), 0.1, 1.3)
-        args["cover"], args["opened"] = C.cover_solid() + lump, C.cover_solid(None, rel) + lump
+        lump = C._box((cv["tooth"][1] - 0.5, cv["yf"], cv["side"][1], cv["yf"] + 0.8), 0.1, 0.6)
+        args["cover"], args["opened"] = bare() + lump, bare(None, rel) + lump
     bad = cover_problems(frame, **args)
     assert any(word in b for b in bad), bad
 
@@ -1086,38 +1200,57 @@ def test_the_cover_check_notices_a_break(halves, cover_env, monkeypatch, kw, wor
 def test_the_lock_check_notices_a_frame_without_teeth_and_a_cover_pushed_in(halves, cover_env):
     frame = corner_piece(halves)
     board = cover_env["基板"]
-    bare = frame - Compound(list(C.cover_teeth().values()))
-    assert any("上" in b for b in lock_problems(bare, board))                                   # 歯が無ければ上へ動く
-    assert any("上" in b for b in lock_problems(frame, board, deflect=(1.1,)))                  # 棒を押し込めば上へ動く（= 外し方）
-    # 歯が片方だけでも、名目の隙では出てこない（片側だけ浮かそうとすると、蓋の角が口の壁に突っ張る）。**刷った隙が広ければ、片側が少し浮きうる** = 歯は 2 つ要る
-    assert lock_problems(frame - C.cover_teeth()["left"], board) == []
-    assert any("手前" in b for b in lock_problems(frame, board, cover=C.cover_solid() & C._box((LAY.cover()["side"][0], -60, LAY.cover()["side"][1], -30), -1, 6)))
+    bare_frame = frame - Compound(list(C.cover_teeth().values()))
+    assert any("上" in b for b in lock_problems(bare_frame, board))                             # 歯が無ければ上へ動く
+    assert any("上" in b for b in lock_problems(frame, board, deflect=LAY.cover()["release_seated"]))   # 2 本とも押し込めば上へ動く（= 外し方）
+    cv = LAY.cover()
+    assert any("手前" in b for b in lock_problems(frame, board, cover=bare() & C._box((cv["side"][0], -60, cv["side"][1], -30), -1, 6)))
+
+
+def test_the_crush_ribs_take_up_the_play_and_push_the_cover_toward_its_seat(halves):
+    """見直しの指摘 5: 前の形には、押さえが無かった（上へ 0.2・前後 0.36・左右 0.15〜0.2 の遊び = がたつく）。
+    → 耳の奥の面に、縦のつぶれる筋を 2 本ずつ。溝の奥の面に当たって、蓋を手前（電池が押す向き = 耳が座る向き）へ寄せておく。
+    蓋が座ったときの、耳の奥の面と溝の奥の面の隙は 0.36。筋の高さ 0.40／0.50／0.60 との差 0.04／0.14／0.24 が、しめしろ（刷りの誤差 ± 0.15 で、
+    蓋 2 は −0.01〜0.29）。**上下の遊び（歯との隙）は、摩擦で押さえているだけ**: 形では止めていない。"""
+    frame = corner_piece(halves)
+    cv = LAY.cover()
+    assert cv["rib_gap"] == pytest.approx(0.362, abs=0.001)
+    for n, want in ((1, 0.04), (2, 0.14), (3, 0.24)):
+        ribbed = C.cover_solid(n)
+        seated = Pos(0, -cv["seat"] + 0.005, 0) * ribbed
+        hit = seated & frame
+        assert LAY.cover(n)["rib"] - cv["rib_gap"] == pytest.approx(want, abs=0.005)
+        assert len(hit.solids()) == 4 and max(q.bounding_box().size.Y for q in hit.solids()) == pytest.approx(want, abs=0.02), n     # 筋 4 本だけが食い込む
+        assert all(q.bounding_box().min.Y > cv["y_groove"] - 0.01 for q in hit.solids())
+        assert vol(frame, Pos(0, -cv["seat"] + 0.005, 0) * bare(n)) < TOL
+    # 筋の下の端は斜め（入れ始めに引っ掛からない）: 蓋を 4.5 持ち上げた所では、筋は溝に食い込まない
+    assert vol(frame, Pos(0, -cv["seat"] + 0.005, 4.5) * C.cover_solid(2)) < TOL
 
 
 def overhangs(part):
-    """刷る向きに置いた立体の、45° より寝た下向きの面 [(高さ, 面積, x の長さ, y の長さ)]（ベッドの面は除く）。"""
+    """刷る向きに置いた立体の、45° より寝た下向きの面 [(高さ, 面積, x の長さ, y の長さ)]（ベッドの面は除く・0.05 mm2 より小さい面は数えない）。"""
     out = []
     for f in part.faces():
         try:
             n = f.normal_at()
         except Exception:
             continue
-        if n.Z < -0.72 and f.center().Z > 1e-3:
+        if n.Z < -0.72 and f.center().Z > 1e-3 and f.area > 0.05:
             bb = f.bounding_box()
             out.append((round(f.center().Z, 2), round(f.area, 3), round(bb.size.X, 2), round(bb.size.Y, 2)))
     return out
 
 
 def test_the_cover_prints_front_face_down_without_support_and_the_frame_seat_too(halves):
-    """蓋は**手前の面をベッドに**刷る（棒と切れ目が平面の形になる）。耳の面と角の欠きは 45°。45° より寝た下向きの面は無い。
-    枠（上面をベッドに）は、歯も溝も宙に浮かない。"""
+    """蓋は**手前の面をベッドに**刷る（棒と切れ目が平面の形になる）。耳の面と角の欠きは 45°。宙に浮く面は、耳の付け根の柱が、棒の先の後ろの空きを渡る橋 2 つ
+    （幅 0.7・渡る長さ 1.6〜1.8。両側は詰まっている）だけ。枠（上面をベッドに）は、歯も溝も宙に浮かない。"""
     for n in sorted(S.COVER_VARIANTS):
         pr = C.cover_print(C.cover_solid(n, 0.0, True))
         b = pr.bounding_box()
         assert b.min.Z == pytest.approx(0.0, abs=1e-6) and len(pr.solids()) == 1 and pr.is_valid
-        assert (b.size.Y, b.size.Z) == pytest.approx((5.0, S.FINGER_NOTCH_DEPTH - S.COVER_RECESS - S.COVER_VARIANTS[n]["clear"]))
-        assert [o for o in overhangs(pr) if o[1] > 0.05] == [], (n, overhangs(pr))               # 0.05 mm2 より小さい面（耳と足の継ぎ目の重ね）は数えない
-    assert C.cover_print().bounding_box().size.X == pytest.approx(22.7)
+        assert (b.size.X, b.size.Y, b.size.Z) == pytest.approx((22.1, 5.0, 3.9 + S.COVER_VARIANTS[n]["rib"]), abs=0.01)
+        ov = overhangs(pr)
+        assert len(ov) == 2 and all(w == pytest.approx(S.COVER_RIB, abs=0.02) and span <= 1.9 for _, _, w, span in ov), (n, ov)
     # 検査器が生きている: 上面をベッドに置く（枠と同じ向き）と、棒と下の帯が宙に浮く
     assert sum(a for _, a, _, _ in overhangs(P.flip_to_bed(C.cover_solid()))) > 20.0
     # 枠（上面をベッドに）: 宙に浮く面は、入の印の底（前からある）だけ
@@ -1127,12 +1260,16 @@ def test_the_cover_prints_front_face_down_without_support_and_the_frame_seat_too
     cv = LAY.cover()
     frame = corner_piece(halves)
     for x, key in ((cv["x0"] + 0.5, "B"), (cv["x1"] - 0.5, "A")):
-        assert frame.is_inside((x, cv["y0"] + 0.3, 4.9)) and frame.is_inside((x, cv["y0"] + 0.3, cv["ledge"][key] + 0.1))
+        assert frame.is_inside((x, cv["y0"] + 0.1, 4.9)) and frame.is_inside((x, cv["y0"] + 0.3, cv["ledge"][key] + 0.1))
         assert not frame.is_inside((x, cv["y0"] + 0.3, cv["ledge"][key] - 0.1)) and not frame.is_inside((x, cv["y0"] + 0.3, 0.5))
-    # 歯の上の奥の縁は斜め（0.6）: 蓋を押し下げると、棒の先の下の斜めの面と合わせて 1.2 = 外すたわみ 1.1 より多く、自分で逃げる
+    # 歯の上の奥の縁は斜め（0.8）: 蓋を押し下げると、棒の先の下の斜めの面（0.8）と合わせて 1.6 = 外すたわみ 1.06 より 0.5 多い（見直しの指摘 5: 前は余り 0.1）
     x = cv["x1"] - 0.5
-    assert not frame.is_inside((x, cv["y_lip"] - 0.1, 4.8)) and frame.is_inside((x, cv["y_lip"] - 0.1, 4.3)) and frame.is_inside((x, cv["y_lip"] - 0.7, 4.9))
-    assert S.COVER_TOOTH[1] + (S.COVER_LEAF[0] - 0.2) >= C.cover_numbers()["release_max"] + 0.1 - 1e-9
+    assert not frame.is_inside((x, cv["y_lip"] - 0.1, 4.8)) and frame.is_inside((x, cv["y_lip"] - 0.1, 4.0)) and frame.is_inside((x, cv["y_lip"] - 0.9, 4.9))
+    assert S.COVER_TOOTH[1] + min(S.COVER_LEAF[0] - 0.2, 1.0) >= cv["release_seated"] + 0.5
+    # 刷る板には、蓋を COVER_SPARE 個並べる（無くしたときの予備）
+    spare = C.printables()["cover_battery"]
+    assert len(spare.solids()) == S.COVER_SPARE == 2
+
 
 
 # ---------------------------------------------------------------------------
@@ -1183,18 +1320,20 @@ def test_the_corner_coupon_is_cut_from_the_real_frame_and_its_stand_ins_sit_wher
     assert (cb.size.X, cb.size.Z) == pytest.approx((S.CELL_D, S.CELL_T)) and vol(cc["cell"], base) < TOL
     assert not cc["cell"].is_inside((cx, cy, 1.0)) and cc["cell"].is_inside((cx + S.COUPON_PUSH[0] / 2 + 0.2, cy, 1.0))
     assert vol(Pos(0, 0.3, 0) * cc["cell"], base) > 0.01 and vol(Pos(0.3, 0, 0) * cc["cell"], base) > 0.01
-    # 当て板の長い穴（裏から棒を差して、電池の代わりを手前へ押す）: 電池の穴の真下から、手前へ 6.0。電池の代わりが足に当たる 0.35 より長く動かせる
+    # 当て板の長い穴（裏から棒を差して、電池の代わりを手前へ押す）: 電池の穴の真下から、手前へ 6.0。電池の代わりが足に当たる 0.25 より長く動かせる
     assert not base.is_inside((cx, cy, -0.8)) and not base.is_inside((cx, cy - 5.5, -0.8)) and base.is_inside((cx, cy - 6.5, -0.8)) and S.COUPON_PUSH == (3.0, 4.0, 6.0)
     assert vol(cc["frame"], base) < TOL
     # 蓋 3 つ: 当て板にも枠の切れ端にも電池の代わりにも当たらず、足は当て板に着く。棒を押し込めば上へ抜ける・押し込まなければ抜けない・手前へは止まる。
-    # 電池の代わりは、蓋があると手前へ 0.35 で止まる
+    # 電池の代わりは、蓋があると手前へ 0.25 で止まる
     marks = []
     for n in sorted(S.COVER_VARIANTS):
-        cov = cc[f"cover{n}"]
+        cov = bare(n)                                                                # 筋の無い形で当たりを見る（筋は、わざと枠の溝に食い込む）
         assert vol(cov, base) < TOL and vol(cov, cc["frame"]) < TOL and vol(cov, cc["cell"]) < TOL and cov.bounding_box().min.Z == pytest.approx(0.0, abs=1e-6)
-        assert cover_problems(cc["frame"], cover=cov, variant=n, things={"枠": cc["frame"], "電池": cc["cell"], "基板": base,
-                                                                        "クリップ": Pos(0, 0, 50) * base, "ほかの部品": Pos(0, 0, 50) * base}) == [], n
-        assert first_hit(cc["cell"], cov, DIRS["手前"], (0.3, 0.4, 0.5)) == pytest.approx(0.4)
+        assert vol(cc[f"cover{n}"], base) < TOL and vol(cc[f"cover{n}"], cc["cell"]) < TOL
+        assert cover_problems(cc["frame"], variant=n, things={"枠": cc["frame"], "電池": cc["cell"], "基板": base,
+                                                             "クリップ": Pos(0, 0, 50) * base, "ほかの部品": Pos(0, 0, 50) * base}) == [], n
+        assert first_hit(cc["cell"], cov, DIRS["手前"], (0.2, 0.3, 0.4)) == pytest.approx(0.3)
+        cov = cc[f"cover{n}"]
         # 見分ける切り欠き: 上の板の奥の縁に n 個（本番の蓋には無い）
         missing = C.cover_solid(n) - cov
         marks.append(len(missing.solids()))
@@ -1205,10 +1344,10 @@ def test_the_corner_coupon_is_cut_from_the_real_frame_and_its_stand_ins_sit_wher
     plate = C.corner_coupon_plate()
     size = plate.bounding_box().size
     assert len(plate.solids()) == 7 and max(size.X, size.Y) <= 95 and plate.bounding_box().min.Z == pytest.approx(0.0, abs=1e-6)
-    # 並べた板: 蓋は手前の面をベッドに（高さ 4.2）・枠の切れ端は上面をベッドに（高さ 5.0）。互いに 3 以上離れている
+    # 並べた板: 蓋は手前の面をベッドに（高さ 4.3〜4.5 = 筋の高さの分だけ違う）・枠の切れ端は上面をベッドに（高さ 5.0）。互いに 3 以上離れている
     layout = dict(C.corner_coupon_layout())
     assert list(layout) == ["cell", "knob", "cover1", "cover2", "cover3", "base", "frame"]
-    assert layout["frame"].bounding_box().size.Z == pytest.approx(5.0) and all(layout[f"cover{n}"].bounding_box().size.Z == pytest.approx(4.2, abs=0.06) for n in (1, 2, 3))
+    assert layout["frame"].bounding_box().size.Z == pytest.approx(5.0) and all(layout[f"cover{n}"].bounding_box().size.Z == pytest.approx(4.4, abs=0.11) for n in (1, 2, 3))
     names = list(layout)
     for i, a in enumerate(names):
         for b_ in names[i + 1:]:

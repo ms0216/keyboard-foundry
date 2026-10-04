@@ -437,15 +437,17 @@ class Layout:
         """蓋の寸法（CAD・基板の上面 = 0）。枠の口・溝・歯（click_case.corner_cuts・cover_teeth）と蓋（click_case.cover_solid）の両方がここから作る。
         variant = spec.COVER_VARIANTS の番号（既定は COVER_MAIN）。**枠の形は variant によらない**（3 つの蓋が同じ枠に入る）。
           x0, x1      電池の口（手前の壁を上から下まで抜く溝）
-          y0          枠の外面・y1 口の奥の壁・y_lip 溝の手前の壁の奥の面（口の縁で）・y_groove 溝の奥の面・y_cheek 溝の奥の壁の奥の面
-          gx          溝の先 (左, 右)。溝は三角: 手前の面が、口の縁から gx へ 45° で奥へ下がり、奥の面に届く
+          y0          枠の外面・y1 口の奥の壁・y_lip 溝の手前の壁の奥の面（口の縁で）= 歯の奥の面・y_groove 溝の奥の面・y_cheek 溝の奥の壁の奥の面
+          gx          溝の先の壁 (左, 右)。溝の手前の面は、口の縁から外へ 45° で奥へ下がる
           tooth       歯の先の x (左, 右)・ledge 歯の下面の高さ {"A": 右の歯, "B": 左の歯}
           side        蓋の側面 (左, 右)・yf 蓋の手前の面・y_ear 耳の斜めの面の始まり・終わり（= 耳の奥の面）・y_face 溝の斜めの面が口の縁で始まる y
+          ear_x       耳の先の面 (左, 右)・seat 耳が溝に座るまでに、蓋が手前へ寄る量
           z_top       枠の上面・z_plate 上の板の下面・z_sill 下の帯の (下, 上)・z_strip 上の帯の下面
-          band        棒の高さ {"A": (z0, z1), "B": (z0, z1)}（A は左の足から右へ・B は右の足から左へ）
+          band        棒の高さ {"A": (z0, z1), "B": (z0, z1)}（A は左の足から右へ・B は右の足から左へ）・gap 歯と棒の上下の隙
           root, tip   棒の付け根と先の x {"A": .., "B": ..}・leaf_len 棒の長さ・t 棒の厚さ
           block       足の x の範囲 [(左), (右)]・y_block 足の奥の端（クリップの板の端の COVER_CLIP_CLEAR 手前）
-          release     棒の先を歯の奥へ逃がすのに要る押し込み（名目）
+          release     棒の先を歯の奥へ逃がすのに要る押し込み（名目の位置で）・release_seated 蓋が溝に座っているとき（いちばん大きい）
+          rib         つぶれる筋の高さ・rib_gap 蓋が座っているときの、耳の奥の面と溝の奥の面の隙
           holes       蓋のねじ穴（使っていない基板の穴）の中心"""
         s = self.s
         f = self.frame
@@ -455,7 +457,7 @@ class Layout:
         x0, x1 = cx - s.COVER_MOUTH_W / 2, cx + s.COVER_MOUTH_W / 2
         wd = s.COVER_WEDGE
         bw = s.COVER_BLOCK
-        b, slit, sill = s.COVER_LEAF
+        b, slit, sill, t = s.COVER_LEAF
         cl = v["clear"]
         side = (x0 + cl, x1 - cl)
         yf = f[1] + s.COVER_RECESS
@@ -464,19 +466,25 @@ class Layout:
         # （手前の面をベッドに刷ったとき、耳が宙から始まらない）。蓋の側面で、線は歯の奥の面から 歯の出 ＋ 隙 だけ奥
         y_s = y_lip + cl + (s.COVER_TOOTH[0] - cl + s.COVER_CLEAR)
         y_ear = (y_s, y_s + wd)
-        y_face = y_s + s.COVER_CLEAR - s.COVER_CLEAR * math.sqrt(2.0)   # 溝の手前の面（斜め）が、口の縁で始まる y（面に直角に COVER_CLEAR の隙）
+        seat = s.COVER_CLEAR * math.sqrt(2.0)                           # 斜めの面の隙 COVER_CLEAR を、前後に測った量
+        y_face = y_s + s.COVER_CLEAR - seat                             # 溝の手前の面（斜め）が、口の縁で始まる y
         y_groove = y_ear[1] + s.COVER_CLEAR
-        za = 0.1 + sill + slit                          # 下の帯は基板の上面から 0.1 浮かす（足だけが基板に着く）
+        ear_x = (side[0] - wd + s.COVER_EAR_END, side[1] + wd - s.COVER_EAR_END)
+        # 棒の高さ: 下の端は決まり・上の端は、歯の下面（枠 = 名目の隙 COVER_CATCH_GAP で決まる）から、この蓋の隙だけ下
+        za = 0.1 + sill + slit                                          # 下の帯は基板の上面から 0.1 浮かす（足だけが基板に着く）
         zb = za + b + slit
-        band = {"A": (za, za + b), "B": (zb, zb + b)}
+        ledge = {"A": za + b + s.COVER_CATCH_GAP, "B": zb + b + s.COVER_CATCH_GAP}
+        band = {"A": (za, ledge["A"] - v["gap"]), "B": (zb, ledge["B"] - v["gap"])}
         root = {"A": side[0] + bw, "B": side[1] - bw}
         tip = {"A": side[1], "B": side[0]}
+        release = y_lip + 0.1 - yf                                      # 棒の先の手前の面が、歯の奥の面の 0.1 奥へ出るまで
         return dict(x0=x0, x1=x1, y0=f[1], y1=f[1] + s.FINGER_NOTCH_DEPTH, y_lip=y_lip, y_groove=y_groove, y_cheek=y_groove + s.COVER_CHEEK,
-                    gx=(x0 - (y_groove - y_face), x1 + (y_groove - y_face)),
-                    tooth=(x0 + s.COVER_TOOTH[0], x1 - s.COVER_TOOTH[0]), ledge={k: z1 + s.COVER_CATCH_GAP for k, (_, z1) in band.items()},
-                    side=side, yf=yf, y_ear=y_ear, y_face=y_face,
-                    z_top=top, z_plate=top - s.COVER_TOP_T, z_sill=(0.1, 0.1 + sill), z_strip=zb + b + slit,
-                    band=band, root=root, tip=tip, leaf_len=tip["A"] - root["A"], t=v["t"],
+                    gx=(ear_x[0] - s.COVER_CLEAR, ear_x[1] + s.COVER_CLEAR),
+                    tooth=(x0 + s.COVER_TOOTH[0], x1 - s.COVER_TOOTH[0]), ledge=ledge,
+                    side=side, yf=yf, y_ear=y_ear, y_face=y_face, ear_x=ear_x, seat=seat,
+                    z_top=top, z_plate=top - s.COVER_TOP_T, z_sill=(0.1, 0.1 + sill), z_strip=ledge["B"] + 0.1,
+                    band=band, gap=v["gap"], root=root, tip=tip, leaf_len=tip["A"] - root["A"], t=t,
                     block=[(side[0], side[0] + bw), (side[1] - bw, side[1])], y_block=self.clip_body()[1] - s.COVER_CLIP_CLEAR,
-                    release=y_lip + 0.1 - yf,           # 棒の先の手前の面が、歯の奥の面の 0.1 奥へ出るまで
+                    release=release, release_seated=release + seat,
+                    rib=v["rib"], rib_gap=s.COVER_CLEAR + seat,
                     holes=sorted(tuple(c) for _, c, kind in self.screws() if kind == "cover"))
