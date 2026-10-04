@@ -66,7 +66,7 @@ def pilot_check(stem, gcode, rc, stl):
                             f"（利用者が確かめた径 {lo}〜{hi}）")
     return problems, rows
 
-STEMS = ("frame_left", "frame_right", "caps_1u", "caps_wide")      # 電池の蓋は入れない（考え直している途中。open-gaps P21）
+STEMS = ("frame_left", "frame_right", "caps_1u", "caps_wide")      # 電池の蓋（cover_battery）は tools/slice_cover.py（下穴も測る）
 PLA = 1.24                  # g/cm3
 
 

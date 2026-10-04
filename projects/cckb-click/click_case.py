@@ -12,9 +12,9 @@
   分け方  A1 mini に入るように左右 2 枚。継ぎ目のリブは左が持つ。基板が継ぎ目をまたぐ背骨
   キャップ 62 個（1u 51・1.5u 5・1.75u 2・2.25u 4）。枠の下から入れ、基板をかぶせる
   右手前の角  電源スイッチのつまみは枠の外へ出ない（先は外面の 0.6 内）。右の壁を上まで切り欠いて、指か爪で動かす（click_layout.psw_notch）。
-          電池は手前の壁の口から抜き差しする。**蓋（cover_solid）は考え直している途中で、刷る物に入れていない**（2026-10-04: 試し刷りで
-          留まらなかった。枠の口のまわりの形〔ひさし・溝〕は前のまま残してある）。蓋は無くても使える
-  試し刷り  ねじ（screw_coupon）と右手前の角（corner_coupon）。どちらも本番の枠の立体から切り出す
+          電池は手前の壁の口（上から下まで抜いた溝）から抜き差しする。**蓋（cover_solid）は、基板の下からねじ 2 本（H30・H31）で留める**
+          （2026-10-04 利用者の決定。差し込み式の蓋は 4 つとも留まらなかった）。ねじは蓋の左右の足に切る。蓋は無くても使える
+  試し刷り  ねじ（screw_coupon）と右手前の角（corner_coupon = 蓋の試し刷り）。どちらも本番の枠の立体から切り出す
 座標: CAD（キー領域の中心が原点・X 右・Y 奥）・Z は基板の上面が 0。
 """
 
@@ -55,7 +55,7 @@ PART_H = {"D": 1.35, "R": 1.35, "C": 1.35, "U": 1.2}
 PART_BODY = {"D": (2.8, 1.8), "R": (2.0, 1.25), "C": (2.0, 1.25), "U": (6.4, 5.0)}
 CAP_LAND_BODY = (3.4, 1.8)   # 1206 の外形の最大（3.2 ± 0.2 × 1.6 ± 0.2）
 COLORS = {"frame_left": "#9aa0a6", "frame_right": "#b0b6bc", "pcb": "#2f7d32", "caps": "#e8c9a0", "switches": "#303030",
-          "parts": "#8a5a2b", "xiao": "#1f4e9c", "battery": "#c8c8c8", "screws": "#d0a000", "sheet": "#202020"}
+          "parts": "#8a5a2b", "xiao": "#1f4e9c", "battery": "#c8c8c8", "cover": "#e08a3c", "screws": "#d0a000", "sheet": "#202020"}
 
 
 def cell(k, s=S):
@@ -166,44 +166,27 @@ def psw_roof_rect(lay=LAY):
     return (lay.psw_pads()[0] - lay.s.PART_CLEAR, n[0][1], n[0][0], n[-1][1])
 
 
-def detent_groove(lay=LAY, grow=0.1):
-    """蓋の山が入る溝（口の上の壁の下面・左右）の y–z の三角形 [(y, z), ...]。山の形を grow だけ外へ広げた物。"""
-    s = lay.s
-    cv = lay.cover()
-    h = s.COVER_BUMP[0] + grow
-    y = cv["bump"][0][1]
-    slope = (s.COVER_CLEAR + s.COVER_BUMP[0]) / (s.COVER_BUMP[1] / 2)
-    w = (h + 0.2) / slope
-    return [(y - w, cv["z_slot"] - 0.2), (y + w, cv["z_slot"] - 0.2), (y, cv["z_slot"] + h)]
-
-
 def corner_cuts(lay=LAY):
-    """{名前: 立体}。XIAO の空間・USB の切り欠き・電池クリップの空間・電池の口・指の切り欠き（= 蓋の上の板の座。上の縁にひさしを残す）・
-    蓋の山の溝・電源スイッチの空間・つまみの切り欠き・入の印。"""
+    """{名前: 立体}。XIAO の空間・USB の切り欠き・電池クリップの空間・電池の口（手前の壁を上から下まで抜く溝 = 蓋の座。上の縁にひさしを残す）・
+    電源スイッチの空間・つまみの切り欠き・入の印。"""
     s = lay.s
     f = lay.frame
     top = s.FRAME_UNDER + s.FRAME_T
-    z = lay.z()
-    c, h = s.PART_CLEAR, s.PART_HEADROOM
+    c = s.PART_CLEAR
     xb, xp = lay.xiao(), lay.xiao_pads()
     usb = lay.usb_shell()
     out = {}
     out["xiao"] = _box((xb[0] - c, xp[1] - c, xb[2] + c, xp[3] + c), -1.0, s.XIAO_ROOF_UNDER)       # パッドの外接 ＋ PART_CLEAR
     out["usb"] = _box((f[0] - 1.0, usb[1] - s.PORT_CLEAR, usb[2] + c, usb[3] + s.PORT_CLEAR), -1.0, top + 1.0)
-    (cx, cy), r = lay.cell()
     body = lay.clip_body()
     pads = lay.clip_pads()
     out["clip"] = _box((pads[0][0] - c, body[1] - c, pads[1][2] + c, body[3] + c), -1.0, s.CLIP_ROOF_UNDER)
-    slot_top = z["cell_top"] + s.CELL_SLOT_CLEAR + 0.1
-    out["cell_slot"] = _box((cx - r - s.CELL_SLOT_CLEAR, f[1] - 1.0, cx + r + s.CELL_SLOT_CLEAR, body[1] - c + EPS), -1.0, slot_top)
-    # 指の切り欠き = 蓋の上の板の座。壁の上の縁に、内へ COVER_RAIL のひさしを残す（蓋の上の板を上から押さえる。斜めの面）
+    # 電池の口 = 蓋の座。手前の壁を上から下まで抜く。上の縁に、内へ COVER_RAIL のひさしを残す（蓋の上の板の両脇を上から押さえる。斜めの面）
     cv = lay.cover()
     rw, rh = s.COVER_RAIL
-    out["finger"] = _prism_y([(cv["nx0"], slot_top - EPS), (cv["nx1"], slot_top - EPS), (cv["nx1"], top - rh), (cv["nx1"] - rw, top),
-                              (cv["nx1"] - rw, top + 1.0), (cv["nx0"] + rw, top + 1.0), (cv["nx0"] + rw, top), (cv["nx0"], top - rh)],
-                             f[1] - 1.0, cv["y1"])
-    g = detent_groove(lay)
-    out["detent"] = _union([_prism_x(g, cv["x0"], cv["nx0"] + EPS), _prism_x(g, cv["nx1"] - EPS, cv["x1"])])     # 口の壁（x0・x1）へは食い込ませない
+    out["cell_slot"] = _prism_y([(cv["x0"], -1.0), (cv["x1"], -1.0), (cv["x1"], top - rh), (cv["x1"] - rw, top),
+                                 (cv["x1"] - rw, top + 1.0), (cv["x0"] + rw, top + 1.0), (cv["x0"] + rw, top), (cv["x0"], top - rh)],
+                                f[1] - 1.0, cv["y1"])
     pb = lay.psw_body()
     pp = lay.psw_pads()                                                                          # パッドの外接 ＋ PART_CLEAR（本体はその中）
     out["psw"] = _box((min(pp[0], pb[0]) - c, min(pp[1], pb[1]) - c, max(pp[2], pb[2]) + c, max(pp[3], pb[3]) + c), -1.0, psw_ceiling(lay))
@@ -421,6 +404,23 @@ def board_parts(lay=LAY):
     return out
 
 
+def clip_solid(lay=LAY):
+    """電池クリップの金属が**ある所**（図面 MY-CP-0247 から。board_parts の BT1 は外接の箱で、電池の入る空間まで詰まっている）。
+      板    外接の矩形（本物は六角 ＋ 口の側は丸い 2 つの出っ張りで、これより小さい）× 下面のいちばん低い所（CLIP_H − 板厚 − CLIP_TOL）〜上面
+      止め  幅 CLIP_STOP_W・板の上面から CLIP_STOP_DROP ＋ CLIP_TOL 下まで
+      脚    ＋のランドの上（板の両脇から基板へ下りる所。ランドの奥行きの範囲）
+    **電池を押さえる 2 本の舌（板から下へ曲げてある）は入れていない**: 電池の円の中にある（検査は、蓋が電池の円 ＋ 隙の外にいることで見る）。"""
+    s = lay.s
+    b = lay.clip_body()
+    top = lay.z()["clip_top"]
+    x = s.CLIP_AT[0]
+    parts = [_box(b, s.CLIP_H - s.CLIP_SHEET_T - s.CLIP_TOL, top),
+             _box((x - s.CLIP_STOP_W / 2, b[3] - s.CLIP_SHEET_T - s.CLIP_TOL, x + s.CLIP_STOP_W / 2, b[3]), top - s.CLIP_STOP_DROP - s.CLIP_TOL, top)]
+    for pad, (xa, xb) in zip(lay.clip_pads(), ((None, b[0] + s.CLIP_SHEET_T + s.CLIP_TOL), (b[2] - s.CLIP_SHEET_T - s.CLIP_TOL, None))):
+        parts.append(_box((pad[0] if xa is None else xa, pad[1], pad[2] if xb is None else xb, pad[3]), 0.0, top))
+    return _union(parts)
+
+
 def knob_solid(pos, lay=LAY, dy=0.0):
     """つまみ（pos = +1 奥 / −1 手前。dy は行程の公差ぶんずらす量）。"""
     k = lay.psw_knob(pos)
@@ -438,146 +438,70 @@ def nail_envelope(pos, lay=LAY):
 
 
 # ---------------------------------------------------------------------------
-# 電池の蓋（差し込み式。寸法は click_layout.cover・spec.COVER_*）
+# 電池の蓋（ねじ 2 本で留める。寸法は click_layout.cover・spec.COVER_*）
 # ---------------------------------------------------------------------------
 
 def _cover_profile(z0, lay=LAY):
-    """蓋の上の部分の断面（x–z）: 枠の切り欠きの断面を COVER_CLEAR 縮めた形の、z0 から上。"""
+    """蓋の断面（x–z）: 枠の口の断面を COVER_CLEAR 縮めた形の、z0 から上。"""
     s = lay.s
     cv = lay.cover()
     cl = s.COVER_CLEAR
     rw, rh = s.COVER_RAIL
     top = cv["z_top"]
-    xa, xb, t = cv["nx0"] + cl, cv["nx1"] - cl, rw + s.COVER_TOP_RELIEF
+    xa, xb, t = cv["x0"] + cl, cv["x1"] - cl, rw + s.COVER_TOP_RELIEF
     if z0 >= top - rh - 1e-9:
         return [(xa, z0), (xb, z0), (xb - t, top), (xa + t, top)]
     return [(xa, z0), (xb, z0), (xb, top - rh), (xb - t, top), (xa + t, top), (xa, top - rh)]
 
 
 @lru_cache(maxsize=None)
-def cover_solid(bumps=True, arm=None, bump=None):
-    """電池の蓋（組んだ位置・CAD）。L 字: 手前の板（口を塞ぐ）＋ 上の板（指の切り欠きを塞ぐ）。手前の板の上の両端が腕（ばね）で、
-    **腕の先だけ**にある山が、口の上の壁の下面の溝に入る。bumps=False は山の無い形（滑る道の検査）。
-    arm・bump は spec.COVER_ARM・COVER_BUMP の代わり（検査が、直す前の形を作って「検査器が気づくか」を見るため）。"""
+def cover_solid(pilots=True):
+    """電池の蓋（組んだ位置・CAD）。手前の板（口を塞ぐ）＋ 上の板（電池の上を塞ぐ）＋ 左右の足（基板の上に立つ。ねじの下穴）。
+    足は、手前は上の板までつながる柱。クリップの板の下へ入る奥の所は低く（z_under）、柱から 45° で下がる（上面をベッドに刷って支え無し）。
+    電池（止めに当てた位置）の縁からは COVER_CELL_CLEAR 離す。pilots=False は下穴の無い形（検査が肉を測るため）。"""
     lay, s = LAY, S
     cv = lay.cover()
     cl = s.COVER_CLEAR
     y0, yf, yr, y1 = cv["y0"], cv["y_front"], cv["y_root"], cv["y1"] - cl
-    arm_l, arm_t, arm_gap = arm or s.COVER_ARM
-    bump_h, bump_y, bump_x = bump or s.COVER_BUMP
-    xa, xb = cv["x0"] + cl, cv["x1"] - cl
-    z_arm = cv["z_slot"] - cl                      # 腕の上面
-    z_low = z_arm - arm_t - arm_gap                # 腕の下の隙間の底 = 下の板の上面
-    z_bot = 0.1                                    # 基板の上面から 0.1 浮かす
+    z_bot = 0.1                                    # 手前の板は基板の上面から 0.1 浮かす（足だけが基板に着く）
     parts = [
-        _box((xa, y0, xb, yf), z_bot, z_low),                                            # 下の板（電池の口を塞ぐ）
-        _box((xa + arm_l, y0, xb - arm_l, yf), z_low - EPS, cv["z_root"] + EPS),          # 真ん中の柱（腕の付け根）
-        _box((xa, y0, xa + arm_l + EPS, yf), z_arm - arm_t, z_arm),                      # 腕（左）
-        _box((xb - arm_l - EPS, y0, xb, yf), z_arm - arm_t, z_arm),                      # 腕（右）
-        _prism_y(_cover_profile(cv["z_root"]), y0, yr),                                  # 上の板の付け根（手前の板の上の部分）
+        _prism_y(_cover_profile(z_bot), y0, yf),                                         # 手前の板（上から下まで）
+        _prism_y(_cover_profile(cv["z_root"]), y0, yr),                                  # 上の板の付け根
         _prism_y(_cover_profile(cv["z_plate"]), y0, y1),                                 # 上の板
     ]
-    # 手前の面（刷るときのベッドの面）の縁を全部落とす: 1 層目の太り（象の足）が口・切り欠きに擦れない
+    yb, yc, zu = cv["y_boss"], cv["y_clip"], cv["z_under"]
+    zr = zu + (yc - yr)                            # 柱の奥の面で、斜めの面が始まる高さ
+    side = [(y0, 0.0), (yb, 0.0), (yb, zu - (yb - yc)), (yc, zu), (yr, zr), (yr, cv["z_root"] + EPS), (y0, cv["z_root"] + EPS)]
+    (cx, cy), r = lay.cell()
+    keep = Pos(cx, cy, -1.0) * Cylinder(r + s.COVER_CELL_CLEAR, cv["z_top"] + 2.0, align=CEN_MIN)
+    for xa, xb in cv["boss"]:
+        parts.append(_prism_x(side, xa, xb) - keep)
     body = _union(parts).clean()
-    body = chamfer(body.edges().group_by(Axis.Y)[0], s.COVER_FOOT)
-    parts = [body]
-    if bumps:
-        by = cv["bump"][0][1]
-        half = bump_y / 2
-        tri = [(by - half, z_arm - EPS), (by + half, z_arm - EPS), (by, cv["z_slot"] + bump_h)]
-        # 山は腕の先から bump_x だけ（口の上の壁の下より内へは出さない）。**山の付け根の側の端が、壁の下面に最後まで当たる所**
-        # = ばねの腕の長さはそこまで（cover_spring が立体から測る）。3 回目の監査: 山が壁の下いっぱい（1.5）だと、効く長さは 5.5 でなく 4.0
-        parts += [_prism_x(tri, xa, min(xa + bump_x, cv["nx0"] - cl)), _prism_x(tri, max(xb - bump_x, cv["nx1"] + cl), xb)]
-    body = _union(parts)
+    # 上面（刷るときのベッドの面）の手前と奥の縁を落とす: 1 層目の太り（象の足）が枠の外面から出ない・奥の壁に擦れない
+    # （左右の縁は、ひさしの下に入る斜めの面がもう引っ込んでいる: COVER_TOP_RELIEF）
+    body = chamfer(body.edges().group_by(Axis.Z)[-1].filter_by(Axis.X), s.COVER_FOOT)
     gw, gd, gz, gy = s.COVER_GRIP                  # 爪の溝: 手前の壁は垂直（爪が掛かる）・奥は 45° の斜面
     top = cv["z_top"]
     ya = y0 + gy
-    groove = _prism_x([(ya, top - gz), (ya + gd - gz, top - gz), (ya + gd + 0.1, top + 0.1), (ya, top + 0.1)],
-                      (cv["nx0"] + cv["nx1"]) / 2 - gw / 2, (cv["nx0"] + cv["nx1"]) / 2 + gw / 2)
-    body = (body - groove).clean()
+    xm = (cv["x0"] + cv["x1"]) / 2
+    body = body - _prism_x([(ya, top - gz), (ya + gd - gz, top - gz), (ya + gd + 0.1, top + 0.1), (ya, top + 0.1)], xm - gw / 2, xm + gw / 2)
+    if pilots:
+        d, depth = lay.pilot()
+        body = body - _union([Pos(x, y, -1.0) * Cylinder(d / 2, depth + 1.0, align=CEN_MIN) for x, y in cv["screws"]])
+    body = body.clean()
     if len(body.solids()) != 1:
         raise RuntimeError(f"蓋が {len(body.solids())} 個の塊")
     return body
 
 
 def cover_print(part=None):
-    """蓋を刷る向き（手前の面をベッドに）。"""
-    part = Rot(90, 0, 0) * (cover_solid() if part is None else part)
-    bb = part.bounding_box()
-    return Pos(-bb.min.X, -bb.min.Y, -bb.min.Z) * part
+    """蓋を刷る向き（上面をベッドに。枠と同じ = 下穴が縦の穴になる）。"""
+    return P.flip_to_bed(cover_solid() if part is None else part)
 
 
-PLA_E = 2750.0               # Bambu PLA Basic の TDS の曲げ弾性率 [MPa]（ばねの力の見積もり）
-
-
-def _mouth_piece(lay=LAY):
-    """右の枠の、電池の口のまわりだけ（山の当たりを測る相手）。"""
-    cv = lay.cover()
-    return frame_halves()["right"] & _box((cv["x0"] - 1.0, cv["y0"] - 1.0, cv["x1"] + 1.0, cv["y1"] + 1.0), -1.0, cv["z_top"] + 1.0)
-
-
-def cover_detent(frame=None, cover=None, lay=LAY, step=0.1):
-    """蓋を手前へ step ずつ引いて、**枠と蓋の立体の重なりから**山の当たりを測る。腕ごと（左・右）の dict:
-      delta  山を越えるのに腕がたわむ量（重なりの高さの最大）
-      lever  腕の付け根から、**壁の下面が最後まで当たる所（重なりの、付け根の側の端）**まで = 片持ち梁として効く長さ
-      length 付け根から腕の先まで・t 腕の太さ（たわむ向き）・b 腕の幅・gap 腕の下の隙間
-    付け根・太さ・隙間も蓋の立体から測る（spec の数を写さない: 形を変えたのに式が古い長さのまま、を無くす）。"""
-    cover = cover_solid() if cover is None else cover
-    frame = _mouth_piece(lay) if frame is None else frame
-    cv = lay.cover()
-    xm = (cv["x0"] + cv["x1"]) / 2
-    bb = cover.bounding_box()
-    best = {}
-    for i in range(1, int((cv["y1"] - cv["y0"]) / step) + 1):
-        hit = frame & (Pos(0, -step * i, 0) * cover)
-        for sol in (hit.solids() if hit is not None else []):
-            b = sol.bounding_box()
-            side = "left" if b.center().X < xm else "right"
-            if b.size.Z > 1e-4 and (side not in best or b.size.Z > best[side][0] + 1e-6):
-                best[side] = (b.size.Z, b.min.X, b.max.X, b.min.Z)
-    out = {}
-    ym = cv["y0"] + (cv["y_front"] - cv["y0"]) / 2
-    for side, (delta, hx0, hx1, hz) in best.items():
-        sgn = 1.0 if side == "left" else -1.0                       # 付け根へ向かう向き
-        xc = hx1 if side == "left" else hx0                         # 当たりの、付け根の側の端
-        tip = bb.min.X if side == "left" else bb.max.X
-        # 当たりのすぐ内側で、蓋を縦に切る: 上から 腕・隙間・下の板
-        col = cover & _box((min(xc + sgn * 0.05, xc + sgn * 0.15), ym - 0.1, max(xc + sgn * 0.05, xc + sgn * 0.15), ym + 0.1), -1.0, hz + 1e-3)
-        spans = sorted(((q.bounding_box().min.Z, q.bounding_box().max.Z) for q in col.solids()), reverse=True)
-        if len(spans) < 2:
-            raise RuntimeError(f"蓋の腕（{side}）の下に隙間が無い: {spans}")
-        (za, zb), (_, zl) = spans[0], spans[1]
-        t, gap = zb - za, za - zl
-        # 隙間の高さで、当たりから真ん中へ向かって最初に肉がある所 = 付け根
-        slab = cover & _box((min(xc, xm), ym - 0.1, max(xc, xm), ym + 0.1), zl + 0.1 * gap, za - 0.1 * gap)
-        sb = slab.bounding_box()
-        root = sb.min.X if side == "left" else sb.max.X
-        arm = cover & _box((min(tip, root), cv["y0"] - 1.0, max(tip, root), cv["y1"] + 1.0), za + 0.1 * t, zb - 0.1 * t)
-        out[side] = dict(delta=delta, lever=abs(root - xc), length=abs(root - tip), t=t, b=arm.bounding_box().size.Y, gap=gap,
-                         contact=(hx0, hx1))
-    return out
-
-
-def cover_spring(frame=None, cover=None, lay=LAY):
-    """腕（片持ちのばね）の計算。**寸法は cover_detent が立体から測った物**（山の当たる所までを腕の長さに取る）。悪い方の腕の値を返す:
-      strain ひずみ・force 山を越えるときの腕 1 本の力 [N]・hold 蓋を引き抜く力の見積もり [N]（左右の和）・tip 山を越えるときの腕の先の下がり
-      delta・lever・t・b・gap・length は cover_detent と同じ
-    長方形の断面の片持ち梁を、付け根から a（= lever）の所で δ 押す: ひずみ ε = 1.5·t·δ/a²・力 F = E·b·t³·δ/(4·a³)・
-    先（付け根から L）の下がり = δ·(1 ＋ 1.5·(L − a)/a)。引き抜く力は斜面 45°・摩擦 0.3 で F·tan(α＋φ)。
-    **刷った物では測っていない**（角の試し刷りで見る）。蓋は基板の上 0.1 に浮かせてあり、引くと下へ 0.1 逃げうる（たわみ・力はその分減る側）。"""
-    s = lay.s
-    arms = cover_detent(frame, cover, lay)
-    if set(arms) != {"left", "right"}:
-        raise RuntimeError(f"山が枠に掛からない腕がある: {sorted(arms)}")
-    alpha = math.atan2(s.COVER_CLEAR + s.COVER_BUMP[0], s.COVER_BUMP[1] / 2)
-    for a in arms.values():
-        a["strain"] = 1.5 * a["t"] * a["delta"] / a["lever"] ** 2
-        a["force"] = PLA_E * a["b"] * a["t"] ** 3 * a["delta"] / (4 * a["lever"] ** 3)
-        a["tip"] = a["delta"] * (1 + 1.5 * (a["length"] - a["lever"]) / a["lever"])
-    worst = dict(max(arms.values(), key=lambda a: a["strain"]))
-    worst["hold"] = sum(a["force"] for a in arms.values()) * math.tan(alpha + math.atan(0.3))
-    worst["arms"] = arms
-    return worst
+def cover_screw_solids(lay=LAY):
+    """蓋のねじ {参照名: 立体}（M2×4・頭は基板の下面・軸は上へ）。"""
+    return {ref: v for ref, v in screw_solids(lay, cover=True).items() if ref in {r for r, _, k in lay.screws() if k == "cover"}}
 
 
 def _section(pts):
@@ -701,14 +625,15 @@ def pcb_solid(lay=LAY):
     return board - holes
 
 
-def screw_solids(lay=LAY, with_feet=None, spare=False):
-    """ねじ {参照名: 立体}（頭は基板の下面・軸は上へ）。中の押さえは、足を付けるときだけ。spare=True で予備のねじも。"""
+def screw_solids(lay=LAY, with_feet=None, spare=False, cover=True):
+    """ねじ {参照名: 立体}（頭は基板の下面・軸は上へ）。中の押さえは、足を付けるときだけ。spare=True で予備のねじも。
+    cover=False で蓋のねじ 2 本を除く（蓋を付けないとき・電池を替えるとき）。"""
     s = lay.s
     with_feet = s.HOLDDOWN_FEET if with_feet is None else with_feet
     out = {}
     for ref, c, kind in lay.screws():
-        if (kind == "holddown" and not with_feet) or (kind == "spare" and not spare) or kind == "cover":
-            continue                                                    # 蓋のねじ穴は基板の穴だけ（ねじは入れない）
+        if (kind == "holddown" and not with_feet) or (kind == "spare" and not spare) or (kind == "cover" and not cover):
+            continue
         length = s.HOLDDOWN_SCREW_L if kind == "holddown" else s.SCREW_L
         out[ref] = _union([Pos(c[0], c[1], -s.PCB_T - s.SCREW_HEAD_H) * Cylinder(s.SCREW_HEAD_D / 2, s.SCREW_HEAD_H, align=CEN_MIN),
                            Pos(c[0], c[1], -s.PCB_T - EPS) * Cylinder(s.SCREW_D / 2, length + EPS, align=CEN_MIN)])
@@ -722,7 +647,7 @@ def sheet_solid(lay=LAY):
     z0 = -s.PCB_T - s.BOTTOM_SHEET_T
     sheet = Pos((p[0] + p[2]) / 2, (p[1] + p[3]) / 2, z0) * extrude(RectangleRounded(p[2] - p[0], p[3] - p[1], s.CORNER_R), s.BOTTOM_SHEET_T)
     holes = _union([Pos(c[0], c[1], z0 - 1) * Cylinder(s.SCREW_HEAD_D / 2 + 0.5, s.BOTTOM_SHEET_T + 2, align=CEN_MIN)
-                    for _, c, _ in lay.wall_screws()])                  # 予備のねじの所も開けておく（あとから締められる）
+                    for _, c, kind in lay.screws() if kind != "holddown"])   # 予備のねじ・蓋のねじの所も開ける（蓋のねじは、シートを貼ったまま外す）
     return sheet - holes
 
 
@@ -760,7 +685,7 @@ def weights(lay=LAY, fill=None):
         "キャップ 62 個": caps * PLA_DENSITY * (1.0 if fill is None else fill),
         "基板": pcb_solid(lay).volume * FR4_DENSITY,
         "スイッチ 62 個": 62 * 0.12, "ダイオードほか": 0.6, "XIAO": 3.0, "電池クリップ": 0.6, "CR1632": 1.9,
-        "ねじ 20 本": 20 * 0.09, "底のシート": sheet_solid(lay).volume * 1.2e-3,
+        "ねじ 22 本": 22 * 0.09, "電池の蓋": cover_solid().volume * PLA_DENSITY, "底のシート": sheet_solid(lay).volume * 1.2e-3,
     }
     out["合計"] = sum(out.values())
     return out
@@ -838,7 +763,7 @@ def screw_coupon_plate(gap=5.0):
 
 
 # ---------------------------------------------------------------------------
-# 角の試し刷り（発注の前に刷る。docs/coupon-test.md「角」）: つまみの切り欠き・電池の口・蓋
+# 角の試し刷り = 蓋の試し刷り（発注の前に刷る。docs/coupon-test.md 9 章）: 電池の口・ねじで留める蓋・つまみの切り欠き
 # ---------------------------------------------------------------------------
 
 def corner_coupon_box(lay=LAY):
@@ -874,8 +799,8 @@ def knob_channel(lay=LAY):
 def corner_coupon():
     """{名前: 立体}（組んだ向き・本番の座標）。
       frame  本番の枠の右手前の角の切れ端 ＋ 切った左の端の壁（当て板に載せるため。本番には無い）
-      base   当て板（基板の代わり・厚さ PCB_T・ねじ穴 H15 と蓋のねじ穴）＋ 電源スイッチの本体の代わり（溝つき）＋ 電池クリップの代わり
-             （止めと左右の案内）＋ 左と奥の縁の当て（枠の切れ端の位置決め）
+      base   当て板（基板の代わり・厚さ PCB_T・ねじ穴 H15 と蓋のねじ穴 H30・H31）＋ 電源スイッチの本体の代わり（溝つき）＋ 電池クリップの代わり
+             （止めと、蓋の足より奥の左右の案内。**クリップの板〔基板の 3.75 上〕の代わりは無い**）＋ 左と奥の縁の当て（枠の切れ端の位置決め）
       knob   つまみの代わりの小片（入の位置）
       cell   電池の代わり（φ CELL_D × CELL_T・止めに当てた位置）
       cover  本番と同じ蓋"""
@@ -907,10 +832,10 @@ def corner_coupon():
     (cx, cy), r = lay.cell()
     stop_y = s.CLIP_AT[1] + s.CLIP_STOP - s.CLIP_SHEET_T                                               # 止めの内面
     base.append(_box((cx - 6.35 / 2, stop_y, cx + 6.35 / 2, stop_y + 1.0), -EPS, 2.8))                # 止め（屋根の下 3.0 に入る高さ）
-    body = lay.clip_body()
-    for sx in (-1, 1):                                                                                 # 左右の案内（クリップの板の脇の代わり）
+    guide_y = lay.cover()["y_boss"] + 1.0                                                              # 蓋の足より奥から
+    for sx in (-1, 1):                                                                                 # 左右の案内（電池の代わりを真ん中に保つ）
         x = cx + sx * (r + fit)
-        base.append(_box((min(x, x + sx * 1.0), body[1], max(x, x + sx * 1.0), stop_y), -EPS, z["clip_top"]))
+        base.append(_box((min(x, x + sx * 1.0), guide_y, max(x, x + sx * 1.0), stop_y), -EPS, z["clip_top"]))
     out["base"] = _union(base).clean()
     out["knob"] = knob_standin(1, lay)
     out["cell"] = cell_solid(lay)
@@ -918,29 +843,51 @@ def corner_coupon():
     return out
 
 
-def corner_coupon_plate(gap=4.0):
-    """1 枚に並べた刷る物: 当て板（平ら）・枠の切れ端（上面をベッドに）・蓋（手前の面をベッドに）・電池の代わり・つまみの代わり。"""
+def _marked(part, points):
+    """立体と、点（小さな球）を 1 つにまとめた物。同じ手順で回して置くと、点の行き先が読める（変換を式で写さない）。"""
+    from build123d import Sphere
+
+    return Compound([part] + [Pos(x, y, z) * Sphere(0.05) for x, y, z in points])
+
+
+def corner_coupon_layout(gap=4.0):
+    """1 枚に並べた刷る物 [(名前, 置いた立体, [下穴の中心 (x, y)・板の上の座標])]: 電池の代わり・蓋（上面をベッドに）・つまみの代わり・
+    当て板（平ら）・枠の切れ端（上面をベッドに）。下穴は、蓋の 2 つと、枠の切れ端のねじ H15。"""
     cc = corner_coupon()
-    placed, y = [], 0.0
-    row = [P.to_bed(cc["cell"]), cover_print(cc["cover"]), P.to_bed(cc["knob"])]
-    x = 0.0
-    for part in row:                                                          # 小さい物は 1 列に
-        bb = part.bounding_box()
-        placed.append(Pos(x - bb.min.X, y - bb.min.Y, -bb.min.Z) * part)
-        x += bb.size.X + gap
-    y += max(q.bounding_box().size.Y for q in row) + gap
-    for part in (P.to_bed(cc["base"]), P.flip_to_bed(cc["frame"])):
-        bb = part.bounding_box()
-        placed.append(Pos(-bb.min.X, y - bb.min.Y, -bb.min.Z) * part)
-        y += bb.size.Y + gap
-    return Compound(placed)
+    cv = LAY.cover()
+    h15 = [c for _, c, _ in LAY.wall_screws() if corner_coupon_box()[0] < c[0] and c[1] < corner_coupon_box()[3]]
+    todo = [("cell", P.to_bed(cc["cell"]), []),
+            ("cover", P.flip_to_bed(_marked(cc["cover"], [(x, y, 1.0) for x, y in cv["screws"]])), cv["screws"]),
+            ("knob", P.to_bed(cc["knob"]), []),
+            ("base", P.to_bed(cc["base"]), []),
+            ("frame", P.flip_to_bed(_marked(cc["frame"], [(x, y, 1.0) for x, y in h15])), h15)]
+    out, x, y = [], 0.0, 0.0
+    for i, (name, group, holes) in enumerate(todo):
+        bb = group.bounding_box()
+        if i >= 3 and x:                                                      # 小さい物 3 つは 1 列に。大きい物は 1 つずつ次の行へ
+            x, y = 0.0, max(q.bounding_box().max.Y for _, q, _ in out) + gap
+        move = Pos(x - bb.min.X, y - bb.min.Y, -bb.min.Z)
+        solids = list((move * group).solids())
+        marks = [m.bounding_box().center() for m in solids[1:]]
+        out.append((name, solids[0], [(m.X, m.Y) for m in marks]))
+        if i < 3:
+            x += bb.size.X + gap
+        else:
+            y += bb.size.Y + gap
+        assert len(marks) == len(holes), name
+    return out
+
+
+def corner_coupon_plate(gap=4.0):
+    """1 枚に並べた刷る物（corner_coupon_layout の立体だけ）。"""
+    return Compound([part for _, part, _ in corner_coupon_layout(gap)])
 
 
 def printables():
     """刷る物（STL の名前 → 刷る向きの立体）。"""
     halves = frame_halves()
     out = {f"frame_{side}": frame_print(halves[side]) for side in SIDES}
-    # 電池の蓋（cover_solid）は**入れない**: 2026-10-04 の試し刷りで v1 も v2 の 3 つも留まらず、利用者が蓋を考え直している（open-gaps P21）
+    out["cover_battery"] = cover_print()                          # 電池の蓋（ねじ 2 本で留める。1 個）
     out["coupon_screw_plate"] = screw_coupon_plate()
     out["coupon_corner_plate"] = corner_coupon_plate()
     out.update(caps_plates())
@@ -965,6 +912,7 @@ def assembly(exploded=0.0, stem=None):
         "parts": [(n, v) for n, v in board_parts(lay).items() if n not in ("U_MCU", "BT1")],
         "xiao": [("U_MCU", board_parts(lay)["U_MCU"])],
         "battery": [("BT1", board_parts(lay)["BT1"]), ("cell", cell_solid(lay, -1.5 * e))],
+        "cover": [("cover", Pos(0, -3 * e, 0) * cover_solid())],
         "screws": [(n, Pos(0, 0, -2 * e) * v) for n, v in screw_solids(lay).items()],
         "sheet": [("sheet", Pos(0, 0, -e) * sheet_solid(lay))],
     }
@@ -973,7 +921,6 @@ def assembly(exploded=0.0, stem=None):
 
 def export(out=OUT):
     out.mkdir(parents=True, exist_ok=True)
-    (out / "cover_battery.stl").unlink(missing_ok=True)          # 前は刷る物だった蓋。古い STL を「刷る物」と見間違えない（lessons D）
     made = {}
     for stem, part in printables().items():
         size = part.bounding_box().size
@@ -1004,7 +951,7 @@ def export_blend(style, out=OUT):
     asm = out / "assembly_main"
     files = [asm / "cckb-click.blend", asm / "cckb-click_assembled.png", asm / "cckb-click_exploded.png"]
     assert n == len(style) and all(f.exists() for f in files), r.stdout[-2000:] + r.stderr[-2000:]
-    # 右手前の角を、上からと手前から（2 枚。蓋は組んだ状態に入れていない）
+    # 右手前の角を、上からと手前から（2 枚。蓋を付けた状態）
     corner = [asm / f"corner_{v}.png" for v in ("top", "front")]
     for f in corner + [asm / f"corner_{v}_{c}.png" for v in ("top", "front") for c in ("cover", "nocover")]:   # 後ろは前の名前（蓋あり・なし）
         f.unlink(missing_ok=True)

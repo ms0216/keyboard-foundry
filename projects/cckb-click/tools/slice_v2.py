@@ -7,8 +7,7 @@
 G-code から確かめること（1 つでも外れたら NG・刷るファイルを置かない）:
   1. 設定が効いている・警告 0
   2. ねじの下穴 6 個が、外周の輪として 1.5 / 1.6 / 1.7 の径で出ている（測った径を出す）
-  3. 蓋の細い所が線になっている: 蓋 1 の上下の腕・蓋 2 の腕（線の数と幅の和）。隙間（腕の間・腕の下）には線が無い
-  4. 蓋 1・2 の山が、設計の高さまで線になっている層が 2 層以上ある（v1 は頂が 1 層だけだった）
+（2026-10-04 に刷った板には差し込み式の蓋 3 つも載っていて、腕と山の線も見ていた。蓋の形を消したので、その検査も消した）
 """
 
 import math
@@ -68,23 +67,6 @@ def read_loops(gcode):
     return out
 
 
-def crossings(layer, x, y0, y1):
-    """縦の線 x を横切る押し出しの線 [(y, 幅)]（y0〜y1 の間）。同じ線の折り返しは 0.15 以内なら 1 本に数える。"""
-    hits = []
-    for lp in layer:
-        for (ax, ay), (bx, by), w in zip(lp["pts"], lp["pts"][1:], lp["ws"]):
-            if (ax - x) * (bx - x) < 0:
-                yy = ay + (by - ay) * (x - ax) / (bx - ax)
-                if y0 <= yy <= y1:
-                    hits.append((yy, w))
-    hits.sort()
-    out = []
-    for h in hits:
-        if not out or h[0] - out[-1][0] > 0.15:
-            out.append(h)
-    return out
-
-
 def hole_diameters(layers, cx, cy, z_from):
     """穴の中心（ベッドの座標）から、まわりの線の縁（線の中心 − 幅の半分）までのいちばん近い距離 × 2 = **線が空けている径**を、z_from より上の層ごとに。
     薄い壁（斜めの肉が線 1 本ぶん）では、穴の外周が 1 つの閉じた輪にならない（壁の線と 1 本になる）ので、輪の外接では測れない。"""
@@ -109,10 +91,9 @@ def check(gcode, rc):
     """返り値 (問題, 測った数)。"""
     import click_coupon_v2 as V
 
-    S, LAY = V.S, V.LAY
+    S = V.S
     problems, facts = [], {}
     layers = read_loops(gcode)
-    placed = {tag: part.bounding_box() for tag, _, part in V.plate_layout()}
     pb = V.plate().bounding_box()
     area = [tuple(float(v) for v in p.split("x")) for p in rc["machine"]["printable_area"]]
     ox = max(p[0] for p in area) / 2 - (pb.min.X + pb.max.X) / 2
@@ -129,48 +110,6 @@ def check(gcode, rc):
         facts[f"{tag} の下穴（設計の径・線が空けている径の平均・最小・層の数）"] = dias
         if len(dias) != len(S.COUPON_V2_PILOTS):
             problems.append(f"{tag}: 下穴が {len(dias)} 個")
-    # 3・4. 蓋（刷る向き: x = CAD の x・y = 上面からの下がり・z = 手前の面からの奥行き）
-    cv = LAY.cover()
-    top = cv["z_top"]
-    zs = sorted(layers)
-    mid = min(zs, key=lambda q: abs(q - S.COVER_FRONT_T / 2))
-    for n in (1, 2):
-        g = V._geom(n)
-        b = placed[f"C{2 + n}"]
-        x_of = lambda u: b.min.X + ox + (g["xm"] + u - (g["xm"] - g["half"]))                # noqa: E731
-        y_of = lambda z: b.min.Y + oy + (top - z)                                            # noqa: E731
-        if g["kind"] == "hairpin":
-            u = (g["u_u0"] + g["u_riser"]) / 2
-            bands = [("上の腕", g["z1"], g["t"]), ("下の腕", g["z2"], g["t"])]
-            gaps = [("腕の間", (g["z2"][1], g["z1"][0])), ("下の腕の下", (g["z_slab"], g["z2"][0]))]
-        else:
-            u = (g["u_post"] + g["hook_u"][0]) / 2
-            bands = [("腕", g["z1"], g["t"])]
-            gaps = [("腕の下", (g["z_slab"], g["z1"][0]))]
-        for sg in (-1, 1):
-            for name, (za, zb), t in bands:
-                got = crossings(layers[mid], x_of(sg * u), y_of(zb) - 0.05, y_of(za) + 0.05)
-                total = sum(w for _, w in got)
-                facts[f"蓋 {n} {name}（{'左' if sg < 0 else '右'}）: 線の数・幅の和"] = (len(got), round(total, 2))
-                if not got or not (t - 0.12 <= total <= t + 0.2):
-                    problems.append(f"蓋 {n} の{name}: 線 {len(got)} 本・幅の和 {total:.2f}（設計の太さ {t}）")
-            for name, (za, zb) in gaps:
-                got = crossings(layers[mid], x_of(sg * u), y_of(zb) + 0.1, y_of(za) - 0.1)
-                if got:
-                    problems.append(f"蓋 {n} の隙間（{name}）に線が {len(got)} 本ある")
-            # 山: 山の幅の真ん中で、材料の上端（線の中心 − 幅の半分）が設計の頂まで来ている層の数
-            uh = sg * sum(g["hook_u"]) / 2
-            full = 0
-            peak = 0.0
-            for z in zs:
-                got = crossings(layers[z], x_of(uh), y_of(g["z_arm"] + g["h"]) - 0.3, y_of(g["z_arm"]) - 0.02)
-                if got:
-                    reach = top - ((got[0][0] - got[0][1] / 2) - (b.min.Y + oy))
-                    peak = max(peak, reach)
-                    full += reach >= g["z_arm"] + g["h"] - 0.06
-            facts[f"蓋 {n} の山（{'左' if sg < 0 else '右'}）: 頂の高さ（設計 {g['z_arm'] + g['h']:.2f}）・そこまで届く層の数"] = (round(peak, 2), full)
-            if full < 2:
-                problems.append(f"蓋 {n} の山が設計の高さまで線になっている層が {full} 層しか無い")
     return problems, facts
 
 

@@ -199,13 +199,13 @@ class Layout:
 
     # --- ねじ -----------------------------------------------------------------
     def pilot(self):
-        """枠の下穴（径, 深さ）。"""
+        """樹脂の下穴（径, 深さ）。枠の壁も、蓋の足も同じ。"""
         return self.s.SCREW_PILOT_D, self.s.SCREW_PILOT_DEPTH
 
     def screws(self):
         """[(参照名, (x, y), 種類)]。種類は "perimeter"（外周の壁に M2×4）・"holddown"（中の低い足に M2×3）・
         "spare"（外周の壁の予備。基板の穴と枠の下穴はあるが、既定では締めない）・
-        "cover"（電池の蓋をねじで留める日のための穴。**基板の穴だけ**で、枠に下穴は無い）。基板の H{n} と同じ順（足した順）。"""
+        "cover"（電池の蓋を留める M2×4。**枠には掛からず、蓋の足に切る**）。基板の H{n} と同じ順（足した順）。"""
         s = self.s
         kinds = (["perimeter"] * len(s.SCREWS_PERIMETER) + ["holddown"] * len(s.HOLDDOWN_AT) + ["spare"] * len(s.SCREWS_SPARE)
                  + ["cover"] * len(s.SCREWS_COVER))
@@ -432,25 +432,27 @@ class Layout:
         y0, y1 = (k[3], k[3] + w) if pos > 0 else (k[1] - w, k[1])
         return (k[2] - bite, y0, self.frame[2] + 10.0, y1)
 
-    # --- 電池の蓋（差し込み式）--------------------------------------------------
+    # --- 電池の蓋（ねじ 2 本で留める）-------------------------------------------
     def cover(self):
-        """蓋の寸法（CAD・基板の上面 = 0）。枠の切り欠き（click_case.corner_cuts）と蓋（click_case.cover_solid）の両方がここから作る。
-          x0, x1    電池の口（幅 = 電池 ＋ 2 × CELL_SLOT_CLEAR）
-          nx0, nx1  指の切り欠き（幅 FINGER_NOTCH[0]）。上の縁にひさし（COVER_RAIL）
-          y0        枠の外面・y_front 手前の板の奥の面・y_root 上の板の付け根の奥の端・y1 切り欠きの奥の壁
-          z_slot    口の上の壁の下面（= 切り欠きの底）・z_top 枠の上面・z_plate 上の板の下面・z_root 付け根の下面
-          bump      山の中心 [(x, y), (x, y)]（腕の先の COVER_BUMP[2] の真ん中。口の上の壁の下面の溝と同じ y）"""
+        """蓋の寸法（CAD・基板の上面 = 0）。枠の口（click_case.corner_cuts）と蓋（click_case.cover_solid）の両方がここから作る。
+          x0, x1    電池の口（手前の壁を上から下まで抜く溝）。幅は蓋のねじで決まる: ねじの中心 ± (下穴の半径 ＋ COVER_BOSS[0] ＋ COVER_CLEAR)
+          y0        枠の外面・y_front 手前の板の奥の面・y_root 上の板の付け根の奥の端・y1 口の奥の壁
+          z_top     枠の上面・z_plate 上の板の下面・z_root 付け根の下面
+          screws    蓋のねじの中心 [(x, y), ...]（左・右）
+          boss      足の範囲 [(x0, x1), ...]（左・右）・y_boss 足の奥の端
+          y_clip    ここより奥は、足の上面を z_under より低くする（クリップの板の口の側の端 − COVER_CLIP_CLEAR）・z_under その高さ"""
         s = self.s
-        (cx, _), r = self.cell()
         f = self.frame
         top = s.FRAME_UNDER + s.FRAME_T
-        w, d = s.FINGER_NOTCH
-        x0, x1 = cx - r - s.CELL_SLOT_CLEAR, cx + r + s.CELL_SLOT_CLEAR
-        nx0, nx1 = cx - w / 2, cx + w / 2
-        # 山は腕の先（蓋の端 = 口の端 ＋ 隙）から COVER_BUMP[2] だけ。口の上の壁（口の端から切り欠きの壁まで）の下より内へは出ない
-        bx = s.COVER_CLEAR + min(s.COVER_BUMP[2], nx0 - x0 - 2 * s.COVER_CLEAR) / 2
-        by = f[1] + s.COVER_FRONT_T - s.COVER_BUMP[1] / 2 - 0.05
-        return dict(x0=x0, x1=x1, nx0=nx0, nx1=nx1, y0=f[1], y_front=f[1] + s.COVER_FRONT_T, y_root=f[1] + s.COVER_ROOT[1],
-                    y1=f[1] + d, z_slot=s.CELL_T + s.CELL_SLOT_CLEAR + 0.1, z_top=top, z_plate=top - s.COVER_TOP_T,
-                    z_root=top - s.COVER_ROOT[0],
-                    bump=[(x0 + bx, by), (x1 - bx, by)])
+        flesh, back, z_under = s.COVER_BOSS
+        r = s.SCREW_PILOT_D / 2
+        screws = sorted(tuple(c) for _, c, kind in self.screws() if kind == "cover")
+        (xl, yl), (xr, yr) = screws
+        if yl != yr:
+            raise ValueError("蓋のねじ 2 本の y が違う")
+        x0, x1 = xl - r - flesh - s.COVER_CLEAR, xr + r + flesh + s.COVER_CLEAR
+        boss = [(x0 + s.COVER_CLEAR, xl + r + flesh), (xr - r - flesh, x1 - s.COVER_CLEAR)]
+        return dict(x0=x0, x1=x1, y0=f[1], y_front=f[1] + s.COVER_FRONT_T, y_root=f[1] + s.COVER_ROOT[1],
+                    y1=f[1] + s.FINGER_NOTCH_DEPTH, z_top=top, z_plate=top - s.COVER_TOP_T, z_root=top - s.COVER_ROOT[0],
+                    screws=screws, boss=boss, y_boss=yl + r + back,
+                    y_clip=self.clip_body()[1] - s.COVER_CLIP_CLEAR, z_under=z_under)
