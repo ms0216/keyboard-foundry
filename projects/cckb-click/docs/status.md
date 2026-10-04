@@ -4,8 +4,10 @@
 JLC の「縁から 2.5 mm」を満たす）、枠に爪を入れる切り欠きを開け、差し込み式の電池の蓋を足し、蓋のねじ穴を 2 つ基板に取っておいた。
 基板は角だけ引き直した（線と部品は、角のほかは前の板と同じ）。DRC は違反 0・未配線 0・警告 0。
 直した板は 3 回目の監査（差分・2026-10-04）で見直した: 基板は致命 0・重要 0（#35 は済み）。重要 1 件は刷る蓋のばねで、直した（板は変えていない）。発注はまだ止めている。**
-止めているのは 4 つ: 頼み方を決めて画面で確かめる（#31）・CR1632 での起動の試験（#32）・ねじの試し刷り（#33。約 28 分）・
-**角の試し刷り（#34。約 33 分。爪で電源スイッチを動かせるか）**。
+止めているのは 4 つ: 頼み方を決めて画面で確かめる（#31）・CR1632 での起動の試験（#32）・ねじ（#33）・電源スイッチのつまみ（#34）。
+**2026-10-04 に利用者がねじと角の試し刷りを刷った: ねじは φ1.8 の下穴で空回り・蓋は留まらない・つまみは奥すぎる。**
+試し直しの 1 枚（試し刷り v2・造形 54 分）を作った: `build/cckb-click/coupon_v2_plate_n04.gcode.3mf`・組み方の絵 `coupon_v2_howto.png`・docs/coupon-test.md 8 章。
+**v2 の結果によっては、基板（ねじ穴の位置・電源スイッチの位置）が変わる。**
 `projects/cckb/`（発注できる状態の CCKB）には手を入れていない。
 
 **3 回目の監査（2026-10-04・前の板との差分）の結果**
@@ -74,8 +76,9 @@ JLC の「縁から 2.5 mm」を満たす）、枠に爪を入れる切り欠き
 | 足跡 | lib/keyswitch.pretty/SW_Alps_SKRA_6.2x6.2・lib/cckb-click.pretty/（電池クリップ・電源スイッチ・M2 の穴・載せないコンデンサのランド） | Alps の図面・各データシートの寸法と、EasyEDA の部品データ（tests/fixtures/easyeda/footprints_click.json） |
 | 枠 2 枚・キャップ 62 個 | `projects/cckb-click/click_case.py` → build/cckb-click/*.stl | 組み立ての立体で干渉 0（置く・押し切る・傾ける）・下から入れられる・サポート無しで刷れる・A1 mini に置ける。蓋も入れて 5 枚をスライス（docs/printing-guide.md） |
 | 電池の蓋 | 同じ → build/cckb-click/cover_battery.stl | 立体の検査: 枠・電池・クリップに当たらない・枠と面一・滑って抜ける・ひさしと山で留まる・支え無しで刷れる。ばねのひずみ 0.87 %（計算。**枠と蓋の立体から測った「効く長さ 5.5」で**。3 回目の監査の前は効く長さ 4.0・1.64 % だった → 腕 6.3・山は腕の先の 0.8 に直した。絵 cover_spring.png）。**刷っていない** |
-| ねじの試し刷り | 同じ → build/cckb-click/coupon_screw_plate.stl・絵 coupon_screw.png | 本番の枠の立体から切り出した物と同じ（検査）。スライス済み。**刷っていない・締めていない** |
-| 角の試し刷り | 同じ → build/cckb-click/coupon_corner_plate.stl・絵 coupon_corner.png | 本番の枠の右手前の角と同じ（検査）。スイッチ・つまみ・電池の代わりが本物と同じ所。スライス済み。**刷っていない・触っていない** |
+| ねじの試し刷り | 同じ → build/cckb-click/coupon_screw_plate.stl・絵 coupon_screw.png | 本番の枠の立体から切り出した物と同じ（検査）。**2026-10-04 に利用者が刷って締めた: φ1.8 の下穴では空回りする** |
+| 角の試し刷り | 同じ → build/cckb-click/coupon_corner_plate.stl・絵 coupon_corner.png | 本番の枠の右手前の角と同じ（検査）。スイッチ・つまみ・電池の代わりが本物と同じ所。**2026-10-04 に利用者が刷った: つまみは奥すぎる・蓋は留まらない・電池の代わりは楽に出し入れできる** |
+| 試し刷り v2 | `projects/cckb-click/click_coupon_v2.py` → build/cckb-click/coupon_v2_plate.stl・**coupon_v2_plate_n04.gcode.3mf**・絵 coupon_v2_howto.png | ねじの下穴 3 通り × 壁 2 種・電源スイッチの位置 2 つ・蓋の留め方 3 通り。切れ端は本番の枠の立体から（検査 tests/test_cckb_click_coupon_v2.py）。スライスして G-code を突き合わせた（tools/slice_v2.py）。**刷っていない** |
 | 組み立ての絵 | build/cckb-click/main_sections.png（断面 6 枚）・main_top.png・main_tilt.png・**main_corner.png（右手前の角）**・assembly_main/cckb-click.blend（Blender で回せる。蓋は「cover」の目のアイコンで消せる）・`_assembled.png`・`_exploded.png`・**corner_top／front_cover／nocover.png（角を上と手前から・蓋あり／なし）**・**cover_spring.png（蓋の腕を手前から見た断面。直す前と並べた）** | 自分で見た |
 | たわみ | `projects/cckb-click/click_stiffness.py` → build/cckb-click/main_stiffness.png | 断面は作った枠を切って測る（検査）。材料の値は一般値 |
 | ファーム | config/boards/shields/cckb_click/・build.yaml | `foundry.check_zmk_config` が「問題なし」。overlay に SPI の MISO のプルダウンを足した（ボードの pinctrl の写しと突き合わせ）。**CI でのビルドは push していないので未確認**（open-gaps P19） |
@@ -136,7 +139,7 @@ build/ は git に入れていない。無ければ `click_case.py`・`click_sti
 **確かめていない**
 
 - 定数を壊す検査（foundry.mutate）は、基板と枠の段で足した定数には回していない（open-gaps P14）
-- ねじの試し刷り・角の試し刷り・蓋は刷っていない（割れるか・爪が届くか・蓋が何回もつかは、刷るまで分からない）
+- ねじの試し刷り・角の試し刷りは 2026-10-04 に利用者が刷った（結果は docs/coupon-test.md 6 章・7 章）。**試し刷り v2 はまだ刷っていない**（下穴がどの径で効くか・蓋が留まるか・指でつまみに届くかは、刷るまで分からない）
 - `route_click.py --freeroute`（Freerouting で引き直して freerouted.json を書き直す道）は、書き足しただけで回していない
 - ZMK の実際のビルド（push していない）
 - Bambu Studio の画面・JLC の注文画面
@@ -149,8 +152,7 @@ build/ は git に入れていない。無ければ `click_case.py`・`click_sti
 | D1 | 底のシートの材料（厚さ 0.5 を仮定。docs/shopping-list.md に候補） | 買う前 |
 | D2 | 基板の表面処理: HASL か ENIG か（電池の −が当たる面・スイッチの座り）。**勧めは ENIG** | 発注のとき |
 | D4 | **JLC の実装を Economic にするか Standard にするか**（docs/order-steps.md §2-1 の表。リフローの温度の余裕と費用。差は 約 ＋$20〜$28） | 発注のとき |
-| #33 | **ねじの試し刷りを刷って締める**（約 28 分・M2×4 が 4 本要る。docs/coupon-test.md 6 章） | **発注の前** |
-| #34 | **角の試し刷りを刷って、爪で電源スイッチのつまみを動かす・電池と蓋を試す**（約 33 分。docs/coupon-test.md 7 章） | **発注の前** |
+| #33・#34 | **試し刷り v2 を刷って試す**（1 枚・造形 54 分・M2×4 が 6 本要る。docs/coupon-test.md 8 章・絵 coupon_v2_howto.png）: ねじの下穴 3 通り・電源スイッチの位置 2 つ・蓋の留め方 3 通り。v1（6 章・7 章）は 2026-10-04 に刷った: 空回り・蓋が留まらない・つまみが奥すぎる | **発注の前** |
 | O15 | 蓋のねじ穴を使うか（いまは使わない） | 蓋を使ってみて |
 | O14 | 載せないコンデンサのランドに部品を足すか | #32 の結果で |
 | D3 | 予備のスイッチを何個買うか（空きランドに足すなら最大 22 個） | 発注のとき |
