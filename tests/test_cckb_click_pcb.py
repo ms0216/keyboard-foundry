@@ -486,23 +486,23 @@ def test_the_corner_parts_face_the_way_the_case_needs(unrouted):
     for c in cover:
         assert min(L.circle_rect_gap(c, S.SCREW_HOLE_D / 2, b) for b in LAY.clip_pads()) >= 1.0
         assert math.dist(c, (cx, cy)) - r - S.SCREW_HOLE_D / 2 == pytest.approx(1.02, abs=0.01)
-    # 電源スイッチ: 端子は本体の左（内側）・つまみは右。端子 3 が奥。**本体は基板の縁から 2.5 以上内側**（JLC の実装の規約）・
-    # つまみの先は、どちらの位置でも基板の縁と枠の外面の内側（外へ出ない）。本体の位置は、板の上の突起の穴（本体の中心線）から取る
+    # 電源スイッチ: 端子は本体の左（内側）・つまみは右。端子 3 が奥。**つまみの先は、入でも切でも基板の縁の 0.30 内側・枠の外面の 0.60 内側**
+    # （外へ出ない。利用者の決定 2026-10-04）。本体は基板の縁から 1.75（JLC の規約の 2.5 は満たさない）。本体の位置は、板の上の突起の穴（本体の中心線）から取る
     pins = {k[1]: (k[2], k[3]) for k in pads if k[0] == "SW_PWR" and k[1] in "123" and k[1]}
     body = LAY.psw_body()
     assert all(x < body[0] for x, _ in pins.values()) and pins["3"][1] > S.PSW_AT[1] > pins["1"][1]
     pegs = [p for p in unrouted["pads"] if p["ref"] == "SW_PWR" and p["npth"]]
     assert len(pegs) == 2 and all(p["x"] == pytest.approx((body[0] + body[2]) / 2) for p in pegs)
     body_edge = pegs[0]["x"] + MSK_DRAWING["body"][1] / 2
-    assert LAY.pcb[2] - body_edge == pytest.approx(S.PSW_EDGE_MIN) and S.PSW_EDGE_MIN == 2.5 and body[2] == pytest.approx(body_edge)
+    assert LAY.pcb[2] - body_edge == pytest.approx(S.PSW_BODY_TO_EDGE) and S.PSW_BODY_TO_EDGE == 1.75 and body[2] == pytest.approx(body_edge)
     for pos in (1, -1):
         tip = LAY.psw_knob(pos)[2]
         assert tip == pytest.approx(body_edge + MSK_DRAWING["knob"][1])
-        assert LAY.pcb[2] - tip == pytest.approx(1.05) and LAY.frame[2] - tip == pytest.approx(1.35)
+        assert LAY.pcb[2] - tip == pytest.approx(S.PSW_TIP_INSIDE) and S.PSW_TIP_INSIDE == 0.3 and LAY.frame[2] - tip == pytest.approx(0.60)
     assert LAY.psw_knob_sweep()[3] - LAY.psw_knob_sweep()[1] == pytest.approx(S.PSW_TRAVEL + S.PSW_KNOB[0])
     assert (S.PSW_TRAVEL_TOL, S.PSW_FORCE_MAX) == (0.2, pytest.approx(0.250 * 9.8, abs=0.01))       # 承認書 4.2・4.1（150 ± 100 gf）
-    # 壊すと落ちる: 前の位置（1.75 外）なら、本体は縁から 0.75・つまみは枠の外
-    assert LAY.pcb[2] - (body_edge + 1.75) < 1.0 and LAY.frame[2] - (LAY.psw_knob(1)[2] + 1.75) < 0
+    # 壊すと落ちる: 最初の位置（1.0 外）なら、本体は縁から 0.75・つまみは枠の外へ 0.40
+    assert LAY.pcb[2] - (body_edge + 1.0) == pytest.approx(0.75) and LAY.frame[2] - (LAY.psw_knob(1)[2] + 1.0) == pytest.approx(-0.40)
     # XIAO: USB の口が基板の左の縁・枠の外面から USB_RECESS
     assert LAY.usb_shell()[0] == pytest.approx(LAY.frame[0] + S.USB_RECESS) and LAY.usb_shell()[0] == pytest.approx(LAY.pcb[0])
     d = {k[1]: (k[2], k[3]) for k in pads if k[0] == "U_MCU" and not pads[k]["back"]}
@@ -551,9 +551,10 @@ def test_the_screws_sit_mid_key_on_the_wall_and_the_feet_hang_on_a_post():
     # 穴の縁から基板の縁まで 1.0（foundry.pcb の下限。外へ寄せられるのはここまで）・頭 φ4.0 は基板の縁の内側
     edge = S.SCREW_FROM_EDGE - S.PCB_INSET_X
     assert edge - S.SCREW_HOLE_D / 2 == pytest.approx(1.0) and edge - S.SCREW_HEAD_D / 2 >= 0.1 - 1e-9
-    # 内側の肉（下穴の縁からキーの穴の縁まで）は 0.7・外側は 1.5
+    # 下穴は φ1.6（利用者が試し刷り v2 で締めて決めた。φ1.8 は空回りした）。内側の肉（下穴の縁からキーの穴の縁まで）は 0.8・外側は 1.6
     wall = S.PLATE_MARGIN_Y + LAY.rib() / 2
-    assert wall - S.SCREW_FROM_EDGE - S.SCREW_PILOT_D / 2 == pytest.approx(0.7) and S.SCREW_FROM_EDGE - S.SCREW_PILOT_D / 2 == pytest.approx(1.5)
+    assert S.SCREW_PILOT_D == 1.6 and LAY.pilot() == (1.6, 2.8)
+    assert wall - S.SCREW_FROM_EDGE - S.SCREW_PILOT_D / 2 == pytest.approx(0.8) and S.SCREW_FROM_EDGE - S.SCREW_PILOT_D / 2 == pytest.approx(1.6)
     # 継ぎ目の両側に、奥と手前で 1 本ずつ（継ぎ目から 1 キー以内）
     for y, sx in ((S.SCREWS_PERIMETER[0][1], S.FRAME_SPLIT[0]), (S.SCREWS_PERIMETER[9][1], S.FRAME_SPLIT[-1])):
         xs = sorted(p[0] - sx for p in S.SCREWS_PERIMETER if p[1] == y)

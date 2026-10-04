@@ -85,6 +85,26 @@ def crossings(layer, x, y0, y1):
     return out
 
 
+def hole_diameters(layers, cx, cy, z_from):
+    """穴の中心（ベッドの座標）から、まわりの線の縁（線の中心 − 幅の半分）までのいちばん近い距離 × 2 = **線が空けている径**を、z_from より上の層ごとに。
+    薄い壁（斜めの肉が線 1 本ぶん）では、穴の外周が 1 つの閉じた輪にならない（壁の線と 1 本になる）ので、輪の外接では測れない。"""
+    per = []
+    for z, loops in sorted(layers.items()):
+        if z < z_from:
+            continue
+        near = 9.0
+        for lp in loops:
+            for (ax, ay), (bx, by), w in zip(lp["pts"], lp["pts"][1:], lp["ws"]):
+                ax, ay, bx, by = ax - cx, ay - cy, bx - cx, by - cy
+                if min(abs(ax), abs(bx)) > 3 or min(abs(ay), abs(by)) > 3:
+                    continue
+                ln = (bx - ax) ** 2 + (by - ay) ** 2
+                u = 0.0 if ln == 0 else max(0.0, min(1.0, -(ax * (bx - ax) + ay * (by - ay)) / ln))
+                near = min(near, math.hypot(ax + u * (bx - ax), ay + u * (by - ay)) - w / 2)
+        per.append(2 * near)
+    return per
+
+
 def check(gcode, rc):
     """返り値 (問題, 測った数)。"""
     import click_coupon_v2 as V
@@ -97,26 +117,12 @@ def check(gcode, rc):
     area = [tuple(float(v) for v in p.split("x")) for p in rc["machine"]["printable_area"]]
     ox = max(p[0] for p in area) / 2 - (pb.min.X + pb.max.X) / 2
     oy = max(p[1] for p in area) / 2 - (pb.min.Y + pb.max.Y) / 2
-    # 2. 下穴: 穴の中心（設計）から、まわりの線の縁（線の中心 − 幅の半分）までのいちばん近い距離 × 2 = 線が空けている径。
-    #    薄い壁（斜めの肉 0.49）では、穴の外周が 1 つの閉じた輪にならない（壁の線と 1 本になる）ので、輪の外接では測れない
+    # 2. 下穴: 線が空けている径（hole_diameters）
     z_hole = S.FRAME_UNDER + S.FRAME_T - S.SCREW_PILOT_DEPTH
     for tag, holes in V.placed_holes().items():
         dias = []
         for (hx, hy), d in holes:
-            per = []
-            for z, loops in layers.items():
-                if z < z_hole + 0.25:
-                    continue
-                near = 9.0
-                for lp in loops:
-                    for (ax, ay), (bx, by), w in zip(lp["pts"], lp["pts"][1:], lp["ws"]):
-                        ax, ay, bx, by = ax - ox - hx, ay - oy - hy, bx - ox - hx, by - oy - hy
-                        if min(abs(ax), abs(bx)) > 3 or min(abs(ay), abs(by)) > 3:
-                            continue
-                        ln = (bx - ax) ** 2 + (by - ay) ** 2
-                        u = 0.0 if ln == 0 else max(0.0, min(1.0, -(ax * (bx - ax) + ay * (by - ay)) / ln))
-                        near = min(near, math.hypot(ax + u * (bx - ax), ay + u * (by - ay)) - w / 2)
-                per.append(2 * near)
+            per = hole_diameters(layers, hx + ox, hy + oy, z_hole + 0.25)
             dias.append((d, round(sum(per) / len(per), 3), round(min(per), 3), len(per)))
             if abs(dias[-1][1] - d) > 0.12 or dias[-1][2] < d - 0.15:      # 薄い壁では線が 0.10 ほど内へ寄る（本番の枠も同じ切り方）
                 problems.append(f"{tag}: 下穴 φ{d} が、線では平均 {dias[-1][1]}・最小 {dias[-1][2]}")

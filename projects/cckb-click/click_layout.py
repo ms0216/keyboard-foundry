@@ -413,14 +413,15 @@ class Layout:
         return (a[0], a[1] - tol / 2, a[2], b[3] + tol / 2)
 
     def psw_notch(self):
-        """つまみの切り欠き（枠の右の壁を上まで抜く範囲）の平面の多角形 [(x, y), ...]。内側の面は本体の縁 ＋ PART_CLEAR。
-        外面の側の角は斜めに落とす（指が入りやすい・角が欠けにくい）。外面の 1.0 外まで。"""
+        """つまみの切り欠き（枠の右の壁を上まで抜く範囲）の平面の多角形 [(x, y), ...]。内側の面（本体の縁 ＋ PART_CLEAR）で幅 PSW_NOTCH[0]・
+        外面へ向かって片側 PSW_NOTCH[1] ずつ広がる（指の腹が入る）。外面の 1.0 外まで。最初の点と最後の点が内側の面の両端。
+        内側の面の上の縁を斜めに落とす分（PSW_NOTCH[2]）は立体の側（click_case.corner_cuts）。"""
         s = self.s
-        w, ch = s.PSW_NOTCH
+        w, fl, _ = s.PSW_NOTCH
         x0 = self.psw_body()[2] + s.PART_CLEAR
         x1 = self.frame[2]
         y0, y1 = s.PSW_AT[1] - w / 2, s.PSW_AT[1] + w / 2
-        return [(x0, y0), (x1 - ch, y0), (x1, y0 - ch), (x1 + 1.0, y0 - ch), (x1 + 1.0, y1 + ch), (x1, y1 + ch), (x1 - ch, y1), (x0, y1)]
+        return [(x0, y0), (x1, y0 - fl), (x1 + 1.0, y0 - fl), (x1 + 1.0, y1 + fl), (x1, y1 + fl), (x0, y1)]
 
     def psw_nail(self, pos):
         """爪の入る場所（検査の包絡・平面の矩形）。つまみが pos（+1 奥 / −1 手前）にあるとき、反対の端へ押すために、

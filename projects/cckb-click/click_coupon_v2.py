@@ -1,12 +1,13 @@
-"""cckb-click の試し刷り v2（刷る物だけ。**基板も本番の枠も変えない**）。docs/coupon-test.md 8 章。
+"""cckb-click の試し刷り v2（刷る物だけ）。docs/coupon-test.md 8 章。**2026-10-04 に利用者が刷った。結果は本番に入れた**
+（下穴 φ1.6・つまみは (ii)・切り欠きの形。蓋は 3 つとも使えなかった）。ここは、刷った物と同じ形を出し続ける。
 
     .venv/bin/python3 projects/cckb-click/click_coupon_v2.py        # STL と絵を build/cckb-click/ に
     .venv/bin/python3 projects/cckb-click/tools/slice_v2.py         # スライスして G-code を検査 → coupon_v2_plate_n04.gcode.3mf
 
 2026-10-04 に利用者が角とねじの試し刷り（v1）を刷った結果: ねじが空回りする・蓋が留まらない・つまみが奥すぎる。v2 はその 3 つを 1 枚で試す:
 
-  A ねじ    本番の枠から切り出した壁（奥の壁 = 内の肉 0.7・左の壁 = 斜めの肉 0.49）に、下穴 φ1.5 / 1.6 / 1.7（外面の溝の数 1・2・3）
-  B つまみ  電源スイッチの位置 2 つを並べた壁の切れ端: (i) いまの位置・(ii) 0.75 外。切り欠きは外へ広がる形＋内側の上の縁を斜めに
+  A ねじ    本番の枠から切り出した壁（奥の壁・左の壁 = 幅の広いキーの脇の薄い壁）に、下穴 φ1.5 / 1.6 / 1.7（外面の溝の数 1・2・3）
+  B つまみ  電源スイッチの位置 2 つを並べた壁の切れ端: (i) 前の位置（本番から 0.75 内）・(ii) 本番の位置。切り欠きは本番の形
   C 蓋      留め方 3 通りの蓋（点の数 1・2・3）と、枠の切れ端 1 つ（口の上の壁の下面の溝を深くした物。3 つの蓋が同じ枠に入る）
 
 **寸法は持たない**（spec.COUPON_V2_*）。ばねの数は、蓋の立体を作るのと同じ値から作った梁の骨組みを解いて出す（spring）。
@@ -141,7 +142,7 @@ def _plate(r, screws=()):
 
 @lru_cache(maxsize=None)
 def shifted(dx=0.0):
-    """電源スイッチを dx だけ外（+x）へ動かしたときの配置（click_layout の関数がそのまま使える）。"""
+    """電源スイッチを本番の位置から dx だけ外（+x）へ動かしたときの配置（click_layout の関数がそのまま使える）。"""
     if not dx:
         return LAY
     s2 = types.SimpleNamespace(**{k: getattr(S, k) for k in dir(S) if not k.startswith("__")})
@@ -157,18 +158,11 @@ def knob_box():
     return (x0, y - half, LAY.frame[2], y + half)
 
 
-def notch_v2(lay=LAY):
-    """切り欠きの新しい形（平面）: 内側の面（本体の縁 ＋ PART_CLEAR）で幅 PSW_NOTCH[0]・外面で片側 flare ずつ広い。"""
-    w, fl = S.PSW_NOTCH[0], S.COUPON_V2_NOTCH["flare"]
-    x0, x1, y = lay.psw_body()[2] + S.PART_CLEAR, lay.frame[2], S.PSW_AT[1]
-    return [(x0, y - w / 2), (x1, y - w / 2 - fl), (x1 + 1.0, y - w / 2 - fl), (x1 + 1.0, y + w / 2 + fl), (x1, y + w / 2 + fl), (x0, y + w / 2)]
-
-
 @lru_cache(maxsize=None)
-def knob_stub(dx=0.0, style="v2", dots=0, leg=True):
+def knob_stub(dx=0.0, dots=0, leg=True, mark=False):
     """右の壁の切れ端（つまみの前後 ± COUPON_V2_KNOB_BOX[1]）を**式から**作る: 壁（0〜上面）・屋根（枠の下面〜上面）・スイッチの上の厚い屋根、
-    から、スイッチの空間と切り欠きを引く。style="v1" は本番と同じ切り欠き（tests が本番の枠の立体と突き合わせる）。
-    leg = 左の端に足す壁（当て板に載せるため。本番には無い）。dots = 上面の点の数。"""
+    から、スイッチの空間と切り欠き（本番と同じ click_case.corner_cuts）を引く。dx = 0 は本番の位置（tests が本番の枠の立体と突き合わせる）。
+    leg = 左の端に足す壁（当て板に載せるため。本番には無い）。dots = 上面の点の数。mark = 入の印（本番にはある。刷った試し刷りには無い）。"""
     lay = shifted(dx)
     box = knob_box()
     a2, f2 = LAY.key_area[2], LAY.frame[2]
@@ -178,15 +172,7 @@ def knob_stub(dx=0.0, style="v2", dots=0, leg=True):
     if leg:
         body.append(_box((box[0], box[1], box[0] + S.COUPON_CORNER_WALL, box[3]), 0.0, S.FRAME_UNDER + EPS))
     cc = C.corner_cuts(lay)
-    cuts = [cc["psw"]]
-    if style == "v1":
-        cuts += [cc["psw_notch"], cc["on_mark"]]
-    else:
-        n = notch_v2(lay)
-        x0, y, w, sc = n[0][0], S.PSW_AT[1], S.PSW_NOTCH[0], S.COUPON_V2_NOTCH["scoop"]
-        cuts += [Pos(0, 0, -1.0) * extrude(Polygon(*n, align=None), TOP + 2.0),
-                 _box((a2 - EPS, y - w / 2, x0 + EPS, y + w / 2), -1.0, ceil),
-                 _prism_y([(x0 - sc - 1.0, TOP + 1.0), (x0 + EPS, TOP - sc - EPS), (x0 + EPS, TOP + 1.0)], y - w / 2, y + w / 2)]
+    cuts = [cc["psw"], cc["psw_notch"]] + ([cc["on_mark"]] if mark else [])
     d, depth, pitch = S.COUPON_V2_DOT
     cuts += [Pos(box[0] + 3.0, S.PSW_AT[1] + (k - (dots - 1) / 2) * pitch, TOP - depth) * Cylinder(d / 2, depth + 1.0, align=C.CEN_MIN)
              for k in range(dots)]
@@ -196,7 +182,7 @@ def knob_stub(dx=0.0, style="v2", dots=0, leg=True):
     return part
 
 
-KNOB_VARIANTS = ((0.0, 1), (S.COUPON_V2_PSW_SHIFT, 2))      # (外へ寄せる量, 点の数)。(i)・(ii)
+KNOB_VARIANTS = ((-S.COUPON_V2_PSW_SHIFT, 1), (0.0, 2))     # (本番の位置から外へ寄せる量, 点の数)。(i) 前の位置・(ii) 本番の位置
 
 
 def knob_pitch():
@@ -214,10 +200,10 @@ def _knob_block(lay):
 
 @lru_cache(maxsize=None)
 def knob_v2():
-    """{名前: 立体}。frame = 切れ端 2 つを y に並べて継いだ物（手前 = (i) いまの位置・奥 = (ii) 外へ寄せた位置）・
+    """{名前: 立体}。frame = 切れ端 2 つを y に並べて継いだ物（手前 = (i) 前の位置・奥 = (ii) 0.75 外 = 本番の位置）・
     base = 当て板（基板の縁は本番と同じ）＋ 本体の代わり 2 つ ＋ 左と奥の当て・knob_1 / knob_2 = つまみの代わり（入の位置）。"""
     box, pitch, fit = knob_box(), knob_pitch(), S.COUPON_FIT
-    frame = _union([Pos(0, i * pitch, 0) * knob_stub(dx, "v2", dots) for i, (dx, dots) in enumerate(KNOB_VARIANTS)]).clean()
+    frame = _union([Pos(0, i * pitch, 0) * knob_stub(dx, dots) for i, (dx, dots) in enumerate(KNOB_VARIANTS)]).clean()
     if len(frame.solids()) != 1:
         raise RuntimeError("つまみの切れ端 2 つが 1 つの塊にならない")
     y1 = box[3] + pitch * (len(KNOB_VARIANTS) - 1)
@@ -234,41 +220,13 @@ def knob_v2():
     return out
 
 
-def finger_reach(dx=0.0, style="v2", r=None, desk=True):
-    """指先を半径 r の硬い球と見て、切り欠きへどこまで入るかを**立体を当てて**測る（届きやすさを比べる物差し）。
-    球の中心を、切り欠きの幅の中（y）・机より上（z。desk=True のとき球は机 = 底のシートの下面より下へ行けない）で動かし、
-    枠・基板・スイッチの本体に当たらないいちばん奥（x）を二分法で探す。返り値:
-      bite   つまみの上面の高さで、球がつまみの先より奥へ入る量（負 = 届かない）のいちばん大きい物
-      tip_in つまみの先が枠の外面から引っ込んでいる量・open 外面での切り欠きの幅・cy, cz そのときの球の中心"""
-    r = S.COUPON_V2_FINGER_R if r is None else r
+def finger_reach(dx=0.0, r=None, desk=True):
+    """指先の硬い球が、切り欠きへどこまで入るか（click_case.finger_reach を、位置 dx の切れ端・当て板・本体の代わりに当てる）。"""
     lay = shifted(dx)
-    stub = knob_stub(dx, style, 0, False)
     box = knob_box()
-    pb = lay.psw_body()
-    things = Compound([stub, _box((box[0], box[1], LAY.pcb[2], box[3]), -S.PCB_T, 0.0), _box(pb, 0.0, lay.z()["psw_top"])])
-    f2 = LAY.frame[2]
-    k = lay.psw_knob(1)
-    zk = S.PSW_KNOB_Z[1]
-    z_min = (-S.PCB_T - S.BOTTOM_SHEET_T + r) if desk else zk
-    best = dict(bite=-99.0)
-    for cy in (S.PSW_AT[1] + t for t in (-2.0, -1.0, 0.0, 1.0, 2.0)):
-        for cz in (z_min + 0.75 * i for i in range(6)):
-            if abs(cz - zk) >= r:
-                continue
-            lo, hi = k[2] - r, f2 + r + 1.0                     # lo = 当たる・hi = 当たらない
-            for _ in range(11):
-                mid = (lo + hi) / 2
-                if vol(things, Pos(mid, cy, cz) * Sphere(r)) > 1e-4:
-                    lo = mid
-                else:
-                    hi = mid
-            bite = k[2] - (hi - math.sqrt(r * r - (cz - zk) ** 2))
-            if bite > best["bite"]:
-                best = dict(bite=round(bite, 2), cx=round(hi, 2), cy=cy, cz=round(cz, 2), r=r)
-    n = lay.psw_notch() if style == "v1" else notch_v2(lay)
-    ys = [q[1] for q in n if abs(q[0] - f2) < 1e-6]
-    best.update(tip_in=round(f2 - k[2], 2), open=round(max(ys) - min(ys), 2), depth=round(f2 - n[0][0], 2))
-    return best
+    things = Compound([knob_stub(dx, 0, False), _box((box[0], box[1], LAY.pcb[2], box[3]), -S.PCB_T, 0.0),
+                       _box(lay.psw_body(), 0.0, lay.z()["psw_top"])])
+    return C.finger_reach(things, lay, r, desk)
 
 
 # ---------------------------------------------------------------------------
@@ -524,7 +482,7 @@ def pieces():
         ("A4", "A3 の当て板", P.to_bed(turn(sc["base_side"]))),
         ("B1", "つまみ・壁の切れ端（位置 2 つ）", P.flip_to_bed(turn(kn["frame"]))),
         ("B2", "B1 の当て板", P.to_bed(turn(kn["base"]))),
-        ("B3", "つまみの代わり（いまの位置）", P.to_bed(turn(kn["knob_1"]))),
+        ("B3", "つまみの代わり（(i) 前の位置）", P.to_bed(turn(kn["knob_1"]))),
         ("B4", "つまみの代わり（0.75 外）", P.to_bed(turn(kn["knob_2"]))),
         ("C1", "蓋・枠の切れ端", P.flip_to_bed(cs["frame"])),
         ("C2", "C1 の当て板", P.to_bed(cs["base"])),
@@ -586,9 +544,8 @@ def numbers():
         for (x, y), d in sc["holes"][name]:
             e, share = thread_engagement(d)
             out["screw"].append(dict(wall=wall, d=d, engage=round(e, 3), share=round(share, 2), flesh=flesh(sc[f"frame_{name}"], x, y, d)[0]))
-    for label, dx, style in (("(i) いまの位置・v1 の切り欠き", 0.0, "v1"), ("(i) いまの位置・新しい切り欠き", 0.0, "v2"),
-                             ("(ii) 0.75 外・新しい切り欠き", S.COUPON_V2_PSW_SHIFT, "v2")):
-        out["knob"].append(dict(label=label, **finger_reach(dx, style), lifted=finger_reach(dx, style, desk=False)["bite"]))
+    for (dx, _), label in zip(KNOB_VARIANTS, ("(i) 前の位置（本体は縁から 2.5）", "(ii) 0.75 外 = 本番の位置")):
+        out["knob"].append(dict(label=label, **finger_reach(dx), lifted=finger_reach(dx, desk=False)["bite"]))
     stub = cover_stub()
     for n in S.COUPON_V2_COVERS:
         sp, sp_fat = spring(n), spring(n, 0.06)

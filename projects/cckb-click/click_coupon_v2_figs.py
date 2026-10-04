@@ -100,7 +100,7 @@ def howto(out, num=None):
     turn = lambda polys: [([(y, -x) for x, y in o], [[(y, -x) for x, y in r] for r in i]) for o, i in polys]      # noqa: E731（外面を手前に）
     CF._draw(ax, [(COL["pcb"], kn["base"]), (COL["frame"], kn["frame"]), (COL["knob"], knobs)], lambda p: turn(F.xy(p, 0.7)),
              (kb[1] - 1, kb[3] + pitch + 3, -(kb[2] + 5.5), -(kb[0] - 5)), "B1＋B2 を上から（つまみの高さで切った図。下が外面）")
-    for i, label in enumerate(("(i) いまの位置（上面に点 1 個）", "(ii) 0.75 外（点 2 個）")):
+    for i, label in enumerate(("(i) 前の位置（上面に点 1 個）", "(ii) 0.75 外（点 2 個）")):
         yc = S.PSW_AT[1] + i * pitch
         ax.text(yc, -(kb[0] - 3.2), label, fontsize=9.5, ha="center", va="center")
         ax.annotate("指", (yc + 2.6, -(kb[2] - 0.3)), (yc + 2.6, -(kb[2] + 4.2)), fontsize=10, color=RED, ha="center",
@@ -108,7 +108,7 @@ def howto(out, num=None):
         ax.annotate("つまみ", (yc + 0.8, -(V.shifted(V.KNOB_VARIANTS[i][0]).psw_knob(1)[2] - 0.5)), (yc - 4.6, -(kb[2] + 3.4)), fontsize=9,
                     ha="center", arrowprops=dict(arrowstyle="->", color="#222", lw=0.8))
     _plain(ax)
-    for i, (row, name) in enumerate(zip((num["knob"][1], num["knob"][2]), ("(i) いまの位置", "(ii) 0.75 外"))):
+    for i, (row, name) in enumerate(zip(num["knob"], ("(i) 前の位置", "(ii) 0.75 外"))):
         ax = fig.add_subplot(gs[2, 2 + i])
         y = S.PSW_AT[1] + i * pitch + S.PSW_TRAVEL / 2
         scene = [(COL["pcb"], kn["base"]), (COL["frame"], kn["frame"]), (COL["knob"], kn[f"knob_{i + 1}"])]
@@ -129,9 +129,9 @@ def howto(out, num=None):
           "③ 机に置いたまま、指の腹で前後に動かす（1.6 mm）\n"
           "　 上から・横から。爪を使わずに動かせるか\n"
           "④ (i) と (ii) を比べる。(ii) で勝手に動きそうか\n"
-          "(ii) は基板のスイッチを 0.75 外へ動かす案\n"
+          "(ii) は基板のスイッチを 0.75 外へ動かした位置\n"
           "（JLC の「縁から 2.5 mm」を割る = 頼み方が変わる）\n"
-          "切り欠きは v1 より外へ広げ、内側の縁を斜めに落とした")
+          "→ 2026-10-04 に利用者が (ii) を選び、本番に入れた")
 
     # C. 蓋
     cv = LAY.cover()
@@ -192,7 +192,7 @@ def howto(out, num=None):
     ax.axis("off")
     rows = [["A1 奥の壁 φ1.5／1.6／1.7", "止まる手応え（○×）・割れ・何回目まで", "", "", ""],
             ["A3 左の壁（薄い）φ1.5／1.6／1.7", "同じ。壁の白い筋・ふくらみ", "", "", ""],
-            ["B (i) いまの位置", "指の腹で動かせるか（上から／横から）", "", "", ""],
+            ["B (i) 前の位置", "指の腹で動かせるか（上から／横から）", "", "", ""],
             ["B (ii) 0.75 外", "同じ。勝手に動きそうか", "", "", ""],
             ["C 蓋 1・2・3", "止まるか／落ちないか／抜けるか／20 回後", "", "", ""]]
     table = ax.table(cellText=rows, colLabels=["どれ", "見ること", "1 つ目", "2 つ目", "3 つ目"], loc="upper center",

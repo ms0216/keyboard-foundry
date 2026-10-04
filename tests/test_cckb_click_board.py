@@ -1106,9 +1106,16 @@ def test_the_cover_hole_check_notices_a_moved_hole_and_a_line_under_the_head(fac
     assert any("H30" in b for b in cover_hole_problems(f))
 
 
-def jlc_edge_problems(facts):
-    """JLC の実装の規約（Terms and Conditions of JLCPCB Assembly Service・2026-10-04 に読んだ）: 載せる部品の本体は基板の縁から 2.5 mm 以上。
-    縁の近くの部品（電源スイッチ・電池クリップ）を、板の上のパッド・突起の穴の位置と、図面の本体の寸法で見る。縁の外へ出る物が無いこと。"""
+JLC_BODY_TO_EDGE = 2.5      # JLC の実装の規約「部品の本体と基板の縁は 2.5 mm 以上」。**この板の電源スイッチは満たさない**（下の検査が数で言う）
+JLC_ECONOMIC_EDGE = 0.3     # Economic の注意書き「線と部品は縁から 0.3 mm 以上」。こちらは満たす
+
+
+def psw_edge_problems(facts):
+    """電源スイッチの位置の決まり（利用者の決定 2026-10-04: JLC の「2.5 以上」より使いやすさ。決定記録 2026-10-04-knob-out-pilot）を、
+    **板の上の突起の穴**（本体の中心線）と図面の寸法（本体の幅・つまみの出）で見る。つまみは y に滑るだけなので、先の x は入でも切でも同じ:
+      - つまみの先は、基板の縁の PSW_TIP_INSIDE（0.30）以上内側 = Economic の「縁から 0.3 以上」・枠の外面（基板の縁の PCB_INSET_X 外）から出ない
+      - 本体から基板の縁までは、記録した PSW_BODY_TO_EDGE（1.75）。違えば、記録か板のどちらかが古い
+      - スイッチのランドは縁から 1.70 以上・電池クリップのランドは 2.0 以上（どちらも、いまの板の値より外へ出たら言う）"""
     out = []
     e = LAY.pcb
     pegs = [p["pos"] for p in facts["pads"] if p["ref"] == "SW_PWR" and p["npth"]]
@@ -1117,31 +1124,46 @@ def jlc_edge_problems(facts):
     cx = pegs[0][0]                                              # 本体の中心線（図面: 突起は本体の中心線の上）
     body = cx + S.PSW_BODY[1] / 2
     tip = body + S.PSW_KNOB[1]
-    if e[2] - body < S.PSW_EDGE_MIN - 1e-6:
-        out.append(f"電源スイッチの本体が基板の縁から {e[2] - body:.3f}（{S.PSW_EDGE_MIN} 以上）")
-    if tip > e[2]:
-        out.append(f"電源スイッチのつまみが基板の縁から {tip - e[2]:.3f} 出る")
+    if e[2] - tip < S.PSW_TIP_INSIDE - 1e-6:
+        out.append(f"電源スイッチのつまみの先が基板の縁の {e[2] - tip:.3f} 内側（{S.PSW_TIP_INSIDE} 以上。負は縁から出る）")
+    if tip > e[2] + S.PCB_INSET_X - 1e-6:
+        out.append(f"電源スイッチのつまみの先が枠の外面から {tip - e[2] - S.PCB_INSET_X:.3f} 出る")
+    if abs(e[2] - body - S.PSW_BODY_TO_EDGE) > 1e-3:
+        out.append(f"電源スイッチの本体が基板の縁から {e[2] - body:.3f}（記録は {S.PSW_BODY_TO_EDGE}）")
     for p in facts["pads"]:
         if p["ref"] in ("SW_PWR", "BT1") and not p["npth"]:
             b = p["box"]
-            if min(b[0] - e[0], e[2] - b[2], b[1] - e[1], e[3] - b[3]) < 2.0:
-                out.append(f"{p['ref']}.{p['num']} のランドが基板の縁から 2.0 未満")
+            least = 1.7 if p["ref"] == "SW_PWR" else 2.0
+            if min(b[0] - e[0], e[2] - b[2], b[1] - e[1], e[3] - b[3]) < least - 1e-6:
+                out.append(f"{p['ref']}.{p['num']} のランドが基板の縁から {least} 未満")
     return out
 
 
-def test_the_power_switch_body_is_2_5_inside_the_board_edge_and_nothing_overhangs(facts):
-    assert jlc_edge_problems(facts) == []
-    assert S.PSW_EDGE_MIN == 2.5
+def test_the_power_knob_tip_is_0_3_inside_the_board_edge_and_the_body_is_1_75_from_it(facts):
+    assert psw_edge_problems(facts) == []
+    assert (S.PSW_TIP_INSIDE, S.PSW_BODY_TO_EDGE) == (0.3, 1.75) and S.PSW_BODY_TO_EDGE == pytest.approx(S.PSW_TIP_INSIDE + S.PSW_KNOB[1])
+    # 正直に: JLC の規約の 2.5 は満たさない（1.75）。Economic の「縁から 0.3 以上」は、つまみの先でちょうど満たす
+    assert S.PSW_BODY_TO_EDGE < JLC_BODY_TO_EDGE and S.PSW_TIP_INSIDE >= JLC_ECONOMIC_EDGE
+    # 入の向きは変えていない: 奥の端子（3 番）が VBAT_SW・真ん中（2 番・共通）が VBAT_IN・手前（1 番）は空き
+    pins = {p["num"]: p for p in facts["pads"] if p["ref"] == "SW_PWR" and p["num"] in ("1", "2", "3")}
+    assert [pins[n]["net"] for n in "123"] == ["", "VBAT_IN", "VBAT_SW"] and pins["3"]["pos"][1] > pins["2"]["pos"][1] > pins["1"]["pos"][1]
+    assert S.PSW_ON == 1
 
 
-def test_the_edge_check_notices_the_old_overhanging_switch(facts):
+@pytest.mark.parametrize("dx, words", [
+    (1.0, ("縁の", "枠の外面", "記録")),       # 最初の位置: つまみの先が基板の縁から 0.70・枠の外面から 0.40 出る（本体は縁から 0.75）
+    (0.1, ("縁の", "記録")),                   # 0.1 外: 先は縁の 0.20 内側（0.30 を割る）。枠からは出ない
+    (-0.75, ("記録",)),                        # 前の位置（本体は縁から 2.5）: 記録と板が違う
+])
+def test_the_edge_check_notices_a_moved_switch(facts, dx, words):
     f = copy.deepcopy(facts)
     for p in f["pads"]:
         if p["ref"] == "SW_PWR":
-            p["pos"][0] += 1.75                                  # 前の位置
-            p["box"] = [p["box"][0] + 1.75, p["box"][1], p["box"][2] + 1.75, p["box"][3]]
-    bad = jlc_edge_problems(f)
-    assert any("本体" in b for b in bad) and any("つまみ" in b for b in bad), bad
+            p["pos"][0] += dx
+            p["box"] = [p["box"][0] + dx, p["box"][1], p["box"][2] + dx, p["box"][3]]
+    bad = psw_edge_problems(f)
+    assert all(any(w in b for b in bad) for w in words), bad
+    assert ("枠の外面" in " ".join(bad)) == (dx == 1.0), bad
 
 
 def frozen_problems(facts, rec):

@@ -117,14 +117,17 @@ def test_the_hairpin_and_the_thin_arms_are_where_the_spring_model_says():
 # つまみ（式から作った壁の切れ端）
 # ---------------------------------------------------------------------------
 
-def test_the_two_switch_positions_are_the_current_one_and_one_0_75_further_out():
+def test_the_two_switch_positions_are_the_previous_one_and_the_production_one_0_75_further_out():
+    """利用者が刷った 2 つの位置: (i) 前の位置（本体は基板の縁から 2.5）・(ii) 0.75 外。**(ii) を利用者が選び、本番の位置になった**
+    （2026-10-04）。試し刷りは、本番の位置から測って同じ 2 つを出し続ける。"""
     f2, p2 = LAY.frame[2], LAY.pcb[2]
-    for dx, tip_board, tip_frame, body in ((0.0, 1.05, 1.35, 2.5), (S.COUPON_V2_PSW_SHIFT, 0.30, 0.60, 1.75)):
+    assert V.KNOB_VARIANTS == ((-S.COUPON_V2_PSW_SHIFT, 1), (0.0, 2)) and S.COUPON_V2_PSW_SHIFT == 0.75
+    for (dx, _), (tip_board, tip_frame, body, origin) in zip(V.KNOB_VARIANTS, ((1.05, 1.35, 2.5, 141.125), (0.30, 0.60, 1.75, 141.875))):
         lay = V.shifted(dx)
         k = lay.psw_knob(1)
-        assert (p2 - k[2], f2 - k[2], p2 - lay.psw_body()[2]) == pytest.approx((tip_board, tip_frame, body))
-    assert V.shifted(0.0) is LAY and S.PSW_AT == (141.125, -38.1)                         # 本番の値は動かしていない
-    assert p2 - V.shifted(S.COUPON_V2_PSW_SHIFT).psw_body()[2] < S.PSW_EDGE_MIN           # (ii) は JLC の「2.5 以上」を割る
+        assert (p2 - k[2], f2 - k[2], p2 - lay.psw_body()[2], lay.s.PSW_AT[0]) == pytest.approx((tip_board, tip_frame, body, origin))
+    assert V.shifted(0.0) is LAY and S.PSW_AT == (141.875, -38.1)                         # (ii) = 本番
+    assert p2 - LAY.psw_body()[2] == pytest.approx(S.PSW_BODY_TO_EDGE)
 
 
 def test_the_knob_coupon_has_both_positions_with_captive_sliding_stand_ins_and_nothing_sticks_out():
@@ -149,7 +152,7 @@ def test_the_knob_coupon_has_both_positions_with_captive_sliding_stand_ins_and_n
         # 切り欠き: 内側の幅 10・外面で 14.8。つまみの上は枠が無い
         k = lay.psw_knob(1)
         assert not frame.is_inside((k[2] - 0.2, S.PSW_AT[1] + i * pitch, 4.9))
-        n = V.notch_v2(lay)
+        n = lay.psw_notch()
         assert n[-1][1] - n[0][1] == pytest.approx(S.PSW_NOTCH[0]) and n[-2][1] - n[1][1] == pytest.approx(14.8)
         # 内側の面の上の縁は斜めに落ちている（scoop 2.0）・その下は厚い屋根が 1.2 残る
         x0, y = n[0][0], S.PSW_AT[1] + i * pitch
@@ -164,13 +167,13 @@ def test_the_knob_coupon_has_both_positions_with_captive_sliding_stand_ins_and_n
 
 @pytest.mark.slow
 def test_the_fingertip_reaches_past_the_knob_tip_only_at_the_outer_position():
-    """指先 = 半径 7.5 の硬い球（仮定）。机に置いたまま: いまの位置は、切り欠きを広げても先まで届かない（基板の縁と机が先に当たる）。
-    0.75 外なら 0.16 届く。v1 の切り欠きでは 0.22 足りない（利用者の「奥に入りすぎ」と同じ向き）。"""
-    old, new, out = V.finger_reach(0.0, "v1"), V.finger_reach(0.0, "v2"), V.finger_reach(S.COUPON_V2_PSW_SHIFT, "v2")
-    assert (old["tip_in"], old["open"], new["open"], out["tip_in"]) == pytest.approx((1.35, 12.0, 14.8, 0.6))
-    assert old["bite"] == pytest.approx(-0.22, abs=0.03) and new["bite"] == pytest.approx(-0.03, abs=0.03) and out["bite"] == pytest.approx(0.16, abs=0.03)
-    assert old["bite"] < new["bite"] < 0 < out["bite"]
-    assert V.finger_reach(0.0, "v2", r=2.0)["bite"] > 0.5                                 # 検査器が生きている: 細い物（爪）なら届く
+    """指先 = 半径 7.5 の硬い球（仮定）。机に置いたまま: (i) 前の位置は、切り欠きを広げても先まで届かない（基板の縁と机が先に当たる）。
+    (ii) 0.75 外（= 本番）なら 0.16 届く。（v1 の切り欠き〔外面で 12.0〕と前の位置では −0.22 だった: 2026-10-04 に測った数。その形はもう作らない。）"""
+    inner, out = (V.finger_reach(dx) for dx, _ in V.KNOB_VARIANTS)
+    assert (inner["tip_in"], inner["open"], out["open"], out["tip_in"]) == pytest.approx((1.35, 14.8, 14.8, 0.6))
+    assert inner["bite"] == pytest.approx(-0.03, abs=0.03) and out["bite"] == pytest.approx(0.16, abs=0.03)
+    assert inner["bite"] < 0 < out["bite"]
+    assert V.finger_reach(-S.COUPON_V2_PSW_SHIFT, r=2.0)["bite"] > 0.5                    # 検査器が生きている: 細い物（爪）なら (i) でも届く
 
 
 # ---------------------------------------------------------------------------
@@ -179,12 +182,16 @@ def test_the_fingertip_reaches_past_the_knob_tip_only_at_the_outer_position():
 
 @pytest.mark.slow
 def test_the_knob_stub_formula_reproduces_the_real_frame_around_the_notch():
-    """式から作った切れ端（v1 の切り欠き・足なし）が、本番の枠の立体と同じ（つまみのまわり）。"""
+    """式から作った切れ端（本番の位置 = (ii)・足なし・入の印つき）が、本番の枠の立体と同じ（つまみのまわり）
+    = **利用者が (ii) で触った切り欠きが、そのまま本番の枠に入っている**。"""
     box = V.knob_box()
     region = C._box((137.5, -46.0, box[2], -30.2), -1.0, 6.0)
-    real, stub = C.frame_full() & region, V.knob_stub(0.0, "v1", 0, False) & region
+    real, stub = C.frame_full() & region, V.knob_stub(0.0, 0, False, True) & region
     assert (real - stub).volume < TOL and (stub - real).volume < TOL and real.volume > 150
-    assert (real - (V.knob_stub(0.0, "v2", 0, False) & region)).volume > 5.0              # 検査器が生きている: 新しい切り欠きは違う形
+    # 検査器が生きている: (i) の位置の切れ端は違う形・入の印が無い切れ端も違う（印の体積ぶん）
+    assert ((V.knob_stub(-S.COUPON_V2_PSW_SHIFT, 0, False, True) & region) - real).volume > 5.0
+    mark = math.pi * (S.ON_MARK[0] / 2) ** 2 * S.ON_MARK[1]
+    assert ((V.knob_stub(0.0, 0, False) & region) - real).volume == pytest.approx(mark, rel=0.05)
 
 
 @pytest.mark.slow
@@ -193,7 +200,7 @@ def test_the_screw_pieces_are_the_real_walls_with_three_pilot_sizes():
     full = C.frame_full()
     boxes = C.screw_coupon_boxes()
     old, depth = LAY.pilot()
-    assert S.COUPON_V2_PILOTS == (1.5, 1.6, 1.7) and old == 1.8
+    assert S.COUPON_V2_PILOTS == (1.5, 1.6, 1.7) and old == 1.6                           # 本番は、利用者が選んだ真ん中の径になった
     for name, want in (("back", (0.87, 0.81, 0.77)), ("side", (0.65, 0.59, 0.55))):
         piece = sc[f"frame_{name}"]
         holes = sc["holes"][name]
@@ -201,10 +208,12 @@ def test_the_screw_pieces_are_the_real_walls_with_three_pilot_sizes():
         box, screws, _ = boxes[name]
         real = full & C._box(box, -1.0, 6.0)
         if name == "back":
-            # 違いは、下穴を埋めて開け直した輪（3 つ）と、見分ける溝 1 ＋ 2 ＋ 3 本だけ
-            ring = sum(math.pi * (old ** 2 - d ** 2) / 4 * depth for d in S.COUPON_V2_PILOTS)
+            # 違いは、下穴を開け直した輪（本番 φ1.6 より小さい φ1.5 は足す・大きい φ1.7 は削る）と、見分ける溝 1 ＋ 2 ＋ 3 本だけ
+            added = sum(math.pi * max(0.0, old ** 2 - d ** 2) / 4 * depth for d in S.COUPON_V2_PILOTS)
+            cut = sum(math.pi * max(0.0, d ** 2 - old ** 2) / 4 * depth for d in S.COUPON_V2_PILOTS)
             w, dp = S.COUPON_V2_MARK[:2]
-            assert (piece - real).volume == pytest.approx(ring, rel=0.05) and (real - piece).volume == pytest.approx(6 * w * dp * 5.0, rel=0.1)
+            assert added > 0.3 and cut > 0.3
+            assert (piece - real).volume == pytest.approx(added, rel=0.05) and (real - piece).volume == pytest.approx(6 * w * dp * 5.0 + cut, rel=0.1)
             assert [c for c, _ in holes] == screws
         else:
             assert piece.bounding_box().size.Y == pytest.approx(3 * V.UNIT) and holes[1][0] == screws[0]

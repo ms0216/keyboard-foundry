@@ -1,4 +1,4 @@
-"""右手前の角を、上からと手前から、蓋あり・蓋なしで描く（4 枚）。**Blender の Python で動かす。**
+"""右手前の角を、上からと手前から描く（2 枚。電池の蓋は考え直している途中で、組んだ状態に入れていない）。**Blender の Python で動かす。**
 
 projects/cckb-click/click_case.py が書いた build/cckb-click/assembly_main/asm__<グループ>.stl と style.json を読む。
 
@@ -34,8 +34,8 @@ def main():
         mat.diffuse_color = tuple(int(color[i:i + 2], 16) / 255.0 for i in (1, 3, 5)) + (alpha,)
         obj.data.materials.append(mat)
         objs[path.stem.split("__")[1]] = obj
-    if "cover" not in objs or "frame_right" not in objs:
-        raise RuntimeError(f"蓋か右の枠の STL が無い: {sorted(objs)}")
+    if "frame_right" not in objs:
+        raise RuntimeError(f"右の枠の STL が無い: {sorted(objs)}")
     cam_data = bpy.data.cameras.new("Camera")
     cam_data.type = "ORTHO"
     cam = bpy.data.objects.new("Camera", cam_data)
@@ -53,12 +53,9 @@ def main():
         cam.location = CENTER + d * 400.0
         cam.data.clip_start, cam.data.clip_end = 1.0, 2000.0
         cam.data.ortho_scale = scale
-        for with_cover in (True, False):
-            objs["cover"].hide_render = not with_cover
-            png = OUT / f"corner_{view}_{'cover' if with_cover else 'nocover'}.png"
-            scene.render.filepath = str(png)
-            bpy.ops.render.render(write_still=True)
-            n += 1
+        scene.render.filepath = str(OUT / f"corner_{view}.png")
+        bpy.ops.render.render(write_still=True)
+        n += 1
     print(f"OK {n}")
 
 

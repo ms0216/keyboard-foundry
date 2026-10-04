@@ -4,7 +4,7 @@
   main_top.png        上から（枠の上面の高さで切る）と、枠の下（基板の上 1.5）で切った図。柱・壁・部品・ねじ・継ぎ目
   main_tilt.png       2.25u と 1u の縁を押し切った傾き（公差の端）と、その下の部品
   coupon_screw.png    ねじの試し刷り（本番の枠から切り出した壁と当て板）
-  main_corner.png     右手前の角: つまみの切り欠き・電池の口・蓋（あり／なし）を、上から・手前から・断面で
+  main_corner.png     右手前の角: つまみの切り欠き・電池の口・前の蓋（考え直し中・刷らない）を、上から・断面で
   coupon_corner.png   角の試し刷り（枠の切れ端・当て板・つまみと電池の代わり・蓋）
   cover_spring.png    蓋の腕（ばね）を手前から見た断面: 山が壁の下面に当たる所と、ばねとして効く長さ（直す前の形と並べる）
 
@@ -181,20 +181,20 @@ def corner(out):
     knobs = [(COL["knob"], C.knob_solid(1)), ("#888888", C.knob_solid(-1))]
     fig, axs = plt.subplots(2, 3, figsize=(20, 11))
     lim = (106, f[2] + 1.5, f[1] - 1.5, -29)
-    _draw(axs[0][0], with_c, lambda p: F.xy(p, 4.65), lim, "上から（z 4.65 で切った図）・蓋あり（橙）")
+    _draw(axs[0][0], with_c, lambda p: F.xy(p, 4.65), lim, "上から（z 4.65）・前の蓋（橙）を入れた図。**蓋は考え直し中・刷らない**")
     _draw(axs[0][1], without, lambda p: F.xy(p, 4.65), lim, "同じ・蓋なし（電池の上面が指の切り欠きから見える）")
     _draw(axs[0][2], without + knobs, lambda p: F.xy(p, 0.7), lim, "つまみの高さ（z 0.7）で切った図。黒 = 入（奥）・灰 = 切（手前）のつまみ")
     for ax in axs[0]:
         ax.plot([f[2], f[2]], [lim[2], lim[3]], ":", color="#d00000", lw=0.6)
         ax.plot([lim[0], lim[1]], [f[1], f[1]], ":", color="#d00000", lw=0.6)
     zl = (-2.4, 6.0)
-    _draw(axs[1][0], with_c, lambda p: yz(p, S.CLIP_AT[0]), (-52, -40, *zl), "断面（電池の中心 x）・蓋あり: 手前の板と電池の隙 0.51・上の板はクリップの上", lv)
-    _draw(axs[1][1], with_c, lambda p: yz(p, cv["bump"][0][0]), (-52, -44, *zl), "断面（蓋の山の x）: 腕の先の山が、口の上の壁の下面の溝に入る", lv)
+    _draw(axs[1][0], with_c, lambda p: yz(p, S.CLIP_AT[0]), (-52, -40, *zl), "断面（電池の中心 x）・前の蓋（刷らない）: 手前の板と電池の隙 0.51", lv)
+    _draw(axs[1][1], with_c, lambda p: yz(p, cv["bump"][0][0]), (-52, -44, *zl), "断面（前の蓋の山の x）: 枠の溝は残してある（蓋は留まらなかった）", lv)
     on = _scene() + [(COL["knob"], C.knob_solid(1))]
     _draw(axs[1][2], on, lambda p: F.xz(p, S.PSW_AT[1] + S.PSW_ON * S.PSW_TRAVEL / 2), (136, 148, *zl),
-          "断面（つまみが入の y）: つまみの先は枠の外面（赤の点線）の 1.35 内側", lv)
+          f"断面（つまみが入の y）: つまみの先は枠の外面（赤の点線）の {f[2] - LAY.psw_knob(1)[2]:.2f} 内側・内側の上の縁は斜め", lv)
     axs[1][2].plot([f[2], f[2]], zl, ":", color="#d00000", lw=0.6)
-    fig.suptitle("右手前の角（作った立体を切った物）: 電源スイッチのつまみの切り欠きと、差し込み式の電池の蓋", fontsize=12)
+    fig.suptitle("右手前の角（作った立体を切った物）: 電源スイッチのつまみの切り欠き（外へ広がる形）と、電池の口。蓋は考え直し中（橙 = 前の蓋・刷らない）", fontsize=12)
     fig.tight_layout()
     p = out / "main_corner.png"
     fig.savefig(p, dpi=80)

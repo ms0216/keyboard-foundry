@@ -224,8 +224,16 @@ def screw_wall_problems(halves, ring=0.45, step=45):
 def test_every_perimeter_screw_has_plastic_all_around_its_pilot_hole(halves):
     bad = screw_wall_problems(halves)
     assert bad == [], bad
-    assert screw_wall_problems(halves, ring=1.3, step=90)       # 検査器が生きている: 1.3 の肉は無い（内側は 0.7）
+    assert screw_wall_problems(halves, ring=1.3, step=90)       # 検査器が生きている: 1.3 の肉は無い（内側は 0.8）
     assert len(LAY.wall_screws()) == 22
+    # 下穴の径は 22 本とも φ1.6（予備の 2 本も）: 穴の縁のすぐ内は空・すぐ外は肉（外面の向きへ）
+    assert LAY.pilot()[0] == 1.6
+    f = LAY.frame
+    for ref, (x, y), _ in LAY.wall_screws():
+        piece = local(halves["left" if x < LAY.seam_x(y) else "right"], x, y)
+        d = {(-1, 0): x - f[0], (1, 0): f[2] - x, (0, -1): y - f[1], (0, 1): f[3] - y}
+        ux, uy = min(d, key=d.get)                              # 外面の向き
+        assert not piece.is_inside((x + ux * 0.77, y + uy * 0.77, 1.4)) and piece.is_inside((x + ux * 0.83, y + uy * 0.83, 1.4)), ref
 
 
 def wall_flesh(frame, x, y, zs=(0.3, 1.4, 2.5), step=10):
@@ -243,16 +251,17 @@ def wall_flesh(frame, x, y, zs=(0.3, 1.4, 2.5), step=10):
 
 
 def test_the_plastic_around_each_pilot_hole_is_as_thick_as_the_board_allows(halves):
-    """E 重要 2: 監査の時は、下穴から斜め内向きの肉が 0.49（壁を厚くする幅 ± 1.2 の角）・真内向きが 0.6 だった。
-    基板の穴を 0.1 外へ寄せ、壁を厚くする幅を ± 2.0 にした: 奥と手前の壁と 1u の脇は 0.7 以上。幅の広いキーの脇の 3 本だけ 0.49 が残る。"""
+    """E 重要 2: 監査の時（下穴 φ1.8）は、下穴から斜め内向きの肉が 0.49（壁を厚くする幅 ± 1.2 の角）・真内向きが 0.6 だった。
+    基板の穴を 0.1 外へ寄せ、壁を厚くする幅を ± 2.0 にした。**下穴を φ1.6 にしたので、どこも 0.1 増えた**: 奥と手前の壁と 1u の脇は 0.8 以上・
+    幅の広いキーの脇の 3 本だけ 0.59（φ1.8 のときの 0.49）。ねじの外径 2.0 の外に残る壁（0.6／0.39）は、下穴の径では変わらない。"""
     thin = {}
     for ref, (x, y), kind in LAY.wall_screws():
         m, a = wall_flesh(halves["left" if x < LAY.seam_x(y) else "right"], x, y)
         if LAY.boss_half((x, y)) == S.SCREW_BOSS_HALF:
-            assert m >= 0.69, (ref, m, a)
+            assert m >= 0.79, (ref, m, a)
         else:
             thin[ref] = m
-    assert sorted(thin) == ["H16", "H17", "H18"] and all(0.47 <= v <= 0.52 for v in thin.values()), thin
+    assert sorted(thin) == ["H16", "H17", "H18"] and all(0.57 <= v <= 0.62 for v in thin.values()), thin
 
 
 def pad_relief_problems(halves, clear, z=0.2):
@@ -311,7 +320,7 @@ def test_the_screw_coupon_is_cut_from_the_real_frame_with_one_thickened_wall():
             assert not piece.is_inside((x, y, 1.0)) and piece.is_inside((x, y, depth + 0.3))         # 下穴は本番の深さ
             assert not sc[f"base_{name}"].is_inside((x, y, -0.8)) and sc[f"base_{name}"].is_inside((x + S.SCREW_HOLE_D / 2 + 0.2, y, -0.8))
             m, _ = wall_flesh(piece, x, y)
-            want = 1.2 if (x, y) == thick else 0.71 if name == "back" else 0.49
+            want = 1.3 if (x, y) == thick else 0.81 if name == "back" else 0.59
             assert m == pytest.approx(want, abs=0.03), (name, x, m)
         # 当て板の縁は基板の縁（穴の縁から 1.0）
         edge = min(base.max.Y - screws[0][1], screws[0][0] - base.min.X)
@@ -593,8 +602,8 @@ def corner_piece(halves):
 
 
 def knob_problems(frame, shift=(0.0, 0.0, 0.0), block=None):
-    """電源スイッチのつまみ（利用者の決定 2026-10-04: 外へ出さない・爪で動かす）。入・切の両方の位置で、行程の公差の端まで:
-      - つまみが枠に当たらない・先が枠の外面と基板の縁の内側
+    """電源スイッチのつまみ（利用者の決定 2026-10-04: 外へ出さない・試し刷り v2 の (ii) の位置）。入・切の両方の位置で、行程の公差の端まで:
+      - つまみが枠に当たらない・先が基板の縁の PSW_TIP_INSIDE（0.30）以上内側・枠の外面の 0.60 以上内側（**外へ出る物が無い**）
       - 爪の入る場所（click_case.nail_envelope: つまみの脇 3.0 幅・つまみの先から 1.0 掛かる所から外へ・上は枠の上まで）に、
         枠も、基板の上のほかの物も無い = **上からも横からも爪が届く**
     shift はつまみと包絡をずらす量（壊す検査）。block は枠に足す立体（切り欠きを狭めた枠の代わり）。"""
@@ -607,8 +616,8 @@ def knob_problems(frame, shift=(0.0, 0.0, 0.0), block=None):
             if vol(frame, k) > TOL:
                 out.append(f"つまみ（{name}・行程 {dy:+.1f}）が枠に当たる {vol(frame, k):.3f} mm3")
             tip = k.bounding_box().max.X
-            if tip > LAY.frame[2] - 1.0 or tip > LAY.pcb[2] - 1.0:
-                out.append(f"つまみ（{name}）の先 {tip:.3f} が、枠の外面 {LAY.frame[2]}・基板の縁 {LAY.pcb[2]:.3f} の 1.0 内側に無い")
+            if tip > LAY.pcb[2] - S.PSW_TIP_INSIDE + 1e-6 or tip > LAY.frame[2] - S.PSW_TIP_INSIDE - S.PCB_INSET_X + 1e-6:
+                out.append(f"つまみ（{name}）の先 {tip:.3f} が、基板の縁 {LAY.pcb[2]:.3f} の {S.PSW_TIP_INSIDE} 内側・枠の外面 {LAY.frame[2]:.3f} の 0.60 内側に無い")
         env = Pos(*shift) * C.nail_envelope(pos)
         if vol(frame, env) > TOL:
             out.append(f"爪の入る場所（{name}の位置から押す）に枠がある {vol(frame, env):.2f} mm3")
@@ -620,27 +629,44 @@ def knob_problems(frame, shift=(0.0, 0.0, 0.0), block=None):
 def test_the_power_knob_stays_inside_the_frame_and_a_fingernail_reaches_it_from_the_top_and_the_side(halves):
     frame = corner_piece(halves)
     assert knob_problems(frame) == []
-    # 外の事実: 本体は基板の縁から 2.5（JLC の規約）→ つまみの先は枠の外面から 1.35 内側。行程 1.6 ± 0.2・力は最大 250 gf（承認書）
+    # 利用者が試し刷り v2 の (ii) で選んだ位置: つまみの先は、入でも切でも基板の縁の 0.30 内側・枠の外面の 0.60 内側。本体は基板の縁から 1.75。
+    # 行程 1.6 ± 0.2・力は最大 250 gf（承認書）
     for pos in (1, -1):
         b = C.knob_solid(pos).bounding_box()
-        assert LAY.frame[2] - b.max.X == pytest.approx(1.35) and LAY.pcb[2] - b.min.X == pytest.approx(S.PSW_EDGE_MIN)
+        assert (LAY.pcb[2] - b.max.X, LAY.frame[2] - b.max.X) == pytest.approx((0.30, 0.60))
+        assert LAY.pcb[2] - b.min.X == pytest.approx(S.PSW_BODY_TO_EDGE) and S.PSW_BODY_TO_EDGE == 1.75
+    # 作った枠の立体でも、枠の外面より外に出る物は無い（つまみ・スイッチの本体・基板）
+    outer = max(v.bounding_box().max.X for v in [C.knob_solid(1), C.knob_solid(-1), C.board_parts()["SW_PWR"], C.pcb_solid()])
+    assert outer <= LAY.frame[2] - 0.3 + 1e-6 and frame.bounding_box().max.X == pytest.approx(LAY.frame[2])
     # 包絡の決め: つまみの脇 3.0・つまみの先から本体の側へ 1.0・行程の公差込みで掃く・枠の上面の 5 上まで
     e = C.nail_envelope(1).bounding_box()
     assert (e.size.Y, e.max.Z) == pytest.approx((S.PSW_NAIL[0] + S.PSW_TRAVEL + S.PSW_TRAVEL_TOL, 10.0)) and e.max.X > LAY.frame[2] + 5
     assert LAY.psw_knob(1)[2] - e.min.X == pytest.approx(S.PSW_NAIL[1])
-    # 切り欠きは幅 10・包絡（行程の公差込み）の両側に 0.55 ずつ余る
+    # 切り欠き（利用者が (ii) で触った形）: 内側の面で幅 10・包絡（行程の公差込み）の両側に 0.55 ずつ余る・外面では片側 2.4 ずつ広い 14.8
     n = LAY.psw_notch()
     assert n[-1][1] - n[0][1] == pytest.approx(10.0) and n[-1][1] - C.nail_envelope(1).bounding_box().max.Y == pytest.approx(0.55)
-    # 入の印は、つまみを入に寄せた側（奥）の枠の上面にあり、切り欠きの中に落ちていない
+    assert n[-2][1] - n[1][1] == pytest.approx(14.8) and n[1][0] == pytest.approx(LAY.frame[2]) and S.PSW_NOTCH == (10.0, 2.4, 2.0)
+    top = S.FRAME_UNDER + S.FRAME_T
+    x0, y = n[0][0], S.PSW_AT[1]
+    assert x0 == pytest.approx(LAY.psw_body()[2] + S.PART_CLEAR) and LAY.frame[2] - x0 == pytest.approx(1.65)
+    # 外面で広がっている: 内側の幅の外・外面のすぐ内（y は中心から 6.5）に枠が無い。内側の面の高さ（x0 のすぐ外）では、幅 10 の外に枠がある
+    assert not frame.is_inside((LAY.frame[2] - 0.2, y + 6.5, 4.0)) and not frame.is_inside((LAY.frame[2] - 0.2, y - 6.5, 4.0))
+    assert frame.is_inside((x0 + 0.1, y + 5.6, 4.0)) and frame.is_inside((x0 + 0.1, y - 5.6, 4.0)) and frame.is_inside((LAY.frame[2] - 0.2, y + 7.8, 4.0))
+    # 内側の面の上の縁は 45° に落ちている（2.0）・その下は厚い屋根が 1.2 残る（スイッチの本体の上 0.3 から）
+    assert not frame.is_inside((x0 - 0.5, y, top - 0.1)) and frame.is_inside((x0 - 0.5, y, top - 1.8)) and frame.is_inside((x0 - 2.3, y, top - 0.1))
+    assert frame.is_inside((x0 - 0.1, y, C.psw_ceiling() + 0.1)) and frame.is_inside((x0 - 0.1, y, top - 2.0 - 0.1)) and not frame.is_inside((x0 - 0.1, y, top - 1.8))
+    # 入の印は、つまみを入に寄せた側（奥）の、斜めに落とした面のすぐ内の**平らな上面**にあり、斜面にも切り欠きにも落ちていない
     mark = C.corner_cuts()["on_mark"].bounding_box()
     my, mx = (mark.min.Y + mark.max.Y) / 2, (mark.min.X + mark.max.X) / 2
     assert my > S.PSW_AT[1] + S.PSW_TRAVEL / 2 and S.PSW_ON == 1 and n[0][1] < my < n[-1][1]
-    top = S.FRAME_UNDER + S.FRAME_T
-    assert frame.is_inside((mx + 0.9, my, top - 0.2)) and not frame.is_inside((mx, my, top - 0.2)) and mx < n[0][0] - S.ON_MARK[0] / 2
+    assert my == pytest.approx(S.PSW_AT[1] + S.PSW_TRAVEL / 2 + S.PSW_KNOB[0] / 2)       # 高さ（y）は前と同じ: 入に寄せたつまみの奥の縁
+    assert frame.is_inside((mx + 0.9, my, top - 0.2)) and not frame.is_inside((mx, my, top - 0.2)) and frame.is_inside((mx, my, top - S.ON_MARK[1] - 0.1))
+    assert mx + S.ON_MARK[0] / 2 < x0 - S.PSW_NOTCH[2]
 
 
 @pytest.mark.parametrize("kw, word", [
-    (dict(shift=(1.75, 0.0, 0.0)), "先"),                                   # 前の位置（1.75 外）: つまみが枠の外へ出る
+    (dict(shift=(1.0, 0.0, 0.0)), "先"),                                    # 最初の位置（1.0 外）: つまみが枠の外へ 0.40 出る
+    (dict(shift=(0.1, 0.0, 0.0)), "先"),                                    # 0.1 外: 先は基板の縁の 0.20 内側（0.30 を割る）
     (dict(shift=(0.0, 1.0, 0.0)), "爪"),                                    # 切り欠きが 1.0 ずれている
     (dict(shift=(0.0, 0.0, 0.9)), "当たる"),                                # つまみが 0.9 高い → 厚い屋根に当たる
     (dict(block="narrow"), "爪"),                                           # 切り欠きの幅が 9（奥の端に 1.0 の塊）
@@ -658,18 +684,47 @@ def test_the_knob_check_notices_a_break(halves, kw, word):
 
 
 def test_the_wall_around_the_knob_notch_is_strong_enough():
-    """切り欠きの内側は、屋根を基板の上 1.8 まで厚くして塞いである（薄い垂れ壁にしない）。指で 10 N 押したときの応力の見積もりが、
-    Bambu PLA Basic の TDS の曲げ強さ 76 MPa の半分（積層の向きの弱さを見る）より十分小さい。"""
+    """切り欠きの内側は、屋根を基板の上 1.8 まで厚くして塞いである（薄い垂れ壁にしない）。指で 10 N 押したときの応力の見積もりを、
+    Bambu PLA Basic の TDS の曲げ強さ 76 MPa の半分（積層の向きの弱さを見る）= 38 MPa と比べる。**内側の上の縁を斜めに落としたので、
+    前の形（7.3 MPa）より弱い**:
+      - 縁の 2.0 幅だけが梁として働くと見た場合（いちばん厳しい見方。断面は台形）: 20.4 MPa = 上限の 0.54 倍
+      - 厚い屋根の全幅 5.4 が働くと見た場合: 3.5 MPa
+    どちらの断面も**枠の立体から測る**（式で置いた台形と、立体から測った断面が合うことも見る）。"""
     got = C.notch_strength()
-    assert got["roof_t"] == pytest.approx(3.2) and got["stub_len"] == pytest.approx(7.525)
-    assert got["roof"] < got["limit"] / 4 and got["stub"] < got["limit"] / 4, got
-    assert C.notch_strength(press=250.0)["roof"] > got["limit"]              # 検査器が生きている
-    # 作った枠で: 厚い屋根は切り欠きの内側の面まであり、スイッチの本体の上 0.3 から枠の下面まで詰まっている
+    assert (got["roof_t"], got["roof_edge"]) == pytest.approx((3.2, 1.2)) and got["stub_len"] == pytest.approx(5.125)
+    assert got["stub_area"] == pytest.approx(7.525 * 3.0 - 2.4 * 1.65 / 2) and got["stub"] < got["limit"] / 4, got
+    assert got["roof"] == pytest.approx(20.4, abs=0.2) and got["roof"] < got["limit"] / 1.5, got
+    assert C.notch_strength(press=20.0)["roof"] > got["limit"]               # 検査器が生きている: 20 N なら厳しい見方では上限を超える
+    # 作った枠で: 厚い屋根は切り欠きの内側の面まであり、スイッチの本体の上 0.3 から詰まっている。内側の面では上の 2.0 が斜めに落ちている
     r = C.psw_roof_rect()
-    frame = C.frame_halves()["right"] & C._box((r[0] - 1, r[1] - 1, r[2] + 1, r[3] + 1), -1.0, 6.0)
+    frame = C.frame_halves()["right"] & C._box((r[0] - 1, r[1] - 1, LAY.frame[2] + 1, r[3] + 1), -1.0, 6.0)
     x, y = r[2] - 0.2, S.PSW_AT[1]
-    assert not frame.is_inside((x, y, C.psw_ceiling() - 0.1)) and frame.is_inside((x, y, C.psw_ceiling() + 0.1)) and frame.is_inside((x, y, 4.9))
+    assert not frame.is_inside((x, y, C.psw_ceiling() - 0.1)) and frame.is_inside((x, y, C.psw_ceiling() + 0.1)) and frame.is_inside((x, y, 2.9))
+    assert not frame.is_inside((x, y, 4.9)) and frame.is_inside((r[2] - 2.2, y, 4.9))
     assert not frame.is_inside((r[2] + 0.2, y, 2.5))
+    # 立体から測った断面: 縁の 2.0 幅は面積 4.4（2.0 × 3.2 から三角 2.0 を引いた台形）で、式と同じ応力。全幅は 5.4
+    area, _, _, _ = C.roof_section(frame, 2.0)
+    assert area == pytest.approx(2.0 * 3.2 - 2.0 * 2.0 / 2, abs=0.05)
+    assert C.notch_roof_stress(frame, 2.0) == pytest.approx(got["roof"], rel=0.02)
+    full = r[2] - r[0]
+    assert full == pytest.approx(5.4) and C.notch_roof_stress(frame, full) < got["limit"] / 4
+    # 検査器が生きている: 斜めに落とす量を 3.0 にした枠なら（内側の面で 0.2 しか残らない）、厳しい見方で上限を超える
+    deep = frame - C._prism_y([(r[2] - 4.0, 6.0), (r[2] + 0.01, 2.0 - 0.01), (r[2] + 0.01, 6.0)], r[1], r[3])
+    assert C.notch_roof_stress(deep, 2.0) > got["limit"]
+
+
+def test_a_fingertip_reaches_past_the_knob_tip_on_the_real_frame(halves):
+    """指で届くか（利用者が「奥すぎる」と言った前の位置との違い）。指先 = 半径 PSW_FINGER_R の硬い球（**仮定**。比べる物差し）を、
+    本番の枠の角・基板・スイッチの本体に当てて、机に置いたまま、つまみの先より奥へどれだけ入るかを測る。いまの位置は +0.16
+    （利用者が試し刷り v2 の (ii) で「こちらがよい」と言った形と同じ数）。前の位置は −0.03（tests/test_cckb_click_coupon_v2.py）。"""
+    things = Compound([corner_piece(halves), C.pcb_solid(), C._box(LAY.psw_body(), 0.0, LAY.z()["psw_top"])])
+    got = C.finger_reach(things)
+    assert (got["tip_in"], got["open"], got["depth"], got["r"]) == pytest.approx((0.60, 14.8, 1.65, S.PSW_FINGER_R)) and S.PSW_FINGER_R == 7.5
+    assert got["bite"] == pytest.approx(0.16, abs=0.03) and got["bite"] > 0.1, got
+    # 検査器が生きている: 外面で広げていない切り欠き（幅 10 のまま = 広がりを塞いだ枠）では、入る量が 0.10 減る（+0.06）
+    n, f2 = LAY.psw_notch(), LAY.frame[2]
+    plugs = Compound([C._box((n[0][0], n[-1][1], f2, n[-2][1]), 0.0, 5.0), C._box((n[0][0], n[1][1], f2, n[0][1]), 0.0, 5.0)])
+    assert C.finger_reach(Compound([things, plugs]))["bite"] == pytest.approx(got["bite"] - 0.10, abs=0.03)
 
 
 # ---------------------------------------------------------------------------
@@ -824,6 +879,7 @@ def test_the_corner_coupon_is_cut_from_the_real_frame_and_its_stand_ins_sit_wher
     cc = C.corner_coupon()
     assert set(cc) == {"frame", "base", "knob", "cell", "cover"}
     box = C.corner_coupon_box()
+    # （2026-10-04 に刷った試し刷り。いまは本番の枠が変わったので、切れ端も新しい切り欠きになる。蓋は前の形のまま = 刷らない）
     top = S.FRAME_UNDER + S.FRAME_T
     real = C.frame_full() & C._box(box, -1.0, top + 1.0)
     extra, missing = cc["frame"] - real, real - cc["frame"]
@@ -831,7 +887,7 @@ def test_the_corner_coupon_is_cut_from_the_real_frame_and_its_stand_ins_sit_wher
     assert missing.volume < TOL and 50 < extra.volume < 90 and vol(extra, wall) == pytest.approx(extra.volume, abs=0.01)
     # 切れ端には、つまみの切り欠き・電池の口・蓋の座・ねじ H15 の下穴が入っている
     n = LAY.psw_notch()
-    assert box[1] < n[0][1] and n[-1][1] + 1.0 < box[3] and box[0] < LAY.cover()["x0"] - 5.0
+    assert box[1] < n[1][1] and n[-2][1] + 1.0 < box[3] and box[0] < LAY.cover()["x0"] - 5.0
     h15 = next(c for ref, c, _ in LAY.screws() if ref == "H15")
     assert not cc["frame"].is_inside((*h15, 1.0)) and cc["frame"].is_inside((*h15, S.SCREW_PILOT_DEPTH + 0.3))
     # 当て板: 基板と同じ厚さ・右と手前の縁は基板の縁・ねじ穴 3 つ（H15 と蓋の 2 つ）は本番の位置

@@ -11,8 +11,9 @@
   留め方  基板の下から M2 のねじを外周の壁に切る（20 本）。頭は基板の下面
   分け方  A1 mini に入るように左右 2 枚。継ぎ目のリブは左が持つ。基板が継ぎ目をまたぐ背骨
   キャップ 62 個（1u 51・1.5u 5・1.75u 2・2.25u 4）。枠の下から入れ、基板をかぶせる
-  右手前の角  電源スイッチのつまみは枠の外へ出ない。右の壁を上まで切り欠いて、爪で動かす（click_layout.psw_notch）。
-          電池は手前の壁の口から抜き差しし、口は差し込み式の蓋（cover_solid。枠のひさしと溝だけで留まる）で塞ぐ。蓋は無くても使える
+  右手前の角  電源スイッチのつまみは枠の外へ出ない（先は外面の 0.6 内）。右の壁を上まで切り欠いて、指か爪で動かす（click_layout.psw_notch）。
+          電池は手前の壁の口から抜き差しする。**蓋（cover_solid）は考え直している途中で、刷る物に入れていない**（2026-10-04: 試し刷りで
+          留まらなかった。枠の口のまわりの形〔ひさし・溝〕は前のまま残してある）。蓋は無くても使える
   試し刷り  ねじ（screw_coupon）と右手前の角（corner_coupon）。どちらも本番の枠の立体から切り出す
 座標: CAD（キー領域の中心が原点・X 右・Y 奥）・Z は基板の上面が 0。
 """
@@ -54,7 +55,7 @@ PART_H = {"D": 1.35, "R": 1.35, "C": 1.35, "U": 1.2}
 PART_BODY = {"D": (2.8, 1.8), "R": (2.0, 1.25), "C": (2.0, 1.25), "U": (6.4, 5.0)}
 CAP_LAND_BODY = (3.4, 1.8)   # 1206 の外形の最大（3.2 ± 0.2 × 1.6 ± 0.2）
 COLORS = {"frame_left": "#9aa0a6", "frame_right": "#b0b6bc", "pcb": "#2f7d32", "caps": "#e8c9a0", "switches": "#303030",
-          "parts": "#8a5a2b", "xiao": "#1f4e9c", "battery": "#c8c8c8", "screws": "#d0a000", "sheet": "#202020", "cover": "#d98030"}
+          "parts": "#8a5a2b", "xiao": "#1f4e9c", "battery": "#c8c8c8", "screws": "#d0a000", "sheet": "#202020"}
 
 
 def cell(k, s=S):
@@ -207,13 +208,17 @@ def corner_cuts(lay=LAY):
     pp = lay.psw_pads()                                                                          # パッドの外接 ＋ PART_CLEAR（本体はその中）
     out["psw"] = _box((min(pp[0], pb[0]) - c, min(pp[1], pb[1]) - c, max(pp[2], pb[2]) + c, max(pp[3], pb[3]) + c), -1.0, psw_ceiling(lay))
     notch = lay.psw_notch()
+    x0, sc = notch[0][0], s.PSW_NOTCH[2]
     out["psw_notch"] = _union([
         Pos(0, 0, -1.0) * extrude(Polygon(*notch, align=None), top + 2.0),                       # 壁を上まで抜く
         # 厚い屋根の下で、壁の内面から切り欠きの内側の面までを、切り欠きの幅いっぱいに空ける（スイッチの逃げと切り欠きの間に細い柱を残さない）
-        _box((lay.key_area[2] - EPS, notch[0][1], notch[0][0] + EPS, notch[-1][1]), -1.0, psw_ceiling(lay))])
+        _box((lay.key_area[2] - EPS, notch[0][1], x0 + EPS, notch[-1][1]), -1.0, psw_ceiling(lay)),
+        # 内側の面の上の縁を 45° に落とす（指の腹が上から斜めに入る。上面をベッドに刷るので、支え無しで刷れる向き）
+        _prism_y([(x0 - sc - 1.0, top + 1.0), (x0 + EPS, top - sc - EPS), (x0 + EPS, top + 1.0)], notch[0][1], notch[-1][1])])
     d_mark, depth = s.ON_MARK
     my = s.PSW_AT[1] + s.PSW_ON * (s.PSW_TRAVEL / 2 + s.PSW_KNOB[0] / 2)                          # 入に寄せたつまみの、奥の縁の高さ
-    out["on_mark"] = Pos(notch[0][0] - 1.2, my, top - depth) * Cylinder(d_mark / 2, depth + 1.0, align=CEN_MIN)
+    # 印は、斜めに落とした面のすぐ内の平らな上面に（斜面の上に置くと、上面から掘る印は空を切る）
+    out["on_mark"] = Pos(x0 - sc - 1.2, my, top - depth) * Cylinder(d_mark / 2, depth + 1.0, align=CEN_MIN)
     return out
 
 
@@ -575,21 +580,104 @@ def cover_spring(frame=None, cover=None, lay=LAY):
     return worst
 
 
+def _section(pts):
+    """多角形の断面（反時計回り [(x, z), ...]）の 面積・図心の高さ・図心を通る水平な軸まわりの断面二次モーメント。"""
+    a = cz = i = 0.0
+    for (x0, z0), (x1, z1) in zip(pts, pts[1:] + pts[:1]):
+        c = x0 * z1 - x1 * z0
+        a += c / 2
+        cz += (z0 + z1) * c / 6
+        i += (z0 * z0 + z0 * z1 + z1 * z1) * c / 12
+    cz /= a
+    return a, cz, i - a * cz * cz
+
+
 def notch_strength(lay=LAY, press=10.0):
     """つまみの切り欠きのまわりの強さの見積もり（応力 MPa）。**断面は式で置く・材料は TDS の値・刷る向きの弱さは半分に見る。**
-      roof   切り欠きの内側の縁（厚くした屋根の端）を、指で下へ press [N] 押す。切り欠きの幅を渡る両端支持の梁（断面 = 厚い屋根の端の 2.0 幅）の真ん中
-      stub   切り欠きの手前に残る壁（角まで）を、爪が滑って y の向きに press で押す。根元（屋根と手前の壁に付く面）のせん断
+      roof   切り欠きの内側の縁（厚くした屋根の端）を、指で下へ press [N] 押す。切り欠きの内側の幅を渡る両端支持の梁の真ん中。
+             断面 = 厚い屋根の端の 2.0 幅から、**上の縁を斜めに落とした三角を引いた台形**（内側の面で roof_edge・2.0 奥で roof_t）
+      stub   切り欠きの手前に残る壁（角まで）を、爪が滑って y の向きに press で押す。根元（屋根と手前の壁に付く面）のせん断。
+             外面へ向かって広がる分、残る壁は外面で短い（stub_len）= 面積は台形
       knob   つまみを動かす力の最大（PSW_FORCE_MAX）は基板のスイッチが受ける。枠には掛からない（記録だけ）"""
     s = lay.s
-    w = s.PSW_NOTCH[0]
+    w, fl, sc = s.PSW_NOTCH
     top = s.FRAME_UNDER + s.FRAME_T
-    h = top - psw_ceiling(lay)                                   # 厚い屋根の厚さ（3.2）
+    ceil = psw_ceiling(lay)
+    h = top - ceil                                               # 厚い屋根の厚さ（3.2）
     b = 2.0
-    roof = (press * w / 4) * (h / 2) / (b * h ** 3 / 12)
+    cut = min(sc, b)                                             # 幅 b の中で、斜めに落とした分
+    pts = [(0.0, ceil), (b, ceil), (b, top - cut), (b - cut, top)] + ([(0.0, top)] if cut < b else [])
+    area, cz, inertia = _section(pts)
+    roof = (press * w / 4) * max(top - cz, cz - ceil) / inertia
     f = lay.frame
-    stub_len = (s.PSW_AT[1] - w / 2) - f[1]                      # 切り欠きから角まで
-    stub = press / (stub_len * s.PLATE_MARGIN_X)                 # 屋根に付く面（長さ × 壁の厚さ）
-    return dict(roof=roof, stub=stub, stub_len=stub_len, roof_t=h, limit=76.0 / 2)
+    stub_in = (s.PSW_AT[1] - w / 2) - f[1]                       # 切り欠きから角まで（内側の面で）
+    stub_len = stub_in - fl                                      # 外面で
+    n = lay.psw_notch()
+    depth = lay.frame[2] - n[0][0]                               # 広がる区間の奥行き（内側の面から外面まで）
+    stub_area = stub_in * s.PLATE_MARGIN_X - fl * depth / 2
+    stub = press / stub_area
+    return dict(roof=roof, stub=stub, stub_len=stub_len, stub_area=stub_area, roof_t=h, roof_edge=h - cut, limit=76.0 / 2)
+
+
+def roof_section(frame, width, lay=LAY, dz=0.1):
+    """切り欠きの内側の縁の、厚い屋根の断面を**枠の立体から測る**（切り欠きの真ん中の y・内側の面から width 奥まで・厚い屋根の下面から上面まで）。
+    高さ dz ごとの帯の幅を立体の重なりから取り、(面積, 図心の高さ, 図心まわりの断面二次モーメント, 図心からいちばん遠い縁までの距離) を返す。"""
+    s = lay.s
+    x0, y = lay.psw_notch()[0][0], s.PSW_AT[1]
+    z0, top = psw_ceiling(lay), s.FRAME_UNDER + s.FRAME_T
+    n = int(round((top - z0) / dz))
+    rows = []
+    for i in range(n):
+        hit = frame & _box((x0 - width, y - 0.05, x0, y + 0.05), z0 + i * dz, z0 + (i + 1) * dz)
+        v = 0.0 if hit is None else sum(q.volume for q in hit.solids())
+        rows.append((z0 + (i + 0.5) * dz, v / (0.1 * dz)))
+    area = sum(b * dz for _, b in rows)
+    cz = sum(z * b * dz for z, b in rows) / area
+    inertia = sum(b * dz ** 3 / 12 + b * dz * (z - cz) ** 2 for z, b in rows)
+    zs = [z for z, b in rows if b > 1e-6]
+    return area, cz, inertia, max(max(zs) + dz / 2 - cz, cz - (min(zs) - dz / 2))
+
+
+def notch_roof_stress(frame, width, lay=LAY, press=10.0):
+    """notch_strength の roof と同じ梁（切り欠きの内側の幅を渡る両端支持・真ん中を press で押す）の応力を、**立体から測った断面**で出す。"""
+    _, _, inertia, far = roof_section(frame, width, lay)
+    return (press * lay.s.PSW_NOTCH[0] / 4) * far / inertia
+
+
+def finger_reach(things, lay=LAY, r=None, desk=True, ys=(-2.0, -1.0, 0.0, 1.0, 2.0)):
+    """指先を半径 r の硬い球と見て、切り欠きへどこまで入るかを**立体を当てて**測る（届きやすさを比べる物差し。r は仮定: spec.PSW_FINGER_R）。
+    things = 当てる相手（枠・基板・スイッチの本体）。球の中心を、切り欠きの幅の中（y）・机より上（z。desk=True のとき球は机 = 底のシートの
+    下面より下へ行けない）で動かし、何にも当たらないいちばん奥（x）を二分法で探す。返り値:
+      bite   つまみの上面の高さで、球がつまみの先より奥へ入る量（負 = 届かない）のいちばん大きい物
+      tip_in つまみの先が枠の外面から引っ込んでいる量・open 外面での切り欠きの幅・depth 内側の面から外面まで・cx, cy, cz そのときの球の中心"""
+    from build123d import Sphere
+
+    s = lay.s
+    r = s.PSW_FINGER_R if r is None else r
+    f2 = lay.frame[2]
+    k = lay.psw_knob(1)
+    zk = s.PSW_KNOB_Z[1]
+    z_min = (-s.PCB_T - s.BOTTOM_SHEET_T + r) if desk else zk
+    best = dict(bite=-99.0)
+    for cy in (s.PSW_AT[1] + t for t in ys):
+        for cz in (z_min + 0.75 * i for i in range(6)):
+            if abs(cz - zk) >= r:
+                continue
+            lo, hi = k[2] - r, f2 + r + 1.0                     # lo = 当たる・hi = 当たらない
+            for _ in range(11):
+                mid = (lo + hi) / 2
+                hit = things & (Pos(mid, cy, cz) * Sphere(r))
+                if hit is not None and sum(v.volume for v in hit.solids()) > 1e-4:
+                    lo = mid
+                else:
+                    hi = mid
+            bite = k[2] - (hi - math.sqrt(r * r - (cz - zk) ** 2))
+            if bite > best["bite"]:
+                best = dict(bite=round(bite, 2), cx=round(hi, 2), cy=cy, cz=round(cz, 2), r=r)
+    n = lay.psw_notch()
+    yo = [q[1] for q in n if abs(q[0] - f2) < 1e-6]
+    best.update(tip_in=round(f2 - k[2], 2), open=round(max(yo) - min(yo), 2), depth=round(f2 - n[0][0], 2))
+    return best
 
 
 def switch_solids(lay=LAY, stem=None, populated_only=True):
@@ -852,7 +940,7 @@ def printables():
     """刷る物（STL の名前 → 刷る向きの立体）。"""
     halves = frame_halves()
     out = {f"frame_{side}": frame_print(halves[side]) for side in SIDES}
-    out["cover_battery"] = cover_print()
+    # 電池の蓋（cover_solid）は**入れない**: 2026-10-04 の試し刷りで v1 も v2 の 3 つも留まらず、利用者が蓋を考え直している（open-gaps P21）
     out["coupon_screw_plate"] = screw_coupon_plate()
     out["coupon_corner_plate"] = corner_coupon_plate()
     out.update(caps_plates())
@@ -877,7 +965,6 @@ def assembly(exploded=0.0, stem=None):
         "parts": [(n, v) for n, v in board_parts(lay).items() if n not in ("U_MCU", "BT1")],
         "xiao": [("U_MCU", board_parts(lay)["U_MCU"])],
         "battery": [("BT1", board_parts(lay)["BT1"]), ("cell", cell_solid(lay, -1.5 * e))],
-        "cover": [("cover", Pos(0, -3.0 * e, 0) * cover_solid())],
         "screws": [(n, Pos(0, 0, -2 * e) * v) for n, v in screw_solids(lay).items()],
         "sheet": [("sheet", Pos(0, 0, -e) * sheet_solid(lay))],
     }
@@ -886,6 +973,7 @@ def assembly(exploded=0.0, stem=None):
 
 def export(out=OUT):
     out.mkdir(parents=True, exist_ok=True)
+    (out / "cover_battery.stl").unlink(missing_ok=True)          # 前は刷る物だった蓋。古い STL を「刷る物」と見間違えない（lessons D）
     made = {}
     for stem, part in printables().items():
         size = part.bounding_box().size
@@ -916,12 +1004,12 @@ def export_blend(style, out=OUT):
     asm = out / "assembly_main"
     files = [asm / "cckb-click.blend", asm / "cckb-click_assembled.png", asm / "cckb-click_exploded.png"]
     assert n == len(style) and all(f.exists() for f in files), r.stdout[-2000:] + r.stderr[-2000:]
-    # 右手前の角を、上からと手前から、蓋あり・蓋なしで（4 枚）
-    corner = [asm / f"corner_{v}_{c}.png" for v in ("top", "front") for c in ("cover", "nocover")]
-    for f in corner:
+    # 右手前の角を、上からと手前から（2 枚。蓋は組んだ状態に入れていない）
+    corner = [asm / f"corner_{v}.png" for v in ("top", "front")]
+    for f in corner + [asm / f"corner_{v}_{c}.png" for v in ("top", "front") for c in ("cover", "nocover")]:   # 後ろは前の名前（蓋あり・なし）
         f.unlink(missing_ok=True)
     r = subprocess.run([paths.BLENDER, "-b", "-P", str(HERE / "tools" / "blend_corner.py")], capture_output=True, text=True, timeout=1800)
-    assert "OK 4" in r.stdout and all(f.exists() for f in corner), r.stdout[-2000:] + r.stderr[-2000:]
+    assert "OK 2" in r.stdout and all(f.exists() for f in corner), r.stdout[-2000:] + r.stderr[-2000:]
     return files + corner
 
 
