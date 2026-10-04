@@ -312,6 +312,12 @@ def test_side_feet_like_the_production_cover_would_land_on_the_cell():
     assert vol(cv, Pos(0, -0.19, 0) * cell) < TOL
     touch = cv & (Pos(0, -0.3, 0) * cell)
     assert touch.volume > 0.5 and abs(touch.center().X - cx) < 1.5
+    # 電池と同じ中心の丸い面（隙 0.2）が残るのは、真ん中の左 1.3 ほどまで。それより左は、落とすときの電池の道で削れている（隙が 0.2 より広い）
+    def radial_gap(dx_):                                                               # 電池の縁から、蓋の塊までの隙（半径の向きに 0.05 刻みで探す）
+        ang = math.asin(dx_ / r)
+        return next(g / 100 for g in range(5, 200, 5) if cv.is_inside((cx + (r + g / 100) * math.sin(ang), cy - (r + g / 100) * math.cos(ang), 1.5)))
+    assert radial_gap(0.0) == pytest.approx(0.25, abs=0.051) and radial_gap(-1.0) == pytest.approx(0.25, abs=0.051) and radial_gap(3.0) == pytest.approx(0.25, abs=0.051)
+    assert radial_gap(-2.5) >= 0.4 and radial_gap(-4.0) >= 0.7
 
 
 def test_the_leaf_numbers():

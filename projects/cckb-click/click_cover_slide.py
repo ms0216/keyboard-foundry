@@ -516,6 +516,10 @@ def export(out=OUT):
 def main():
     for name, size in export().items():
         print(f"{name}.stl: {size[0]:.1f} × {size[1]:.1f} × {size[2]:.1f}")
+    import click_cover_slide_figs
+
+    for q in click_cover_slide_figs.render_all(OUT):
+        print("絵", q)
     n = numbers()
     for k, v in n.items():
         print(k, v)
