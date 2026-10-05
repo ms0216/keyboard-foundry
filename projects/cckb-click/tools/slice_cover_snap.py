@@ -1,4 +1,4 @@
-"""蓋の別案 B の試し刷り（coupon_cover_snap_plate = B の枠の角・当て板・電池の代わり・蓋 3 つ）を精度優先の設定で**実際にスライスし**、
+"""蓋の別案 B2 の試し刷り（coupon_cover_snap_plate = B2 の枠の角・当て板・電池の代わり・蓋 3 つ）を精度優先の設定で**実際にスライスし**、
 G-code を設計と突き合わせる。
 
     .venv/bin/python3 projects/cckb-click/click_cover_snap.py           # 先に STL を出す
@@ -82,8 +82,8 @@ def check(gcode, rc, shift=(0.0, 0.0)):
     for n, v in sorted(B.VARIANTS.items()):
         name = f"cover{n}"
         for side, f in (("左", lambda x: x), ("右", B.mx)):
-            for label, y in (("先の近く", B.YF + 3.2), ("中ほど", (B.YF + B.YR) / 2), ("付け根の近く", B.YR - 1.5)):
-                xo = B.arm_outer(y, v["pre"], 0.0)                    # 刷る形
+            for label, y in (("先の近く", B.YF + 5.0), ("中ほど", (B.YF + B.YR) / 2), ("付け根の近く", B.YR - 1.5)):
+                xo = B.XN - v["pre"] * B.shape(B.YR - y)             # 刷る形（腕が予圧ぶん外へ開いている）
                 a = to_plate(name, f(xo - 0.08), y, 1.4)
                 b = to_plate(name, f(xo + v["t"] + 0.08), y, 1.4)
                 k = crossings(layers[a[2]], a[:2], b[:2])
@@ -96,8 +96,9 @@ def check(gcode, rc, shift=(0.0, 0.0)):
                     facts[f"蓋 {n}・{side}・{label}: 腕と胴の隙の真ん中から線まで（層 {zl}）"] = d
                     if d < GAP_CLEAR:
                         problems.append(f"蓋 {n}・{side}の腕と胴の隙（{label}）が線で埋まっている（層 {zl}・{d}・{GAP_CLEAR} 以上）")
-            xo = B.arm_outer(B.YS + 0.25, v["pre"], 0.0)
-            d, _, _, zl = at(name, f(xo - v["hook"] / 2), B.YS + 0.3, 1.4)
+            yh = B.YS + B.HOOK_CH + 0.2
+            xo = B.XN - v["pre"] * B.shape(B.YR - yh)
+            d, _, _, zl = at(name, f(xo - B.HOOK / 2), yh, 1.4)
             facts[f"蓋 {n}・{side}のかぎの真ん中から線まで（層 {zl}）"] = d
             if d > ON_LINE:
                 problems.append(f"蓋 {n}・{side}のかぎが線になっていない（層 {zl}・{d}）")
@@ -126,8 +127,8 @@ def check(gcode, rc, shift=(0.0, 0.0)):
             facts[f"枠・{side}の{label}の真ん中から線まで（層 {zl}）"] = d
             if d < GAP_CLEAR:
                 problems.append(f"枠・{side}の{label}が線で埋まっている（層 {zl}・{d}）")
-        line_pts = {"口の縁": (f(B.XPK + 0.35), B.Y0 + 1.1), "案内の壁": (f((B.XPK + B.XRO - B.GUIDE_CL) / 2), B.YR),
-                    "奥の壁": (f((B.XRO + B.XSI) / 2), B.YJ + B.BACK_CL + 0.4)}
+        line_pts = {"口の縁": (f(B.XPK + 0.35), B.Y0 + 1.1), "案内の壁": (f((B.XPK + B.XN - B.GUIDE_CL) / 2), B.YR),
+                    "奥の壁": (f((B.XN + B.XSI) / 2), B.YJ + B.BACK_CL + 0.4)}
         for label, (x, y) in line_pts.items():
             d, _, _, zl = at(fr, x, y, 1.5)
             facts[f"枠・{side}の{label}から線まで（層 {zl}）"] = d
@@ -175,7 +176,7 @@ def draw(gcode, rc, out):
         ax.set_ylim(min(a[1], b[1]) + oy, max(a[1], b[1]) + oy)
         ax.set_aspect("equal")
         ax.set_title(f"{title}（層の上面 {zl}）。赤 = 宙を渡る線・橙 = 外周・灰 = 中", fontsize=11)
-    fig.suptitle("蓋の別案 B の G-code（Bambu Studio）。蓋は底が下・下が手前。枠は上面が下・上が手前", fontsize=12)
+    fig.suptitle("蓋の別案 B2 の G-code（Bambu Studio）。蓋は底が下・下が手前。枠は上面が下・上が手前", fontsize=12)
     fig.tight_layout()
     fig.savefig(out, dpi=80)
     plt.close(fig)
