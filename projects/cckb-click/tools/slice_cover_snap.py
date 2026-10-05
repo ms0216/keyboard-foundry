@@ -1,4 +1,4 @@
-"""蓋の別案 B2 の試し刷り（coupon_cover_snap_plate = B2 の枠の角・当て板・電池の代わり・蓋 3 つ）を精度優先の設定で**実際にスライスし**、
+"""蓋の別案 B3 の試し刷り（coupon_cover_snap_plate = B3 の枠の角・当て板・電池の代わり・蓋 3 つ）を精度優先の設定で**実際にスライスし**、
 G-code を設計と突き合わせる。
 
     .venv/bin/python3 projects/cckb-click/click_cover_snap.py           # 先に STL を出す
@@ -127,8 +127,7 @@ def check(gcode, rc, shift=(0.0, 0.0)):
             facts[f"枠・{side}の{label}の真ん中から線まで（層 {zl}）"] = d
             if d < GAP_CLEAR:
                 problems.append(f"枠・{side}の{label}が線で埋まっている（層 {zl}・{d}）")
-        line_pts = {"口の縁": (f(B.XPK + 0.35), B.Y0 + 1.1), "案内の壁": (f((B.XPK + B.XN - B.GUIDE_CL) / 2), B.YR),
-                    "奥の壁": (f((B.XN + B.XSI) / 2), B.YJ + B.BACK_CL + 0.4)}
+        line_pts = {"口の縁": (f(B.XPK + 0.35), B.YL - 0.25), "案内の壁": (f((B.XPK + B.XN - B.GUIDE_CL) / 2), B.YR)}
         for label, (x, y) in line_pts.items():
             d, _, _, zl = at(fr, x, y, 1.5)
             facts[f"枠・{side}の{label}から線まで（層 {zl}）"] = d
@@ -176,7 +175,7 @@ def draw(gcode, rc, out):
         ax.set_ylim(min(a[1], b[1]) + oy, max(a[1], b[1]) + oy)
         ax.set_aspect("equal")
         ax.set_title(f"{title}（層の上面 {zl}）。赤 = 宙を渡る線・橙 = 外周・灰 = 中", fontsize=11)
-    fig.suptitle("蓋の別案 B2 の G-code（Bambu Studio）。蓋は底が下・下が手前。枠は上面が下・上が手前", fontsize=12)
+    fig.suptitle("蓋の別案 B3 の G-code（Bambu Studio）。蓋は底が下・下が手前。枠は上面が下・上が手前", fontsize=12)
     fig.tight_layout()
     fig.savefig(out, dpi=80)
     plt.close(fig)
