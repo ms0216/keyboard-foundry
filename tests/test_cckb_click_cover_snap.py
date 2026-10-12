@@ -1,7 +1,7 @@
-"""cckb-click の蓋の別案 B3（左右のばねの腕で掛ける蓋）の試し刷り（projects/cckb-click/click_cover_snap.py・docs/coupon-cover-snap.md）。
+"""cckb-click の蓋の別案 B4（左右のばねの腕で掛ける蓋）の試し刷り（projects/cckb-click/click_cover_snap.py・docs/coupon-cover-snap.md）。
 
 **生成した立体そのもの**を重ねる・動かす・切って見る。各検査に「故意に壊すと落ちる」を入れる。
-外の事実: 本番の枠の立体（B3 の枠は、その角から作る）・クリップの図面から作った立体（click_case.clip_solid）・**配線済みの基板のファイル**（クリップと H15 を
+外の事実: 本番の枠の立体（B4 の枠は、その角から作る）・クリップの図面から作った立体（click_case.clip_solid）・**配線済みの基板のファイル**（クリップと H15 を
 動かす先に何があるか）・TDS の材料の値（spec.PLA_*）・スライスした G-code（tools/slice_cover_snap.py が見る）。
 本番の枠を作るので、全部 slow。**本番の蓋・枠・基板を変えていないこと**は、既存の検査（test_cckb_click_case・_board）がそのまま通ることで見る。
 """
@@ -23,13 +23,13 @@ LAY, S = C.LAY, C.S
 vol = B.vol
 TOL = 2e-3
 pytestmark = pytest.mark.slow
-GAP_VIAS = [(108.375, -42.625), (109.375, -48.625)]                 # 手前の面の左右の隙間の床に見える、基板のビア（配線済みの基板から数えた物）
+GAP_VIAS = None                 # 手前の面の左右の隙間の床に見える、基板のビア（配線済みの基板から数えた物）
 BOARD = ROOT / "projects" / "cckb-click" / "pcb" / "cckb-click_main.kicad_pcb"
 
 
 def released(n=B.MAIN, left=True, right=True):
-    """腕を「外す」所まで内へ撓ませた蓋（座った形から）。"""
-    rel = B.arm_numbers(n)["release"] - B.VARIANTS[n]["pre"]
+    """腕を、かぎが縁から外れる所まで内へ撓ませた蓋（座った形から。斜めの面には、まだ乗っていない）。"""
+    rel = B.arm_numbers(n)["release"] - B.VARIANTS[n]["pre"] + 0.03
     return B.cover(n, False, rel if left else None, rel if right else None)
 
 
@@ -82,9 +82,16 @@ def test_the_frame_is_the_production_corner_outside_the_mouth_and_h15():
             assert getattr(getattr(mb, q), ax) == pytest.approx(getattr(getattr(pb, q), ax), abs=1e-4)
     assert len(mine.solids()) == 1
     for f in ((lambda x: x), B.mx):
-        for x in (B.XLIP + 1.0, B.A0 - 1.0):                                    # 窓の上の壁（まぐさ）: 外面から 3.0 まで樹脂
-            assert all(mine.is_inside((f(x), B.Y0 + d, B.ZW + 1.0)) for d in (0.05, 1.5, 2.9))
+        x = B.cam_line(B.Y0) + 0.4                                              # 窓の上の壁（まぐさ）の残り: 外面から 3.0 まで樹脂
+        assert all(mine.is_inside((f(x), B.Y0 + d, B.ZW + 1.0)) for d in (0.05, 1.5, 2.9)) and B.A0 - x > 1.5
+        for x in (B.XLIP + 1.0, B.A0 - 1.0):
             assert not mine.is_inside((f(x), B.Y0 + 1.5, B.ZW - 0.5))           # 窓
+        assert not mine.is_inside((f(B.XLIP + 1.0), B.Y0 + 1.0, B.ZW + 1.0))    # つまみの通る所（壁の上を切ってある）
+        assert mine.is_inside((f(B.XLIP + 1.0), B.YCUT + 0.3, B.ZW + 1.0))      # その奥は、屋根が残る
+        for k in (0.2, 0.5, 0.8):                                               # まぐさの端の斜めの面（つまみの角が乗る）
+            y = B.YT - k * B.CAM_F
+            assert mine.is_inside((f(B.cam_line(y) + 0.1), y, B.ZW + 1.0)) and not mine.is_inside((f(B.cam_line(y) - 0.1), y, B.ZW + 1.0))
+        assert not mine.is_inside((f(B.XLIP - 0.5), B.Y0 + 0.2, B.ZW + 1.0))    # 指の入るくぼみは、上まで開いている
         assert mine.is_inside((f(B.XPK + 0.4), B.Y0 + B.LIP_T - 0.3, 1.5))      # 口の縁
         assert not mine.is_inside((f(B.XPK + 0.4), B.YL + 0.6, 1.5))            # 縁の裏の空洞
         assert not mine.is_inside((f(B.XLIP - 0.5), B.Y0 + 0.2, 1.5))           # 縁の端の 45° の面（爪の入る所）
@@ -101,7 +108,8 @@ def test_the_frame_is_the_production_corner_outside_the_mouth_and_h15():
     n = B.numbers()
     assert n["h14_wall"] == pytest.approx(0.8, abs=1e-6) and n["h15_wall"] == pytest.approx(0.8, abs=1e-6)
     notch = LAY.psw_notch()                                                     # つまみの切り欠きは、変えた範囲の外
-    assert min(p[0] for p in notch) > B.H15_MOD[2] and B.MOD[0] > 104.0 + S.SCREW_PILOT_D / 2
+    assert min(p[0] for p in notch) > B.H15_MOD[2]
+    assert all(mine.is_inside((104.0 + sx * 0.8, B.Y0 + d, 1.5)) for sx in (-1, 1) for d in (0.3, 1.2))   # H14 の下穴の手前の壁（くぼみは、ここでは浅い）
     assert vol(Pos(0.5, 0, 0) * a, b) < a.volume - 3.0                          # 壊す: 0.5 ずれた枠なら同じにならない
 
 
@@ -183,6 +191,8 @@ def test_the_seated_cover_cannot_move(n):
     assert 0.1 - 1e-9 <= B.travel(slack, B.obstacles(with_cell=True), (0, 1, 0), limit=1.0) <= 0.2 + 1e-9
     for sx in (-1, 1):                                                       # 左右は、蓋ごとの案内の隙（0.10／0.15／0.25。口の真ん中の溝は 0.15）
         assert abs(B.travel(slack, ob, (sx, 0, 0), limit=1.0) - min(B.VARIANTS[n]["guide"], B.CL)) <= 0.05 + 1e-9
+    assert B.cover(n, True).bounding_box().max.Z == pytest.approx(B.TOP, abs=1e-4)          # つまみは、枠の上面より低い（蓋のいちばん高い所は、真ん中の塊）
+    assert not cv.is_inside((B.XN + 0.5, B.YF + 1.0, B.TAB_TOP + 0.05)) and cv.is_inside((B.XN + 0.5, B.YF + 1.0, B.TAB_TOP - 0.1))
     for rx in (3.0, -3.0):
         assert B.hit(B.posed(cv, rx=rx, pivot=(B.CX, B.YF, 0.0)), ob) > TOL
 
@@ -197,7 +207,7 @@ def test_breaking_the_catch_lets_the_cover_out():
 def test_the_cell_cannot_get_out_and_cannot_touch_copper():
     """蓋を掛けたら、電池の代わりは手前へ 0.3 より進めない（斜め手前も）。蓋を外せば、手前へ 15 以上、何にも当たらない。
     裸の銅: −のランド（φ7・クリップの中心）は電池の真下で、電池の縁から 3.9 以上 内。手前の面の左右の隙間（腕と胴の間）は、付け根の塊で行き止まり。
-    その床に見える基板のビアは 2 つ（どちらも GND の縫い付け）。＋のランドは、蓋の柱の内側（隙間からは、柱の向こう）。"""
+    その床に見える基板のビアは 3 つ（どれも GND の縫い付け）。＋のランドは、蓋の柱の内側（隙間からは、柱の向こう）。"""
     fr, base = B.obstacles()[0], B.base()
     cell = B.cell()
     blk = (fr, base, B.cover(B.MAIN, False))
@@ -220,17 +230,18 @@ def test_the_cell_cannot_get_out_and_cannot_touch_copper():
     assert B.PAD[0] - B.XSI == pytest.approx(S.PART_CLEAR)                   # ＋のランドは、柱の内の面の 0.4 内
     in_gap = sorted((round(v[0], 3), round(v[1], 3)) for v in board_vias() for f in ((lambda x: x), B.mx)
                     if B.YF < v[1] < B.YR and B.XN + t - v[2] / 2 < f(v[0]) < B.body_edge(v[1]) + v[2] / 2)
-    assert in_gap == GAP_VIAS, in_gap
+    assert in_gap == [(108.375, -42.625), (109.375, -48.625), (133.375, -48.625)], in_gap
 
 
-def test_engagement_is_one_mm_and_survives_tolerance():
-    """かぎと縁の掛かり（立体から測る）: 3 つとも 1.0 以上。誤差を全部悪い側に取った見込み（計算）が 0.6 以上。
-    壊す: かぎの出 0.5 の蓋は 0.4 に届かない。"""
-    for n in B.VARIANTS:
+def test_engagement_per_cover():
+    """かぎと縁の掛かり（立体から測る）: 蓋ごとの設計値（1.1／1.0／0.9）どおり。誤差を全部悪い側に取った見込みは、蓋 1 で 0.6 以上
+    （蓋 2・3 は、わざと小さくしてある: 0.55・0.45）。壊す: かぎの出 0.5 の蓋は 0.4 に届かない。"""
+    for n, v in B.VARIANTS.items():
         e = B.engagement(n)
-        assert min(e) >= 1.0 and max(e) <= B.ENGAGE + 1e-6, (n, e)
+        assert v["engage"] - 0.05 <= min(e) and max(e) <= v["engage"] + 1e-6, (n, e)
         a = B.arm_numbers(n)
-        assert a["engage"] >= 1.0 and a["engage_worst"] >= 0.6 - 1e-9 and a["engage_flat"] >= 0.6
+        assert a["engage_worst"] == pytest.approx(v["engage"] - 3 * B.PRINT_ERR) and a["engage_flat"] >= 0.6 - 1e-9
+    assert B.arm_numbers(1)["engage_worst"] >= 0.6 - 1e-9 and B.VARIANTS[1]["engage"] == B.ENGAGE_MAX
     assert 0.1 < max(B.engagement(B.MAIN, hook=0.5)) < 0.4
 
 
@@ -238,35 +249,46 @@ def test_engagement_is_one_mm_and_survives_tolerance():
 # 外す・入れる
 # ---------------------------------------------------------------------------
 
-def test_release_needs_both_arms_and_one_arm_springs_back_only_with_the_tight_guide():
-    """両方の腕をつまめば、蓋は手前へ 15 以上まっすぐ抜ける。**片方だけ**（腕を、外す所まで実際に撓ませた形）では、3 つの蓋とも、まっすぐは 0.1 まで。
-    平面の中で、ずらす・回すを探したとき、つまんだ側のかぎの所が手前へ出る量は、**奥の案内の隙で決まる**:
-      蓋 1（隙 0.10）: かぎの角の斜め HOOK_CH より 0.05 以上 小さい = 手を離すと、ばねが蓋を引き戻す。その姿勢で手を離した形（座った腕）は縁に重なる
-      蓋 2（隙 0.15）: 斜めと同じくらい（0.25〜0.5）= 戻るとは言えない
-      蓋 3（隙 0.25）: 斜めより大きい = **片方ずつ 2 回に分ければ開く**（文書に、蓋ごとに書いてある）
-    どの蓋でも、片方が出た姿勢で、電池の代わりは 1.0 より手前へ進めない。見積もりの式（隙 ÷ 奥行き × かぎの間）と、探した値は 0.15 以内で合う。
-    壊す: 両方をつまんだ蓋なら、同じ探し方が 100 歩で 1.2 以上出す（片方だけの上限 0.85 より大きい）。"""
+def test_pinching_alone_pushes_the_cover_out_and_it_stays_out():
+    """**つまむだけで、蓋が出てくる**（引く力は 0。立体を動かして解く = click_cover_snap.eject）。3 つの蓋とも:
+      両方の腕をつまみ切った形は、座った位置では枠（まぐさの端の斜めの面）に重なる → 重ならない所まで、蓋は手前へ 0.6 以上 押し出される
+      そこで指を離すと、腕は外へ戻りながら蓋をさらに押し出す（腕の撓みが減り続ける）→ 止まるのは、手前へ 1.5 以上 出た所。その間の力は 0.3 N 以上（摩擦を見ない）
+      押し出された所で指を離した形の蓋は、奥へ 0.15 より戻れない（かぎが縁の手前に当たる = 自分では掛かり直さない）
+      出た蓋は、そのまま手前へ 12 以上、何にも当たらずに取れる
+    壊す: まぐさの端の斜めの面が無い枠では、つまんでも蓋は動かない（押し出す量 0）。"""
     obc = B.obstacles(with_cell=True)
-    assert B.travel(released(), obc, (0, -1, 0), step=0.5, limit=16.0) >= 15.0
-    ob = B.obstacles()
-    got = {}
     for n in sorted(B.VARIANTS):
-        for left in (True, False):
-            assert B.travel(released(n, left=left, right=not left), ob, (0, -1, 0)) <= 0.1 + 1e-9
-        got[n] = B.one_arm_out(n)[0.0]
-        assert abs(got[n][0] - B.arm_numbers(n)["one_arm_calc"]) <= 0.15, (n, got[n][0])
-        blk = (ob[0], ob[1], B.posed(released(n, left=True, right=False), **got[n][1]))
-        assert B.travel(B.cell(), blk, (0, -1, 0), pivot=(0.0, 0.0, 0.0)) <= 1.0
-    assert 0.05 < got[1][0] <= B.HOOK_CH - 0.05, got[1][0]
-    assert B.hit(B.posed(B.cover(1, False), **got[1][1]), ob) > TOL
-    assert 0.25 < got[2][0] <= 0.5, got[2][0]
-    assert B.HOOK_CH < got[3][0] <= 0.85, got[3][0]
+        assert B.hit(B.pinched(n), B.obstacles()) > TOL
+        e = B.eject(n)
+        assert 0.6 <= e["cam"] <= B.CAM_F + 0.1, (n, e["cam"])
+        assert e["rest"] >= 1.5 and e["rest"] - e["cam"] >= 0.8, (n, e["rest"])
+        assert e["force"] >= 0.3 and e["back"] <= 0.15, (n, e["force"], e["back"])
+        ds = [d for _, d in e["path"]]
+        assert all(b <= a for a, b in zip(ds, ds[1:])) and ds[0] < B.D_MAX
+        out = B.posed(B.cover(n, False, ds[-1], ds[-1]), dy=-e["path"][-1][0])
+        assert B.travel(out, obc, (0, -1, 0), step=0.5, limit=13.0, pivot=(B.CX, B.YF, B.HS / 2)) >= 12.0
+    assert B.eject(B.MAIN, cam=False)["cam"] == 0.0
+
+
+def test_one_arm_alone_does_not_eject():
+    """**片方だけ**つまんでも、蓋は出てこない: つまんだ側は、手前へ 0.85 までしか出ず（奥の案内の隙 0.25 で決まる。見積もりの式と 0.15 以内）、
+    つまんでいない側は 0.15 より出ない（かぎが掛かったまま）。その姿勢で、電池の代わりは 1.0 より手前へ進めない。
+    **残り**: つまんだ側は、出た所で止まる（掛かり直さない）。もう片方をつまめば開く = 片方ずつ 2 回でも開く。
+    壊す: 両方の腕を外した蓋なら、同じ探し方が 100 歩で 1.2 以上出す。"""
+    ob = B.obstacles()
+    for left in (True, False):
+        assert B.travel(released(B.MAIN, left=left, right=not left), ob, (0, -1, 0)) <= 0.1 + 1e-9
+    out, pose = B.one_arm_out(B.MAIN)
+    assert 0.2 < out <= 0.85 and abs(out - B.arm_numbers(B.MAIN)["one_arm_calc"]) <= 0.15, out
+    assert B.one_arm_out(B.MAIN, side="right")[0] <= 0.15
+    blk = (ob[0], ob[1], B.posed(released(B.MAIN, left=True, right=False), **pose))
+    assert B.travel(B.cell(), blk, (0, -1, 0), pivot=(0.0, 0.0, 0.0)) <= 1.0
     loose, _ = B.wiggle(released(), ob, lambda p: B.corner_out(p, B.XLIP + 1.0), iters=100)
     assert loose >= 1.2, loose
 
 
 def test_insert_path_self_aligns_and_needs_the_arms_to_give():
-    """入れる道: 手前 14 から座った位置まで、腕を「外す」所まで内へ動かせば、どこでも枠・当て板・クリップ・電池に当たらない。
+    """入れる道: 手前 14 から座った位置まで、腕を、かぎが縁から外れる所まで内へ動かせば（つまみの角は、まだ斜めの面に乗らない）、どこでも枠・当て板・クリップ・電池に当たらない。
     かぎが縁の中にいる間（手前へ 0.5〜1.5）は、腕が座った形のままでは通れない = 腕が撓んで入る（カチッ）。最後は、座った形で収まる。
     **自分で真ん中に寄る**: 横へ 0.3 ずれていても、真ん中の塊の奥の角が口に入り始める所で当たらない（角を LEAD 落としてある）。
     壊す: その先（斜めを過ぎた所）では、0.3 ずれたままだと当たる。"""
@@ -288,30 +310,28 @@ def test_insert_path_self_aligns_and_needs_the_arms_to_give():
 # 数
 # ---------------------------------------------------------------------------
 
-def test_arm_strain_force_and_seat():
-    """腕: 外すとき・入れるときの付け根のひずみが、この機種の上限（spec.PLA_STRAIN_USE × PLA_BEND / PLA_E = 1.52 %）以内。胴に当たって止まるときも、
-    曲げ強さのひずみ（2.76 %）の 0.7 倍以内。線 2 本（0.84）以上の厚さ。つまむ力 0.8〜3 N。
-    **座りの力**（腕 2 本が 45° の面を押して、蓋をかぎの当たる向きへ押す）: 名目で 0.15 N 以上（摩擦を引いて）= 蓋の重さの 15 倍以上。
-    予圧が誤差ぶん小さく刷れても、0 にならない。かぎの角の斜めは、縁とかぎの位置の誤差を引いても残る（押し切る手前から、ばねが引き込む = カチッと入る）。落下で、かぎが自分の重さで外れるまで 2 倍以上。
+def test_arm_strain_and_the_forces_of_the_hand():
+    """腕: **つまみ切ったとき**（斜めの面の端まで）・入れるときの付け根のひずみが、この機種の上限（spec.PLA_STRAIN_USE × PLA_BEND / PLA_E = 1.52 %）以内。
+    胴に当たって止まるときも、曲げ強さのひずみ（2.76 %）の 0.7 倍以内。線 2 本（0.84）以上の厚さ。
+    手の力: つまむ力は片側 2 N 以下・押し込む力は 5 N 以下（腕 2 本・摩擦込みの大きい側）。
+    かぎが縁から外れてから、つまみの角が斜めの面に乗る（余裕 0.05／0.15／0.25 = 蓋 3 つで振った寸法。0 より大きい）。
+    つまむ所: 入り口の幅 3.0・つまむ面は 奥行き 0.9 以上 × 高さ 4.8 以上・つまみの上面は 幅 2.0 以上。
     壊す: 厚さ 1.2 の腕なら、ひずみが上限を超える。"""
-    mass = B.numbers()["mass"]
     for n, v in B.VARIANTS.items():
         a = B.arm_numbers(n)
         assert a["strain_use"] == pytest.approx(S.PLA_STRAIN_USE * S.PLA_BEND / S.PLA_E * 100)
-        assert a["strain_insert"] < a["strain_release"] <= a["strain_use"], (n, a["strain_release"])
-        assert a["strain_stop"] <= 0.7 * a["strain_limit"]
-        assert v["t"] >= 0.84 and 0.8 <= a["pinch"] <= 3.0
-        assert a["seat_y"][0] >= 0.15 and a["seat_y"][0] / (mass * 9.80665e-3) >= 15.0
-        assert a["seat_y_ends"][0][0] > 0.03 and v["pre"] - B.PRINT_ERR > 0.0
-        assert a["click_margin"] >= 0.05 and B.CELL_GAP > B.BACK_CL
-        assert a["drop_margin"] >= 2.0
-        assert a["stop"] >= a["release"] + 0.05 and a["length"] == pytest.approx(B.YR - B.YF)
-        assert 1.5 * 1.2 * a["release"] / a["length"] ** 2 * 100 > a["strain_use"]
+        assert a["strain_insert"] < a["strain_release"] < a["strain_pinch"] <= a["strain_use"], (n, a["strain_pinch"])
+        assert a["strain_stop"] <= 0.7 * a["strain_limit"] and a["stop"] >= a["pinch_max"] + 0.05
+        assert v["t"] >= 0.84 and 0.8 <= a["pinch"] <= 2.0 and a["insert_force"] <= 5.0
+        assert a["cam_margin"] == pytest.approx(B.CAM_M + (B.ENGAGE_MAX - v["engage"]) * B.shape(B.A_K) / B.shape(B.A_HOOK)) and a["cam_margin"] > 0.04
+        assert a["drop_margin"] >= 1.9 and a["length"] == pytest.approx(B.YR - B.YF)
+        assert 1.5 * 1.2 * a["pinch_max"] / a["length"] ** 2 * 100 > a["strain_use"]
     need = math.sqrt(1.5 * 0.85 * (1.0 + 0.15) / (S.PLA_STRAIN_USE * S.PLA_BEND / S.PLA_E))      # 腕の長さの根拠（B と同じ）
     room = LAY.clip_pads()[0][1] - S.PART_CLEAR - B.YF
     assert need > 9.5 and room < 7.0 and B.ARM_L > need
-    n = B.numbers()
-    assert n["grip"] >= 0.35 and n["grip_open"] >= 0.9 and min(n["nail_step"]) >= 0.3 and n["seat_face"] >= 0.3   # 爪の入る奥行き・入り口の幅・段・45° の面の長さ
+    tg = B.numbers()["target"]
+    assert tg["scoop"][0] == pytest.approx(3.0) and tg["face"][0] >= 0.9 and tg["face"][1] >= 4.8 and tg["top"][0] >= 2.0 and tg["top"][1] >= 1.9
+    assert B.numbers()["seat_face"] >= 0.3
 
 
 def test_every_part_of_the_load_path_is_under_half_strength_at_20_n():
@@ -345,19 +365,19 @@ def test_every_part_of_the_load_path_is_under_half_strength_at_20_n():
 
 
 def test_the_wall_left_over_the_side_windows_is_stiff_enough():
-    """腕の通る窓の上に残る手前の壁（高さ 2.0 × 奥行き 3.0・張り出し 5.6）: 先を上から 10 N で押しても、下がりは蓋との隙（0.2）より小さく、
-    付け根の応力は曲げ強さの半分以内（奥の屋根とのつながりを数えない、弱い側の計算）。壊す: 高さ 0.7（クリップの上の屋根と同じ）なら、蓋に載る。"""
+    """腕の通る窓の上に残る手前の壁（高さ 2.0 × 奥行き 3.0・張り出し 2.2。B4 で、つまみの通る所を切った残り）: 先を上から 10 N で押しても、下がりは蓋との隙（0.2）より小さく、
+    付け根の応力は曲げ強さの半分以内（奥の屋根とのつながりを数えない、弱い側の計算）。壊す: 高さ 0.7 で、B3 までの張り出し 5.6 なら、蓋に載る。"""
     q = B.lintel()
-    assert q["section"] == pytest.approx((3.0, 2.0)) and q["length"] == pytest.approx(B.A0 - B.XLIP)
+    assert q["section"] == pytest.approx((3.0, 2.0)) and q["length"] == pytest.approx(B.A0 - B.cam_line(B.Y0)) and q["length"] < 3.0
     assert q["drop"] < q["gap"] and q["stress"] <= 0.5 * S.PLA_BEND
-    assert 10.0 * q["length"] ** 3 / (3 * S.PLA_E * 3.0 * 0.7 ** 3 / 12) > q["gap"]
+    assert 10.0 * 5.6 ** 3 / (3 * S.PLA_E * 3.0 * 0.7 ** 3 / 12) > q["gap"]
 
 
 def test_fillets_nail_step_and_seat_face_are_really_in_the_solid():
     """見直しで「形に入っていない」と分かった物を、立体で測る（寸法を 0 にすると落ちる）:
       腕の付け根の丸み: 腕の内の面と、付け根の塊の間の角が、円弧で埋まっている（角のすぐ内は樹脂・円弧の内は隙間）。隣の柱は削れていない
       かぎの付け根の埋め: 掛かる面と腕の間の角が樹脂
-      つまみの段: 手前の端が外へ出ていて、その奥は引っ込んでいる（爪が引っ掛かる、奥を向いた面）。枠の外面より手前へは出ない
+      つまむ面: 腕の先の外の面が、基板の上から枠の上面のすぐ下まで、まっすぐな面。その外は、枠のくぼみ（空）。枠の外面より手前へは出ない
       45° の面: 腕の先の斜めの面が、縁の斜めの面に沿って TAB_FLARE の長さで向かい合う（線の両側が、蓋と枠）
     壊す: 丸み 0 の蓋では、角のすぐ内が隙間。"""
     cv, fr = B.cover(B.MAIN, False), B.obstacles()[0]
@@ -367,9 +387,10 @@ def test_fillets_nail_step_and_seat_face_are_really_in_the_solid():
     assert not B.cover(B.MAIN, False, root_r=0.0).is_inside(corner)
     assert cv.is_inside((B.body_edge(B.YR - 0.3) + 0.05, B.YR - 0.3, z))                # 柱は削れていない（B2 は、ここが円で欠けていた）
     assert cv.is_inside((B.XN - 0.05, B.YS - 0.05, z)) and not cv.is_inside((B.XN - 0.15, B.YS - 0.15, z))
-    xg, (so, st) = B.XLIP - B.TAB_FLARE, B.NAIL_STEP
-    assert cv.is_inside((xg - so / 2, B.YF + st / 2, z)) and not cv.is_inside((xg - so / 2, B.YF + st + 0.1, z))
-    assert not fr.is_inside((xg - so / 2, B.YF + st + 0.1, z)) and not fr.is_inside((xg - so - 0.3, B.YF + 0.1, z))   # 段の奥と、段の外は空（爪の入る所）
+    xg = B.XLIP - B.TAB_FLARE                                                            # つまむ面（まっすぐ）と、その外の、指の入るくぼみ
+    for zz in (z, 4.0):
+        assert cv.is_inside((xg + 0.1, B.YF + 0.4, zz)) and not cv.is_inside((xg - 0.1, B.YF + 0.4, zz)) and not fr.is_inside((xg - 0.4, B.YF + 0.4, zz))
+    assert not B.cover(B.MAIN, False, tab=False).is_inside((xg + 0.1, B.YF + 0.4, 4.0))    # 壊す: つまみを高くしない蓋は、上の方に面が無い
     assert cv.bounding_box().min.Y >= B.Y0 + 0.1 - 1e-6
     for k in (0.2, 0.5, 0.8):
         y = B.YA - k * B.TAB_FLARE
@@ -433,6 +454,16 @@ def test_printable_without_support():
     assert up_levels(B.frame()) <= up_levels(B.prod_corner())
     size = B.plate().bounding_box().size
     assert max(size.X, size.Y) <= S.PRINT_MAX and len(B.plate_layout()) == 6
+    # ベッドに着く面: 腕の底の縁は落としていない（1 層目から、腕の幅いっぱい）・底の面積は B3（164 mm2）より大きい・蓋は板の真ん中の列
+    t = B.VARIANTS[B.MAIN]["t"]
+    ym = (B.YF + B.YR) / 2
+    assert cv.is_inside((B.XN - B.VARIANTS[B.MAIN]["pre"] * B.shape(B.YR - ym) + 0.04, ym, 0.03)) and t >= 0.9
+    assert all(B.footprint(n) >= 170.0 for n in B.VARIANTS)
+    pb = B.plate().bounding_box()
+    for name, part, _ in B.plate_layout():
+        if name.startswith("cover"):
+            bb = part.bounding_box()
+            assert abs((bb.min.Y + bb.max.Y) / 2 - (pb.min.Y + pb.max.Y) / 2) <= 0.25 * pb.size.Y, name
 
 
 def test_covers_are_told_apart_by_notches():

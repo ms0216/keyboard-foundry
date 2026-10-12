@@ -1,4 +1,4 @@
-"""蓋の別案 B3 の試し刷り（coupon_cover_snap_plate = B3 の枠の角・当て板・電池の代わり・蓋 3 つ）を精度優先の設定で**実際にスライスし**、
+"""蓋の別案 B4 の試し刷り（coupon_cover_snap_plate = B4 の枠の角・当て板・電池の代わり・蓋 3 つ）を精度優先の設定で**実際にスライスし**、
 G-code を設計と突き合わせる。
 
     .venv/bin/python3 projects/cckb-click/click_cover_snap.py           # 先に STL を出す
@@ -33,6 +33,7 @@ STEM = "coupon_cover_snap_plate"
 GAP_CLEAR = 0.3              # 空いているはずの所の真ん中から、いちばん近い線の中心まで
 ON_LINE = 0.3                # 線があるはずの所から、いちばん近い線の中心まで
 MIN_LINES = 2
+FIRST_LAYER = ("20", "30")   # 1 層目の速さ [mm/s]（外周, 中）。精度優先の設定は 50・105
 
 
 def crossings(layer, p0, p1):
@@ -60,6 +61,7 @@ def check(gcode, rc, shift=(0.0, 0.0)):
     layers = SV.read_loops(gcode)
     pb = B.plate().bounding_box()
     area = [tuple(float(v) for v in p.split("x")) for p in rc["machine"]["printable_area"]]
+    area_pts = area
     ox = max(p[0] for p in area) / 2 - (pb.min.X + pb.max.X) / 2 + shift[0]
     oy = max(p[1] for p in area) / 2 - (pb.min.Y + pb.max.Y) / 2 + shift[1]
     fns = {name: fn for name, _, fn in B.plate_layout()}
@@ -87,9 +89,12 @@ def check(gcode, rc, shift=(0.0, 0.0)):
                 a = to_plate(name, f(xo - 0.08), y, 1.4)
                 b = to_plate(name, f(xo + v["t"] + 0.08), y, 1.4)
                 k = crossings(layers[a[2]], a[:2], b[:2])
-                fewest = min(fewest, k)
-                if k < MIN_LINES:
-                    problems.append(f"蓋 {n}・{side}の腕・{label}: 線が {k} 本（{MIN_LINES} 本以上）")
+                a1 = to_plate(name, f(xo - 0.08), y, 0.05)                # 1 層目（ベッドに着く層）でも、腕は線 2 本以上（底の縁を落としていない）
+                b1 = to_plate(name, f(xo + v["t"] + 0.08), y, 0.05)
+                k1 = crossings(layers[a1[2]], a1[:2], b1[:2])
+                fewest = min(fewest, k, k1)
+                if k < MIN_LINES or k1 < MIN_LINES:
+                    problems.append(f"蓋 {n}・{side}の腕・{label}: 線が {k} 本・1 層目 {k1} 本（{MIN_LINES} 本以上）")
                 xm = (xo + v["t"] + B.body_edge(y)) / 2
                 for z in (1.4, 0.05):
                     d, _, _, zl = at(name, f(xm), y, z)
@@ -98,7 +103,7 @@ def check(gcode, rc, shift=(0.0, 0.0)):
                         problems.append(f"蓋 {n}・{side}の腕と胴の隙（{label}）が線で埋まっている（層 {zl}・{d}・{GAP_CLEAR} 以上）")
             yh = B.YS + B.HOOK_CH + 0.2
             xo = B.XN - v["pre"] * B.shape(B.YR - yh)
-            d, _, _, zl = at(name, f(xo - B.HOOK / 2), yh, 1.4)
+            d, _, _, zl = at(name, f(xo - (v["engage"] + B.NECK) / 2), yh, 1.4)
             facts[f"蓋 {n}・{side}のかぎの真ん中から線まで（層 {zl}）"] = d
             if d > ON_LINE:
                 problems.append(f"蓋 {n}・{side}のかぎが線になっていない（層 {zl}・{d}）")
@@ -117,7 +122,23 @@ def check(gcode, rc, shift=(0.0, 0.0)):
         facts[f"蓋 {n}: 帯のすぐ下の層（{zl}）の、くぼみの中から線まで"] = d
         if d < GAP_CLEAR:
             problems.append(f"蓋 {n}: 帯の下（層 {zl}）のくぼみの中に線がある（{d}）")
-    facts["腕を横切る線のいちばん少ない本数"] = fewest
+    facts["腕を横切る線のいちばん少ない本数（中ほどの層と、1 層目）"] = fewest
+    # ベッドに着く面積: 1 層目の線の長さ × 幅を、蓋ごとに足す（G-code から。重なりを引かないので、立体の面積より少し大きい）
+    z1 = SS.layer_at(layers, 0.05)
+    for n in sorted(B.VARIANTS):
+        fn = fns[f"cover{n}"]
+        (xa, ya, _), (xb, yb, _) = fn((B.XPK - 1.0, B.Y0 - 0.5, 0.0)), fn((B.mx(B.XPK) + 1.0, B.YJ + 0.5, 0.0))
+        box = (min(xa, xb) + ox, min(ya, yb) + oy, max(xa, xb) + ox, max(ya, yb) + oy)
+        area = 0.0
+        for lp in layers[z1]:
+            w = lp.get("width") or 0.5
+            for (px, py), (qx, qy) in zip(lp["pts"], lp["pts"][1:]):
+                if box[0] <= (px + qx) / 2 <= box[2] and box[1] <= (py + qy) / 2 <= box[3]:
+                    area += math.hypot(qx - px, qy - py) * w
+        facts[f"蓋 {n}: 1 層目の線の長さ × 幅 [mm2]（立体の底の面積 {B.footprint(n):.0f}）"] = round(area, 1)
+        if area < 0.8 * B.footprint(n):
+            problems.append(f"蓋 {n}: 1 層目の線が、底の面積の 8 割に足りない（{area:.0f}）")
+    facts["蓋の列の、ベッドの中心からの前後の距離 [mm]"] = round(abs((fns["cover2"]((B.CX, B.YF, 0.0))[1] + oy) - max(p[1] for p in area_pts) / 2), 1)
     # 4. 枠
     fr = "frame"
     for side, f in (("左", lambda x: x), ("右", B.mx)):
@@ -175,7 +196,7 @@ def draw(gcode, rc, out):
         ax.set_ylim(min(a[1], b[1]) + oy, max(a[1], b[1]) + oy)
         ax.set_aspect("equal")
         ax.set_title(f"{title}（層の上面 {zl}）。赤 = 宙を渡る線・橙 = 外周・灰 = 中", fontsize=11)
-    fig.suptitle("蓋の別案 B3 の G-code（Bambu Studio）。蓋は底が下・下が手前。枠は上面が下・上が手前", fontsize=12)
+    fig.suptitle("蓋の別案 B4 の G-code（Bambu Studio）。蓋は底が下・下が手前。枠は上面が下・上が手前", fontsize=12)
     fig.tight_layout()
     fig.savefig(out, dpi=80)
     plt.close(fig)
@@ -186,6 +207,10 @@ def main(argv):
     engine = next((a for a in argv if a in ("bambu", "orca")), "bambu")
     variant = next((a for a in argv if a in SP.S.PRINT_RECIPES), "n04")
     rc = SP.recipe(variant, SP.S, engine)
+    # **刷り方を 2 つだけ変える**（蓋がベッドから剥がれた = 利用者の 1 回目の刷り）: 1 層目を遅くする。ほかは、精度優先の設定のまま（縁取り〔brim〕は付けない）
+    for key, val in zip(("initial_layer_speed", "initial_layer_infill_speed"), FIRST_LAYER):      # 1 層目の外周 50 → 20・中 105 → 30 mm/s
+        rc["process"][key] = [val]
+        rc["overrides"][key] = [val]
     print(f"== {variant}・{engine}: {rc['preset']['name']}（{rc['machine']['name']}・{rc['filament']['name']}）")
     stl = SP.BUILD / f"{STEM}.stl"
     newest = max(q.stat().st_mtime for q in SP.PROJECT.glob("*.py"))
