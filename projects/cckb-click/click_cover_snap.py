@@ -1,4 +1,4 @@
-"""電池の蓋の**別案 B4（左右のばねの腕で掛ける蓋・B → B2 → B3 → B4 と直した物）の試し刷り**。本番の蓋（click_case.cover_solid）・本番の枠・基板は変えない。**刷る物だけ**。
+"""電池の蓋の**別案 B5（左右のばねの腕で掛ける蓋・B → B2 → B3 → B4 → B5 と直した物）の試し刷り**。本番の蓋（click_case.cover_solid）・本番の枠・基板は変えない。**刷る物だけ**。
 
     .venv/bin/python3 projects/cckb-click/click_cover_snap.py     # STL・絵・数 → build/cckb-click/coupon_cover_snap_plate.stl
 
@@ -27,6 +27,15 @@ B3（コミット ffae732）から直した所（**利用者が刷った結果**
   - つまむ所を大きく: つまみの高さ 2.8 → 4.85・枠の縁の手前を、幅 SCOOP の斜めのくぼみにした（指の先・爪の横で、内へ押すだけ）。爪の段はやめた
   - 予圧は 0.05 に減らした（つまむ量が増えた分、ひずみの上限に入れるため）。**座りの力は、ほぼ無い**（がたは、刷って見る）
   - ベッドから剥がれにくく: 腕の底の縁を落とさない・胴の縁の落としを 0.15 → 0.10・蓋を板の真ん中に並べる・1 層目を遅く（tools/slice_cover_snap.py）
+B4（コミット cc50451）から直した所（独立の見直し: 「B4 は、つまむと 1.4 で固く止まって、出てこない」。**確かめたら、そのとおりだった**）:
+  - **腕の曲がり方の計算が間違っていた**: B4 までは、腕の点を横へずらすだけだった。本当の腕は付け根まわりに曲がるので、先が回り、少し縮む。
+    その形でたどると、つまみの角は斜めの面ではなく、その奥のまっすぐな壁に当たる（押し出せない）。→ bend を、回る・縮む形に直し、
+    ひずみ・力・斜めの面の位置を、同じ計算（beam）から出す。斜めの面は、角が本当に来る所を通る 1 本の線にして、奥のまっすぐな壁を無くした
+  - 斜めの面の比 3 → 2（摩擦 0.5 まで滑る）・つまみが当たる点を、つまみの内の面の真ん中の出っ張り K に（腕の先に近い = つまむ量が少なくて済む）
+  - 指の腹で動かせるように: つまみを大きくして（幅 2.65 × 奥行き 2.6）、上面を枠の上面と同じ高さの、筋の付いた滑らせる面にした
+  - ひずみの余裕: 腕を、付け根 0.85 → 先 1.0 の先太りに・付け根の丸み 0.25 → 0.4・掛かり 1.0／0.9
+  - 蓋を奥へ押し切れる量 0.15 → 0.30（つまむと、かぎの先が手前へ回るので、蓋が少し奥へ逃げる）
+  - 刷り: 腕の付け根と柱の隙を、1 層目だけ 0.7 に広げる
 座標は CAD（基板の上面 = 0・x 右・y 奥）。左右は電池の中心 x = 122 で対称。**蓋は「かぎが縁に当たって座った位置」で書く**。寸法はこのファイルが持つ。
 """
 
@@ -88,31 +97,37 @@ HOOK_CH = 0.3                 # かぎの外の手前の角を 45° に落とす
 HOOK_FLAT, HOOK_RAMP = 0.05, 1.3        # かぎの外の面の平らな所の長さ・斜めの所の長さ ÷ 出（入れるとき、縁に乗って腕を内へ押す）
 HOOK_FILLET = 0.2             # かぎの付け根（掛かる面と腕の間）の角を埋める量
 TAB_FLARE = 0.25              # 腕の先の 45° の面の長さ（前後）= 縁の 45° の面と重なる長さ。その手前は、まっすぐ = **つまむ面**（指で内へ押す）
-TAB_Y = 1.9                   # つまみ（腕の先の、高くした所）の奥行き（蓋の手前の面から）
-TAB_W = 1.6                   # つまみの内の面（腕の外の面から）= つまみの幅は、これ ＋ 外の面までの 0.45
-TAB_TOP = TOP - 0.15          # つまみの上面（枠の上面の 0.15 下）
-CAM_R = 3.0                   # 斜めの面の比: つまみが内へ 1 動くと、蓋が手前へ CAM_R 出る（面は、前後の向きから 18.4°）
-CAM_I = 0.28                  # 斜めの面に乗ってから、つまみの角 K が内へ動く量
-CAM_F = CAM_R * CAM_I         # そのとき、蓋が手前へ出る量（0.84）
-TAB_TAPER = 0.6               # つまみの内の面を、手前へ向かって外へ逃がす量（つまむと腕の先ほど内へ傾くので、K がいちばん内の点であり続けるように）
-CAM_M = 0.05                  # かぎがいちばん大きい蓋で、かぎが縁から外れてから、K が斜めの面に乗るまでの余裕
+TAB_Y = 2.6                   # つまみ（腕の先の、高くした塊）の奥行き（蓋の手前の面から）
+TAB_W = 2.4                   # つまみの内の面の出っ張り K の x（腕の外の面から）= つまみの幅は、これ ＋ 外の面までの 0.25
+TAB_KY = 1.2                  # K の位置（蓋の手前の面から奥へ）。K が、枠の斜めの面に乗る
+TAB_TAPER = (0.5, 0.4)        # つまみの内の面を、K から手前・奥へ向かって外へ逃がす量（つまむと腕の先が回るので、K がいちばん内の点であり続けるように）
+PAD_Z = TOP - 0.35            # つまみの上面（筋の谷）。筋の山は RIDGE[2] 上 = 枠の上面の 0.05 下
+RIDGE = (0.5, 0.75, 0.3)      # つまみの上面の筋（幅・間隔・高さ）。動かす向き（左右）に直角 = 前後に走る
+CAM_R = 2.0                   # 斜めの面の比: K が内へ 1 動くと、蓋が手前へ CAM_R 出る（面は、前後の向きから 26.6° = 摩擦 0.5 まで滑る）
+CAM_I = 0.30                  # 斜めの面に乗ってから、K が内へ動く量
+CAM_F = CAM_R * CAM_I         # そのとき、蓋が手前へ出る量（0.60。かぎの角の斜め 0.3 ＋ 平ら 0.05 ＋ 縁のまっすぐ 0.2 = 0.55 より大きい）
+CAM_M = 0.06                  # かぎがいちばん大きい蓋で、かぎが縁から外れてから、K が斜めの面に乗るまでの余裕（K の動きで）
+CUT_BACK = 0.9                # 枠の上の切り欠きの奥の壁を、つまみの奥の面から離す量（B4 は 0.275 = つまむと、つまみの奥の角が当たった）
 ENGAGE_MAX = 1.1              # いちばん大きい掛かり（枠の斜めの面の位置を、これで決める）
 SEAT = 0.03                   # 立体どうしの重なりを見るとき、かぎを縁から離しておく量（計算上の接触を重なりに数えない）
 ASM = 0.03                    # 同じく、腕の先を 45° の面から離しておく量
 ZW = S.FRAME_UNDER            # 腕の通る窓の上の端 = 枠の屋根の下面（3.0）。その上は、枠の手前の壁を残す（まぐさ）
 HS = ZW - 0.2                 # 蓋の、屋根の下に入る所の高さ
-YR = -37.5                    # 腕の付け根
-YJ = -36.25                   # 付け根の塊の、奥の面。案内の壁は、ここから 0.3 奥まで（右のコンデンサ C_BAT の手前のランド〔y ≥ −35.22〕から 0.4 以上）
+YR = -36.85                   # 腕の付け根（B4 より 0.65 奥 = 腕が長い分、同じつまむ量でのひずみが減る）
+YJ = -35.6                    # 付け根の塊の、奥の面 = 案内の壁の奥の端（右のコンデンサ C_BAT の手前のランド〔y ≥ −35.22〕から 0.38）
 ARM_L = YR - YF               # 腕の長さ
-ROOT_R = 0.25                 # 腕の付け根の内の角の丸み
+ROOT_R = 0.40                 # 腕の付け根の内の角の丸み（腕と柱の間の隙の幅いっぱい）
+T_ROOT, T_TIP = 0.85, 1.00    # 腕の厚さ（付け根〜A_THIN まで・かぎから先）。その間は斜め。曲がるのは付け根の側（薄い = ひずみが小さい）・電池に押されて苦しいのは、かぎの近く（厚い）
+A_THIN = 7.5                  # 付け根から、薄い所の終わりまで
 XSI = PAD[0] - S.PART_CLEAR   # 蓋の柱（ランドの脇を通る所）の、内の面 = ランドの外の縁の 0.4 外（109.5）
 YWB = PAD[1] - 0.375          # ランドの手前で、蓋の胴が内へ広がれる所の、奥の端
 XWI = LAY.clip_body()[0] - 0.2          # その内の端（クリップの板の端の 0.2 外）
-T_MAX = 0.90                  # 腕の厚さ（胴の外の縁は、これで決める）
+T_MAX = T_TIP                 # 腕のいちばん厚い所（胴の外の縁は、これで決める）
+GAP_L1 = 0.3                  # 腕の付け根の近くで、柱の外の縁の 1 層目だけを余分に落とす量（1 層目の隙 = GAP_MIN ＋ これ = 0.7。膜でつながらないように）
 GAP_MIN = 0.40                # 腕と胴の間の、いちばん狭い隙（付け根の近く。線で埋まらない幅）
 GUIDE_CL = 0.25               # 付け根の塊と、枠の案内の壁の隙（左右）の、いちばん緩い値 = 枠の壁の位置。蓋ごとの隙は VARIANTS の guide（蓋の側の当てで詰める）
-BACK_CL = CL                  # 蓋を奥へ押し切れる量 = 口の真ん中の溝の奥の隙（屋根の縁で止まる。その先は、電池とクリップの止め）。**奥の壁は置かない**（B2 の薄い壁をやめた）
-GUIDE_BACK = 0.3              # 案内の壁が、付け根の塊の奥の面より奥へ伸びる量
+BACK_CL = CL                  # 蓋を奥へ押し切れる量 = 口の真ん中の溝の奥の隙（屋根の縁で止まる）。つまむと、かぎの先が手前へ 0.1 ほど回るので、蓋はその分 奥へ逃げる
+GUIDE_BACK = 0.0              # 案内の壁が、付け根の塊の奥の面より奥へ伸びる量（B5: 伸ばさない = その分、腕を長くした）
 REL_CL = 0.05                 # 外すとき、かぎが縁の端から離れる隙
 LEAD = 0.5                    # 入れるときの案内: 真ん中の塊の奥の角・付け根の塊の外の奥の角を、斜めに落とす量
 BED = 0.10                    # ベッドの面（底）の縁を落とす量（1 層目の太り）。**胴だけ。腕は落とさない**（B3 は 0.15 を腕にも = 腕の 1 層目が 0.6 幅だった）
@@ -121,11 +136,11 @@ H15_OLD = next(c for n, c, _ in LAY.screws() if n == "H15")
 PRINT_ERR = 0.15              # 刷りの誤差の見込み（片側）
 MU = 0.3                      # PLA どうしの摩擦の見込み（座る力の、小さい側の見積もりに使う。仮定）
 MARK = S.COVER_MARK           # 見分ける切り欠き（幅・深さ・間隔）
-# 蓋 3 つ: **かぎの掛かり engage を振る**（まだ分からないのは「かぎが縁から外れ切る前に、斜めの面が蓋を押し始めないか」。掛かりが小さいほど、
-# 外れてから押し始めるまでの余裕が大きい: 0.05／0.15／0.25。代わりに、掛かりが減る）。腕・予圧・つまみ・案内の隙（0.25 = 刷れて、入った蓋の値）は同じ
-VARIANTS = {1: dict(t=0.90, pre=0.05, guide=0.25, engage=1.1),      # 掛かり 1.1（B3 と同じ）・余裕 0.05
-            2: dict(t=0.90, pre=0.05, guide=0.25, engage=1.0),      # 掛かり 1.0・余裕 0.15
-            3: dict(t=0.90, pre=0.05, guide=0.25, engage=0.9)}      # 掛かり 0.9・余裕 0.25
+# 蓋 3 つ: **きつい側を振る**（利用者が B4 を刷った結果: いちばんきつい蓋 1 でも、遊びがある → それを基準に、きつい側へ）。
+# guide = 奥の案内の隙（左右・回り）・pre = 腕の予圧（座らせる力）・cl = 口の真ん中の溝との隙（左右）。かぎの掛かり 1.1・腕・つまみは同じ
+VARIANTS = {1: dict(pre=0.05, guide=0.25, cl=0.15, engage=1.1, nub=0.0),      # 基準 = B4 の蓋 1 と同じ嵌め
+            2: dict(pre=0.12, guide=0.15, cl=0.15, engage=1.1, nub=0.0),      # 案内を詰める・予圧を戻す（腕が蓋を手前へ押す）
+            3: dict(pre=0.12, guide=0.15, cl=0.08, engage=1.1, nub=0.0)}      # さらに、口の真ん中の溝との隙も詰める
 MAIN = 2
 BOX = (100.5, LAY.frame[1], LAY.frame[2], S.COUPON_CORNER_BOX[1])        # 切り出す範囲（ねじ H14 の座まで入れる）
 MOD = (XLIP - SCOOP - EPS, Y0 - 1.0, 2 * CX - (XLIP - SCOOP) + EPS, LAY.clip_body()[3] + S.PART_CLEAR + DBACK + EPS)   # B2 が本番の枠から変えた範囲（平面）
@@ -143,10 +158,62 @@ def _mirror(part):
     return mirror(part, about=Plane.YZ.offset(CX))
 
 
-def shape(a):
-    """先に力を掛けた片持ち梁の撓みの形（付け根から a の所・先で 1）。"""
+def thick(a):
+    """腕の厚さ（付け根から a の所）。"""
+    a2 = YR - (YL + 2.6)                                        # かぎの奥の端のあたり（ここから先は T_TIP）
+    return T_ROOT + (T_TIP - T_ROOT) * min(max((a - A_THIN) / (a2 - A_THIN), 0.0), 1.0)
+
+
+@lru_cache(maxsize=None)
+def beam(dt=0.0, n=400):
+    """腕を「付け根で固定・先に横の力」の片持ち梁として解く（数値で積む）。厚さは thick(a) ＋ dt（dt = 刷りで太った分を見るとき）。
+    つまみの塊（先から TAB_Y）は曲がらないと見る。返り値: w・th = 先を 1 動かしたときの、付け根から a の所の動き・傾き [の表]・
+    sh = 先を d 動かしたときの縮み ÷ d²・k = 先を 1 動かす力 [N/mm]・eps = 先を 1 動かしたときの、いちばん大きいひずみ（表面）・a_eps = その場所。"""
+    h = ARM_L / n
+    e = S.PLA_E
+    kap = []
+    for i in range(n + 1):
+        a = i * h
+        t = thick(a) + dt
+        kap.append(0.0 if a > ARM_L - TAB_Y else (ARM_L - a) / (e * HS * t ** 3 / 12))
+    th, w = [0.0], [0.0]
+    for i in range(n):
+        th.append(th[-1] + (kap[i] + kap[i + 1]) / 2 * h)
+        w.append(w[-1] + (th[-2] + th[-1]) / 2 * h)
+    tip = w[-1]
+    th, w = [q / tip for q in th], [q / tip for q in w]
+    sh = [0.0]
+    for i in range(n):
+        sh.append(sh[-1] + (th[i] ** 2 + th[i + 1] ** 2) / 4 * h)
+    strain = [kap[i] / tip * (thick(i * h) + dt) / 2 for i in range(n + 1)]
+    worst = max(range(n + 1), key=lambda i: strain[i])
+    return dict(w=w, th=th, sh=sh, k=1.0 / tip, eps=strain[worst], a_eps=worst * h, n=n)
+
+
+def _at(table, a):
     a = min(max(a, 0.0), ARM_L)
-    return (3 * a * a * ARM_L - a ** 3) / (2 * ARM_L ** 3)
+    x = a / ARM_L * (len(table) - 1)
+    i = min(int(x), len(table) - 2)
+    return table[i] + (table[i + 1] - table[i]) * (x - i)
+
+
+def shape(a):
+    """先を 1 動かしたときの、付け根から a の所の横の動き（先で 1）。"""
+    return _at(beam()["w"], a)
+
+
+def bend(pts, d):
+    """左の腕の点を、先が d だけ内へ動く形に動かす（座った形から。d < 0 は外へ）。**付け根まわりに曲がる**: 腕の芯が横へ動き、断面が傾き（先ほど回る）、
+    曲がった分だけ先が付け根の方へ縮む。B4 までは、横へずらすだけだった（回らない・縮まない = つまみの角の位置が 0.3 ずれていた）。"""
+    b = beam()
+    xc = XN + (T_ROOT + T_TIP) / 4                              # 腕の芯（厚さの真ん中の、平均）
+    out = []
+    for x, y in pts:
+        a = YR - y
+        th = d * _at(b["th"], a)
+        u = x - xc
+        out.append((xc + d * _at(b["w"], a) + u * math.cos(th), y + d * d * _at(b["sh"], a) + u * math.sin(th)))
+    return out
 
 
 YS = YL + SEAT                                   # かぎの、掛かる面
@@ -155,12 +222,33 @@ YA = YL - LIP_S                                  # 腕の先の 45° の面の�
 YG = YA - TAB_FLARE                              # 同じく、手前の端 = つまむ面の奥の端
 GRIP = YG - YF                                   # つまむ面の奥行き
 YT = YF + TAB_Y                                  # つまみの奥の面
-YCUT = YT + 0.275                                # 枠の手前の壁の上（まぐさ）を、つまみの分だけ切る所の、奥の端
-A_K = YR - YT                                    # 付け根から、つまみの内の奥の角 K まで
-K_CLEAR = (ENGAGE_MAX + REL_CL) * shape(A_K) / shape(A_HOOK)      # かぎ（いちばん大きい掛かり）が縁から外れるときの、K の内への動き
-XS0 = XN + TAB_W + K_CLEAR + CAM_M               # 枠の斜めの面の、奥の端の x（K が、ここで乗る）
-D_MAX = (K_CLEAR + CAM_M + CAM_I) / shape(A_K)   # つまみ切ったときの、腕の先の動き（座った形から）
-DTIP = D_MAX + 0.1                               # 腕の先が内へ動ける量（胴に当たって止まる = 行き過ぎの止め）
+YK = YF + TAB_KY                                 # つまみの内の面の出っ張り K
+YCUT = YT + CUT_BACK                             # 枠の上の切り欠きの、奥の端
+
+
+def _solve(fn, lo=0.0, hi=4.0):
+    """fn(d) が 0 になる d（fn は増える）。"""
+    for _ in range(40):
+        mid = (lo + hi) / 2
+        lo, hi = (mid, hi) if fn(mid) < 0 else (lo, mid)
+    return (lo + hi) / 2
+
+
+def k_point(d, nub=0.0):
+    """つまみの出っ張り K の位置（腕の先を d 動かしたとき。蓋は座った位置）。"""
+    return bend([(XN + TAB_W + nub, YK)], d)[0]
+
+
+def d_clear(engage):
+    """かぎが縁の端から REL_CL 離れるときの、腕の先の動き（座った形から）。かぎの外の先の点を、曲がる形で追う。"""
+    return _solve(lambda d: min(q[0] for q in bend([(XN - engage - NECK, YS + HOOK_CH), (XN - engage - NECK + HOOK_CH, YS)], d)) - (XLIP + REL_CL))
+
+
+D_CAM = d_clear(ENGAGE_MAX) + CAM_M / shape(YR - YK)          # K が斜めの面に乗るときの、腕の先の動き（蓋 1）
+S0 = k_point(D_CAM)                                            # そのときの K の位置 = 斜めの面の線が通る点
+D_MAX = _solve(lambda d: k_point(d)[0] - (S0[0] + CAM_I))      # つまみ切ったとき（K が斜めの面の手前の端まで来る）の、腕の先の動き
+DTIP = D_MAX + 0.10                                            # 腕の先が内へ動ける量（胴に当たって止まる = 行き過ぎの止め）
+Y_CAM_END = S0[1] - CAM_F - 0.25                               # 斜めの面の手前の端（K が、蓋ごと手前へ CAM_F 出た所の、少し先まで）
 
 
 def lip_line(y):
@@ -173,34 +261,26 @@ def lip_line(y):
 
 
 def cam_line(y):
-    """左の、枠の手前の壁の上（まぐさ）の残りの、外の端の x（y の所）: つまみの奥の面 YT から手前へ CAM_F の間は斜め（K が乗る面）・その手前はまっすぐ。"""
-    return XS0 + min(max(YT - y, 0.0), CAM_F) / CAM_R + (0.05 if YT - y > CAM_F + 1e-9 else 0.0)
-
-
-def bend(pts, d):
-    """左の腕の点を、先が d だけ内へ動く撓みの形に動かす（座った形から。d < 0 は外へ）。"""
-    return [(x + d * shape(YR - y), y) for x, y in pts]
+    """左の、枠の上の切り欠きの内の端（手前の壁の残り = まぐさ の、外の端）の x（y の所）。**1 本の斜めの線**（S0 を通り、手前へ CAM_R 進むと内へ 1）が
+    切り欠きの奥の端 YCUT から Y_CAM_END まで続き、その手前はまっすぐ。奥に、まっすぐな壁は無い。"""
+    return S0[0] + (S0[1] - max(y, Y_CAM_END)) / CAM_R + (0.05 if y < Y_CAM_END - 1e-9 else 0.0)
 
 
 def body_edge(y):
     """左の胴の、外の縁の x（腕が DTIP 動いても当たらない線。付け根の近くは GAP_MIN。つまみの所は、つまみの内の面から）。"""
-    x = XN + T_MAX + max(GAP_MIN, 0.1 + DTIP * shape(YR - y))
-    return max(x, XN + TAB_W + 0.1 + DTIP * shape(YR - y)) if y <= YT + 0.3 else x
+    x = XN + thick(YR - y) + max(GAP_MIN, 0.1 + DTIP * shape(YR - y))
+    return max(x, XN + TAB_W + 0.3 + DTIP * shape(YR - y)) if y <= YT + 0.5 else x
 
 
-def release_tip(pre, engage=ENGAGE_MAX):
-    """かぎが縁から外れるのに要る、腕の先の動き（刷った形から）: かぎの所で 予圧 ＋ 掛かり ＋ REL_CL 動かす。"""
-    return (pre + engage + REL_CL) / shape(A_HOOK)
-
-
-def _arm_pts(t, hook, chamfer=HOOK_CH):
+def _arm_pts(hook, chamfer=HOOK_CH):
     """左の腕の平面の形（座った形）。かぎは外（−x）へ出る。先は、45° の面 → まっすぐな爪の掛かる面。"""
     end = YS + chamfer + HOOK_FLAT + hook * HOOK_RAMP          # かぎの奥の端
     pts = [(XN, YR + 0.3), (XN, end)]
     if hook > 0:
         pts += [(XN - hook, YS + chamfer + HOOK_FLAT), (XN - hook, YS + chamfer), (XN - hook + chamfer, YS),
                 (XN - HOOK_FILLET, YS), (XN, YS - HOOK_FILLET)]
-    pts += _tab_outer() + [(XN + t, YF), (XN + t, YR + 0.3)]
+    a2 = YR - (YL + 2.6)
+    pts += _tab_outer() + [(XN + T_TIP, YF), (XN + T_TIP, YR - a2), (XN + T_ROOT, YR - A_THIN), (XN + T_ROOT, YR + 0.3)]
     # 撓みの形を滑らかに出すために、長い辺を刻む
     out = []
     for (x0, y0), (x1, y1) in zip(pts, pts[1:] + pts[:1]):
@@ -215,9 +295,20 @@ def _tab_outer():
     return [(XN, YA), (XLIP, YA), (xg, YG), (xg, YF + 0.1), (xg + 0.1, YF)]
 
 
-def _tab_pts():
-    """つまみ（腕の先の、高くした所）の平面の形。内の奥の角 K = (XN + TAB_W, YT) が、枠の斜めの面に乗る。"""
-    return [(XN, YT)] + _tab_outer() + [(XN + TAB_W - TAB_TAPER, YF), (XN + TAB_W, YT)]
+def _tab_pts(nub=0.0):
+    """つまみ（腕の先の、高くした塊）の平面の形。内の面の出っ張り K = (XN + TAB_W + nub, YK) が、枠の斜めの面に乗る。"""
+    xk = XN + TAB_W + nub
+    return [(XN, YT)] + _tab_outer() + [(xk - TAB_TAPER[0], YF), (xk, YK - 0.1), (xk, YK + 0.1), (xk - TAB_TAPER[1], YT)]
+
+
+def _ridge_pts():
+    """つまみの上面の筋（前後に走る細い帯）の平面の形 [点の列, ...]。"""
+    w, pitch, _ = RIDGE
+    x, out = XLIP - TAB_FLARE + 0.15, []
+    while x + w <= XN + TAB_W - TAB_TAPER[0] - 0.1:
+        out.append([(x, YF + 0.25), (x + w, YF + 0.25), (x + w, YG - 0.1 if x < XN else YT - 0.25), (x, YG - 0.1 if x < XN else YT - 0.25)])
+        x += pitch
+    return out
 
 
 def _poly(pts):
@@ -238,11 +329,10 @@ def pocket_center():
 
 
 @lru_cache(maxsize=None)
-def cover(variant=MAIN, mark=True, dl=None, dr=None, t=None, hook=None, chamfer=HOOK_CH, root_r=None, tab=True):
-    """B4 の蓋（座った位置）。dl・dr = 左・右の腕の先を、**座った形から**内へ動かした量（既定 = ASM）。**刷る形は dl = dr = −pre**（printed）。
-    t・hook・chamfer・root_r を渡すと、その厚さの腕・その出のかぎ・その角・その付け根の丸み（検査を壊して見る形。hook = 0 で、かぎ無し）。tab=False = つまみを高くしない。"""
+def cover(variant=MAIN, mark=True, dl=None, dr=None, hook=None, chamfer=HOOK_CH, root_r=None, tab=True):
+    """B5 の蓋（座った位置）。dl・dr = 左・右の腕の先を、**座った形から**内へ動かした量（既定 = ASM）。**刷る形は dl = dr = −pre**（printed）。
+    hook・chamfer・root_r を渡すと、その出のかぎ・その角・その付け根の丸み（検査を壊して見る形。hook = 0 で、かぎ無し）。tab=False = つまみを高くしない。"""
     v = VARIANTS[variant]
-    t = v["t"] if t is None else t
     hook = v["engage"] + NECK if hook is None else hook
     dl = ASM if dl is None else dl
     dr = ASM if dr is None else dr
@@ -253,19 +343,22 @@ def cover(variant=MAIN, mark=True, dl=None, dr=None, t=None, hook=None, chamfer=
         out = [_poly(_side_pts()),
                _poly([(xo, YR - EPS), (xo, YJ - LEAD), (xo + LEAD, YJ), (XSI, YJ), (XSI, YR - EPS)])]      # 付け根の塊（外の奥の角は、案内の壁へ入る案内）
         if root_r > 0:                                           # 腕の付け根の内の角の丸み: 腕と付け根の塊の間の角を、円弧で**埋める**
-            xc, yc = XN + t + root_r, YR - root_r
-            out.append(C._rect2d((XN + t - EPS, yc, xc, YR + EPS)) - Pos(xc, yc) * Circle(root_r))
+            xc, yc = XN + T_ROOT + root_r, YR - root_r
+            out.append(C._rect2d((XN + T_ROOT - EPS, yc, xc, YR + EPS)) - Pos(xc, yc) * Circle(root_r))
         return out
 
-    arms = _union([_poly(bend(_arm_pts(t, hook, chamfer), dl)), _mirror(_poly(bend(_arm_pts(t, hook, chamfer), dr)))])
-    tabs = _union([_poly(bend(_tab_pts(), dl)), _mirror(_poly(bend(_tab_pts(), dr)))])
+    arms = _union([_poly(bend(_arm_pts(hook, chamfer), dl)), _mirror(_poly(bend(_arm_pts(hook, chamfer), dr)))])
+    tabs = _union([_poly(bend(_tab_pts(v["nub"]), dl)), _mirror(_poly(bend(_tab_pts(v["nub"]), dr)))])
+    ridges = _union([_poly(bend(q, dl)) for q in _ridge_pts()] + [_mirror(_poly(bend(q, dr))) for q in _ridge_pts()])
     low = _union(half(dl) + [_mirror(q) for q in half(dr)])
-    xa, xb = A0 + CL, A1 - CL                                   # 真ん中の塊（奥の左右の角は、口の真ん中の溝へ入る案内）
+    xa, xb = A0 + v["cl"], A1 - v["cl"]                          # 真ん中の塊（奥の左右の角は、口の真ん中の溝へ入る案内）
     mid = _poly([(xa, YF), (xb, YF), (xb, YB - LEAD), (xb - LEAD, YB), (xa + LEAD, YB), (xa, YB - LEAD)])
     (px, py), _ = pocket_center()
     pocket = Pos(px, py, -1.0) * Cylinder(POCKET_R, STRIP_Z + 1.0, align=P.CEN_MIN)
     body = extrude(low, HS) + (extrude(mid, TOP) - pocket)
-    limbs = extrude(arms, HS) + (extrude(tabs, TAB_TOP) if tab else extrude(tabs, HS))        # 腕とつまみ: 底の縁は落とさない（1 層目の幅を減らさない）
+    limbs = extrude(arms, HS) + extrude(tabs, PAD_Z if tab else HS)                            # 腕とつまみ: 底の縁は落とさない（1 層目の幅を減らさない）
+    if tab:
+        limbs = limbs + Pos(0, 0, PAD_Z - EPS) * extrude(ridges, RIDGE[2] + EPS)             # つまみの上面の筋
     plan = (low + mid) - Pos(px, py) * Circle(POCKET_R)
     if mark:
         mw, md, mp = MARK
@@ -276,9 +369,13 @@ def cover(variant=MAIN, mark=True, dl=None, dr=None, t=None, hook=None, chamfer=
     # ベッドの面（底）の縁を落とす: 下の 2 層を、平面の形を内へ寄せた段に置き換える
     body = body - _box((XPK - 2.0, Y0 - 1.0, mx(XPK) + 2.0, YJ + 2.0), -1.0, 0.2)
     body = body + extrude(offset(plan, -BED), 0.1 + EPS) + Pos(0, 0, 0.1) * extrude(offset(plan, -BED / 2), 0.1 + EPS)
+    # 腕の付け根の近く: 柱の外の縁の 1 層目だけを GAP_L1 余分に落とす（腕と柱の間が、1 層目で膜にならないように。腕の側は落とさない）
+    ys = [YR - 5.5 + 5.5 * i / 8 for i in range(9)]
+    strip = [(body_edge(y) - EPS, y) for y in ys] + [(body_edge(y) + GAP_L1, y) for y in reversed(ys)]
+    body = body - Pos(0, 0, -0.5) * extrude(_poly(strip) + _mirror(_poly(strip)), 0.7)
     body = (body + limbs).clean()
     if len(body.solids()) != 1:
-        raise RuntimeError(f"B4 の蓋が {len(body.solids())} 個の塊")
+        raise RuntimeError(f"B5 の蓋が {len(body.solids())} 個の塊")
     return body
 
 
@@ -308,7 +405,7 @@ def prod_corner():
 
 @lru_cache(maxsize=None)
 def frame(lips=True, standin=True, cam=True):
-    """B4 の口を掘った枠の角。lips=False = 口の左右の縁なし・cam=False = まぐさの残り（つまみを押し出す斜めの面）なし（どちらも、検査を壊して見る形）。standin = **クリップの板の代わり**（試し刷りだけ。本番には無い）:
+    """B5 の口を掘った枠の角。lips=False = 口の左右の縁なし・cam=False = まぐさの残り（つまみを押し出す斜めの面）なし（どちらも、検査を壊して見る形）。standin = **クリップの板の代わり**（試し刷りだけ。本番には無い）:
     屋根を、クリップの板の範囲（図面の外接の矩形。手前の端は、口の真ん中の溝の奥の縁まで = 公差の端より 0.05 奥）で、板の下面の高さまで厚くする → 蓋を外したときに電池がどれだけ見えるか・
     爪が届くかを、試し刷りで試せる。"""
     cv = LAY.cover()
@@ -320,7 +417,7 @@ def frame(lips=True, standin=True, cam=True):
     part = part + _box((XSI, Y0, mx(XSI), cv["y_cheek"]), 0.0, TOP) \
         + Pos(H15_OLD[0], H15_OLD[1], 0.0) * Cylinder(d / 2 + EPS, depth + EPS, align=P.CEN_MIN)
     cuts = [
-        _box((A0, Y0 - 1.0, A1, YB + CL), -1.0, TOP + 1.0),                                             # 口の真ん中（上まで）
+        _box((A0, Y0 - 1.0, A1, YB + BACK_CL), -1.0, TOP + 1.0),                                             # 口の真ん中（上まで）
         # クリップの空間（本番と同じ高さ・幅）を、DBACK 奥へ: 手前の端は、動かした板の 0.4 手前から・奥の端は、本番の端 ＋ DBACK
         _box((XSI, CLIP_FRONT - S.PART_CLEAR, mx(XSI), MOD[3] - EPS), -1.0, S.CLIP_ROOF_UNDER),
         _box((XSI, wall_in - EPS, mx(XSI), CLIP_FRONT - S.PART_CLEAR + EPS), -1.0, ZW),                 # その手前の、屋根の下（本番と同じ 3.0）
@@ -340,8 +437,8 @@ def frame(lips=True, standin=True, cam=True):
             cuts.append(_box(tuple(sorted((f(XLIP), f(A0 + EPS)))[:1]) + (Y0 - 0.3,) + tuple(sorted((f(XLIP), f(A0 + EPS)))[1:]) + (YCUT,), ZW - EPS, TOP + 1.0))
         else:
             xl = XLIP if lips else XPK
-            top = [(f(xl), Y0 - 0.3), (f(cam_line(Y0)), Y0 - 0.3), (f(cam_line(Y0)), YT - CAM_F), (f(XS0 + CAM_I), YT - CAM_F), (f(XS0), YT), (f(XS0), YCUT),
-                   (f(xl), YCUT)]
+            top = [(f(xl), Y0 - 0.3), (f(cam_line(Y0)), Y0 - 0.3), (f(cam_line(Y0)), Y_CAM_END), (f(cam_line(Y_CAM_END)), Y_CAM_END),
+                   (f(cam_line(YCUT)), YCUT), (f(xl), YCUT)]
             cuts.append(Pos(0, 0, ZW - EPS) * extrude(_poly(top), TOP - ZW + 1.0))                       # つまみの通る所（手前の壁の上を切る。内の端は斜めの面）
     part = part - _union(cuts)
     adds = [_box((mx(XPK), wall_in - EPS, H15_NEW[0] + S.SCREW_BOSS_HALF, boss_back), 0.0, ZW + EPS)]    # 動かした H15 の座
@@ -351,12 +448,12 @@ def frame(lips=True, standin=True, cam=True):
         adds.append(_box((xa, YR - 1.2, xb, YJ + GUIDE_BACK), 0.0, ZW + EPS))                            # 案内の壁（付け根の塊の外。幅 1.25）
     if standin:
         body = LAY.clip_body()
-        adds.append(_box((body[0], max(CLIP_FRONT - S.CLIP_TOL, YB + CL), body[2], CLIP_FRONT + 3.0), S.CLIP_H - S.CLIP_SHEET_T - S.CLIP_TOL, S.CLIP_ROOF_UNDER + EPS))
+        adds.append(_box((body[0], max(CLIP_FRONT - S.CLIP_TOL, YB + BACK_CL), body[2], CLIP_FRONT + 3.0), S.CLIP_H - S.CLIP_SHEET_T - S.CLIP_TOL, S.CLIP_ROOF_UNDER + EPS))
     part = part + _union(adds)
     part = part - Pos(H15_NEW[0], H15_NEW[1], -1.0) * Cylinder(d / 2, depth + 1.0, align=P.CEN_MIN)
     part = part.clean()
     if lips and len(part.solids()) != 1:
-        raise RuntimeError(f"B4 の枠が {len(part.solids())} 個の塊")
+        raise RuntimeError(f"B5 の枠が {len(part.solids())} 個の塊")
     return part
 
 
@@ -454,36 +551,51 @@ def pinched(variant=MAIN, left=True, right=True, mark=False):
 
 
 def one_arm_out(variant=MAIN, iters=120, side="left"):
-    """**片方（左）の腕だけ**を、かぎが縁から外れる所まで内へ撓ませた蓋（右の腕は、座った形）で、蓋の手前の面の端が手前へ出られる量と姿勢
-    （平面の中で、ずらす・回すを探す）。side = どちらの端の出を、いちばん大きくするか: "left" = つまんだ側（片方が出る量）・"right" = つまんでいない側
+    """**片方（左）の腕だけ**を、かぎが縁から外れる所まで内へ曲げた蓋（右の腕は、座った形）で、蓋の手前の面の端が手前へ出られる量と姿勢
+    （平面の中で、ずらす・回すを探す）。side = どちらの端の出を、いちばん大きくするか: "left" = つまんだ側・"right" = つまんでいない側
     （これが小さい = 蓋は、もう片方のかぎに掛かったまま = 片方だけでは出てこない）。"""
-    a = arm_numbers(variant)
-    one = cover(variant, False, a["release"] - a["pre"] + 0.05, None)
-    x = XLIP - a["engage"] / 2
+    e = VARIANTS[variant]["engage"]
+    one = cover(variant, False, d_clear(e) + 0.05, None)
+    x = XLIP - e / 2
     return wiggle(one, obstacles(), lambda q: corner_out(q, x if side == "left" else mx(x)), iters=iters)
 
 
-def push_out(part, obst, step=0.05, limit=3.0, tol=2e-3):
-    """part が obst に重なっているとき、重ならなくなるまで手前へ動かす量（斜めの面に押し出される量）。重なっていなければ 0。"""
-    n = 0
-    while n * step <= limit and hit(posed(part, dy=-n * step), obst) > tol:
-        n += 1
-    return n * step
+@lru_cache(maxsize=None)
+def pinch_path(variant=MAIN, dstep=0.1, dx=0.0, cam=True, fat=0.0):
+    """**つまむ動きを、少しずつたどる**: 両方の腕の先を d = 0 から行き過ぎの止めまで dstep ずつ内へ曲げ（付け根まわりに曲がる形 = bend）、
+    その形の蓋が、枠に重ならずに居られる前後の位置を 0.05 おきに全部探す。返り値 [(d, lo, hi, n)]: lo = いちばん奥に居られる位置（手前を ＋・奥を −）=
+    **蓋は、少なくともここまで手前へ押し出される**・hi = lo から途切れずに居られる範囲の、手前の端・n = その範囲の点の数（0 = どこにも居られない = 噛んで止まる）。
+    dx = 蓋を横へずらして試す・cam=False = 斜めの面の無い枠・fat = 腕と蓋を 外へ fat 太らせた代わりに、枠を fat ずらして当てる（見ない = 0）。"""
+    fr = obstacles(cam=cam)[0]
+    out = []
+    n = int(round(DTIP / dstep))
+    for i in range(n + 1):
+        d = round(min(i * dstep, DTIP), 3)
+        cv = cover(variant, False, max(d, ASM), max(d, ASM))
+        ok = [round(0.05 * j, 2) for j in range(-7, 41) if vol(posed(cv, dx=dx, dy=-0.05 * j), fr) < 2e-3]
+        run = [q for k, q in enumerate(ok) if abs(q - (ok[0] + 0.05 * k)) < 1e-6]        # lo から、途切れずに続く範囲
+        out.append((d, ok[0] if ok else None, run[-1] if run else None, len(run)))
+    return out
 
 
 @lru_cache(maxsize=None)
 def eject(variant=MAIN, cam=True, step=0.1, dstep=0.05):
-    """**つまむだけで、蓋がどこまで出るか**を、立体を動かして解く（引く力は 0）。
-      cam    両方の腕をつまみ切った形（D_MAX）は、座った位置では枠（斜めの面）に重なる → 重ならなくなるまで手前へ動かした量 = 斜めの面が押し出す量
-      path   そこで指を離す: 蓋を step ずつ手前へ動かしながら、腕がどこまで外へ戻れるか（枠に重ならない、いちばん小さい撓み d）を探す [(出た量, d)]。
-             d が減り続ける間は、腕のばねの力が、蓋を手前へ押している（腕のエネルギー ½ k d² が減る向き）
-      rest   指を離した所から、d が減り続けている間だけ進んだ所 = 蓋が止まる位置（摩擦を見ない。途中に d の減らない所があれば、そこで止まると見る）。work = そこまでに腕 2 本が蓋にした仕事 [N·mm]・force = その平均の力 [N]
-      back   cam の位置で指を離した形（path の最初の d）の蓋を、奥へ戻そうとして進める量（かぎが縁の手前に当たって、掛かり直せない = 小さい）
-    cam=False = 枠の斜めの面が無いとき（検査を壊して見る形: つまんでも、蓋は押し出されない）。"""
+    """**つまむだけで、蓋がどこまで出るか**（引く力は 0）。
+      path_in  つまむ動きをたどった結果（pinch_path）。stuck = どこにも居られない d があるか・jump = lo が 1 歩（腕の先 0.1）で増える量のいちばん大きい値
+               （大きい = 壁に当たって、蓋を一気に動かさないと進めない = 止まる）・room = かぎが外れる前（腕の先を 0.2 以上 動かした後）の、居られる前後の幅のいちばん狭い値
+      cam      つまみ切ったとき（D_MAX）の lo = 斜めの面が押し出した量
+      path     そこで指を離す: 蓋を step ずつ手前へ動かしながら、腕がどこまで外へ戻れるか（枠に重ならない、いちばん小さい曲げ d）を探す [(出た量, d)]
+      rest     指を離した所から、d が減り続けている間だけ進んだ所 = 蓋が止まる位置（摩擦を見ない）。work・force = その間に腕 2 本がした仕事と、平均の力
+      back     cam の位置で指を離した形の蓋を、奥へ戻そうとして進める量（小さい = 自分では掛かり直さない）"""
     ob = obstacles(cam=cam)
-    k = arm_numbers(variant)["k"]
-    out = dict(cam=push_out(pinched(variant), ob))
-    d, y, path = D_MAX, out["cam"], []
+    b = beam()
+    pin = pinch_path(variant, cam=cam)
+    e = VARIANTS[variant]["engage"]
+    los = [q[1] for q in pin if q[1] is not None]
+    at_max = min(pin, key=lambda q: abs(q[0] - D_MAX))
+    out = dict(path_in=pin, stuck=any(q[3] == 0 for q in pin), jump=max([b2 - a2 for a2, b2 in zip(los, los[1:])] + [0.0]),
+               room=min(q[2] - q[1] for q in pin if 0.15 < q[0] <= d_clear(e) and q[3]), cam=max(at_max[1] or 0.0, 0.0))
+    d, y, path = at_max[0], out["cam"], []
     while y <= 4.0:
         while d - dstep >= ASM - 1e-9 and hit(posed(cover(variant, False, round(d - dstep, 3), round(d - dstep, 3)), dy=-y), ob) < 2e-3:
             d = round(d - dstep, 3)
@@ -492,14 +604,13 @@ def eject(variant=MAIN, cam=True, step=0.1, dstep=0.05):
             break
         y += step
     out["path"] = path
-    rest = out["cam"]                                           # 指を離した所から、腕が戻り続ける間だけ進む（戻らない所があれば、そこで止まる）
-    d_rest = path[0][1]
+    rest, d_rest = out["cam"], path[0][1]
     for (y0, d0), (y1, d1) in zip(path, path[1:]):
         if d1 >= d0:
             break
         rest, d_rest = y1, d1
     pre = VARIANTS[variant]["pre"]
-    work = 2 * 0.5 * k * ((path[0][1] + pre) ** 2 - (d_rest + pre) ** 2)
+    work = 2 * 0.5 * b["k"] * ((path[0][1] + pre) ** 2 - (d_rest + pre) ** 2)
     out.update(rest=rest, work=work, force=work / max(rest - out["cam"], 1e-9),
                back=travel(posed(cover(variant, False, path[0][1], path[0][1]), dy=-out["cam"]), ob, (0, 1, 0), limit=2.0, pivot=(CX, YF, HS / 2)))
     return out
@@ -524,10 +635,10 @@ def measure_moves(variant=MAIN):
     """絵と文書に載せる「動ける量」（検査と同じ探し方）: forward・up = 座った蓋が進める量・side・back = 胴が左右・奥へ動ける量（腕を 0.3 内へ逃がした蓋で）・
     cell = 電池の代わりが手前へ進める量・one_arm = 片方の腕だけをつまみ切ったとき、その側のかぎの所が手前へ出る量と姿勢・eject = つまむだけで出る量（蓋ごと）。"""
     cv, ob = cover(variant, False), obstacles()
-    slack = cover(variant, False, 0.3, 0.3)
+    slack = posed(cover(variant, False, 0.3, 0.3), dy=0.1)      # 腕を 0.3 内へ逃がすと、かぎの先が手前へ回るので、蓋を 0.1 奥へ置いて測る
     return dict(forward=travel(cv, ob, (0, -1, 0)), up=travel(cv, ob, (0, 0, 1), limit=1.0),
                 side=max(travel(slack, ob, (-1, 0, 0), limit=1.0), travel(slack, ob, (1, 0, 0), limit=1.0)),
-                back=travel(slack, obstacles(with_cell=True), (0, 1, 0), limit=1.0),
+                back=0.1 + travel(slack, obstacles(with_cell=True), (0, 1, 0), limit=1.0),
                 cell=travel(cell(), (ob[0], ob[1], cv), (0, -1, 0), pivot=(0.0, 0.0, 0.0)),
                 one_arm=one_arm_out(variant), one_arm_other=one_arm_out(variant, side="right")[0], eject={n: eject(n) for n in sorted(VARIANTS)})
 
@@ -536,44 +647,61 @@ def measure_moves(variant=MAIN):
 # 数（材料の値は TDS = spec.PLA_*・断面は立体から測るか、名目）
 # ---------------------------------------------------------------------------
 
+def d_contact(nub=0.0):
+    """つまみの出っ張り K が、枠の斜めの面の線に乗るときの、腕の先の動き（蓋は座った位置）。"""
+    return _solve(lambda d: k_point(d, nub)[0] - cam_line(k_point(d, nub)[1]))
+
+
+def d_end(nub=0.0):
+    """K が、斜めの面の手前の端の x まで来るとき（つまみ切ったとき）の、腕の先の動き。"""
+    return _solve(lambda d: k_point(d, nub)[0] - (S0[0] + CAM_I))
+
+
+def tab_mass():
+    """つまみ 1 つ（腕の先の塊と、かぎ）の重さ [g]。"""
+    pts = _tab_pts()
+    area = abs(sum(x0 * y1 - x1 * y0 for (x0, y0), (x1, y1) in zip(pts, pts[1:] + pts[:1]))) / 2
+    return (area * PAD_Z + HOOK * 1.2 * HS) * C.PLA_DENSITY
+
+
 def arm_numbers(variant=MAIN):
-    """腕（片持ち梁・先に力）。
-      release           かぎが縁から外れるときの、先の動き（刷った形から）・pinch_max  つまみ切ったとき（斜めの面の端まで）・insert  入れるとき・stop  胴に当たって止まるとき
-      strain_*          そのときの付け根のひずみ [%]（上限は strain_use = spec.PLA_STRAIN_USE × PLA_BEND / PLA_E）
-      pinch             つまみ切るときに、1 本の腕の先（つまみ）を押す力 [N]（腕のばねだけ。斜めの面が蓋を押す分は、蓋が自由なので、ほぼ 0）
-      insert_force      押し込むときに要る力 [N]・腕 2 本（かぎの斜めの面が縁に乗って、腕を撓ませる。摩擦 MU を入れた大きい側）
-      cam_margin        かぎが縁から外れてから、つまみの角 K が斜めの面に乗るまでの、K の動きの余裕（0 より小さいと、外れる前に押し始めて、噛む）
-      seat_y            腕 2 本が 45° の面を押して、蓋を手前へ押す力 [N]（摩擦を引いた値, 引かない値）。**予圧が小さいので、ほぼ無い**
+    """腕（付け根で固定・先に力。付け根 T_ROOT → 先 T_TIP の先太り。数は、形を作るのと同じ計算 beam から）。
+      release           かぎが縁から外れるときの、先の動き（刷った形から）・pinch_max  つまみ切ったとき（斜めの面の端まで）・stop  胴に当たって止まるとき
+      strain_*          そのときの、腕のいちばん大きいひずみ [%]（上限は strain_use）。strain_fat = 腕が 0.1 厚く刷れたときの、つまみ切ったときの値
+      pinch             つまみ切るときに、つまみ 1 つを内へ押す力 [N]（腕のばね。pinch_fat = 0.1 厚く刷れたとき）
+      slide             上面の滑らせる面を、指の腹で押し下げながら動かすのに要る、押し下げる力 [N]（指と面の摩擦 0.8・つまみの底と基板の摩擦 MU と見て）
+      insert_force      押し込むときに要る力 [N]・腕 2 本（かぎの斜めの面が縁に乗る。摩擦 MU を入れた大きい側）
+      cam_margin        かぎが縁から外れてから、K が斜めの面に乗るまでの、K の動き（0 より小さいと、外れる前に押し始めて噛む）
+      eject_calc        つまみ切ったときに、斜めの面が蓋を押し出す量の見積もり = CAM_R ×（乗ってからの K の内への動き）
       engage_worst      掛かりのいちばん小さい見込み: 縁とかぎが誤差ぶん短く刷れる・縁の厚さの誤差で腕が内へ寄る
-      one_arm_calc      片方だけつまんだとき、その側のかぎが手前へ出る量の見積もり = 案内の隙 ÷（かぎから案内までの奥行き）×（左右のかぎの間）
-      drop              自分の重さで、DROP_G（半波 DROP_MS）の衝撃を横に受けたときの、かぎの所の揺れ [mm]（外れるのは 予圧 ＋ 掛かり）"""
+      drop・drop_margin  つまみの重さを入れて、DROP_G（半波 DROP_MS・借りた仮定）の衝撃を横に受けたときの、かぎの所の揺れ [mm] と、外れるまでの倍率。
+                        drop_g = かぎが外れる衝撃 [G]（片方の腕。もう片方は、掛かる向きに揺れる）"""
     v = VARIANTS[variant]
-    t, pre, eng = v["t"], v["pre"], v["engage"]
-    e = S.PLA_E
-    inertia = HS * t ** 3 / 12
-    k = 3 * e * inertia / ARM_L ** 3
-    strain = lambda d: 1.5 * t * d / ARM_L ** 2 * 100          # noqa: E731
-    rel = release_tip(pre, eng)
-    ins = (pre + eng) / shape(A_HOOK)
+    pre, eng, nub = v["pre"], v["engage"], v["nub"]
+    b, fat = beam(), beam(0.1)
+    strain = lambda d: b["eps"] * d * 100                       # noqa: E731
+    rel = pre + d_clear(eng)
+    pmax = pre + d_end(nub)
     stop = pre + DTIP
-    pmax = pre + D_MAX
-    k_hook = 3 * e * inertia / A_HOOK ** 3
-    th = math.atan(1.0 / HOOK_RAMP)                             # かぎの斜めの面の、前後の向きからの角度
+    sk = shape(YR - YK)
+    th = math.atan(1.0 / HOOK_RAMP)
     wedge_in = (math.sin(th) + MU * math.cos(th)) / (math.cos(th) - MU * math.sin(th))
-    acc = S.DROP_G * 9.80665
-    wl = C.PLA_DENSITY * HS * t * acc * 1e-3
-    static = wl * ARM_L ** 4 / (8 * e * inertia)
-    freq = 1.875104 ** 2 / (2 * math.pi) * math.sqrt(e * inertia / (C.PLA_DENSITY * HS * t * ARM_L ** 4) * 1e6)
+    m_tip = tab_mass()
+    m_arm = C.PLA_DENSITY * HS * T_ROOT * (ARM_L - TAB_Y)
+    freq = math.sqrt(b["k"] * 1e6 / (m_tip + 0.24 * m_arm)) / (2 * math.pi)
+    static = (m_tip + 0.375 * m_arm) * S.DROP_G * 9.80665e-3 / b["k"]
     gain = C.shock_gain(freq, S.DROP_MS)
+    drop = static * gain * shape(A_HOOK)
     wedge = (1 - MU) / (1 + MU)
-    return dict(t=t, pre=pre, hook=eng + NECK, length=ARM_L, k=k, release=rel, pinch_max=pmax, insert=ins, stop=stop,
-                strain_release=strain(rel), strain_pinch=strain(pmax), strain_insert=strain(ins), strain_stop=strain(stop),
-                strain_use=S.PLA_STRAIN_USE * S.PLA_BEND / e * 100, strain_limit=S.PLA_BEND / e * 100,
-                pinch=k * pmax, insert_force=2 * k_hook * (pre + eng) * wedge_in, seat_y=(2 * k * pre * wedge, 2 * k * pre),
-                cam_margin=XS0 - (XN + TAB_W) - (eng + REL_CL) * shape(A_K) / shape(A_HOOK),
+    return dict(t=(T_ROOT, T_TIP), pre=pre, hook=eng + NECK, nub=nub, length=ARM_L, k=b["k"], release=rel, pinch_max=pmax, stop=stop,
+                strain_release=strain(rel), strain_pinch=strain(pmax), strain_stop=strain(stop), strain_fat=fat["eps"] * pmax * 100,
+                strain_use=S.PLA_STRAIN_USE * S.PLA_BEND / S.PLA_E * 100, strain_limit=S.PLA_BEND / S.PLA_E * 100, a_eps=b["a_eps"],
+                pinch=b["k"] * pmax, pinch_fat=fat["k"] * pmax, slide=b["k"] * pmax / (0.8 - MU),
+                insert_force=2 * b["k"] * rel * ARM_L / A_HOOK * wedge_in, seat_y=(2 * b["k"] * pre * wedge, 2 * b["k"] * pre),
+                cam_margin=(d_contact(nub) - d_clear(eng)) * sk, eject_calc=CAM_R * (k_point(d_end(nub), nub)[0] - k_point(d_contact(nub), nub)[0]),
                 engage=eng, engage_flat=eng - HOOK_CH, engage_worst=eng - 3 * PRINT_ERR, guide=v["guide"],
-                one_arm_calc=v["guide"] / (YR - YL) * (mx(XLIP) - XLIP),
-                freq=freq, gain=gain, drop=static * gain * shape(A_HOOK), drop_margin=(pre + eng) / (static * gain * shape(A_HOOK)),
+                one_arm_calc=v["guide"] / (YR - YL) * (mx(XLIP) - XLIP), tab_mass=m_tip,
+                freq=freq, gain=gain, drop=drop, drop_margin=(pre + eng) / drop, drop_g=S.DROP_G * (pre + eng) / drop,
                 front_gap=body_edge(YF) - (XN + TAB_W))
 
 
@@ -595,7 +723,7 @@ def stresses(variant=MAIN, force=PUSH, center=True):
               **腕と柱の間の偶力を、全部柱が受けると見た上側の見積もり**
       hook    かぎの付け根のせん断・lip 縁の面圧（かぎの平らな所だけで受けると見て）"""
     v = VARIANTS[variant]
-    t, hook = v["t"], v["engage"] + NECK
+    t, hook = thick(A_HOOK), v["engage"] + NECK      # 腕の厚さは、かぎの所の値（電池に押されて苦しいのは、ここ）
     p = force / 2
     (px, py), hw = pocket_center()
     x_hook = (XN - hook + HOOK_CH + XLIP) / 2                   # かぎの平らな所と、縁の重なりの真ん中
@@ -658,10 +786,10 @@ def cell_access():
       front     手前から見える電池の側面: 高さ（電池の厚さ）と、外面からの奥行き
     押す向き: 見えている上面と手前の縁を、爪か指の先で**下へ押しながら手前へ**引く（本番の蓋と同じ動き。電池が出てくるほど、押せる面が増える）。"""
     front = CY - CELL_R
-    edge = min(YB + CL, CLIP_FRONT - S.CLIP_TOL)
+    edge = min(YB + BACK_CL, CLIP_FRONT - S.CLIP_TOL)
     depth = edge - front
-    return dict(well=(A1 - A0, YB + CL - Y0, TOP), top=(depth, 2 * math.sqrt(CELL_R ** 2 - (CY - edge) ** 2)), front=(S.CELL_T, front - Y0),
-                top_nominal=min(YB + CL, CLIP_FRONT) - front, top_production=LAY.clip_body()[1] - (LAY.cell()[0][1] - CELL_R))
+    return dict(well=(A1 - A0, YB + BACK_CL - Y0, TOP), top=(depth, 2 * math.sqrt(CELL_R ** 2 - (CY - edge) ** 2)), front=(S.CELL_T, front - Y0),
+                top_nominal=min(YB + BACK_CL, CLIP_FRONT) - front, top_production=LAY.clip_body()[1] - (LAY.cell()[0][1] - CELL_R))
 
 
 def numbers():
@@ -678,8 +806,10 @@ def numbers():
                 pocket=dict(center=(px, py), corner=hw, center_gap=(CY - CELL_R) - (py - POCKET_R), plate_t=(py - POCKET_R) - YF),
                 h14_wall=XPK - (104.0 + S.SCREW_PILOT_D / 2), h15_wall=(H15_NEW[0] - S.SCREW_PILOT_D / 2) - mx(XPK),
                 h15_move=H15_NEW[0] - H15_OLD[0], lip=LIP_T, window=(A0 - XLIP, ZW), hook_span=mx(XLIP - ENGAGE_MAX / 2) - (XLIP - ENGAGE_MAX / 2),
-                target=dict(face=(GRIP, TAB_TOP), top=(TAB_W + XN - (XLIP - TAB_FLARE), TAB_Y), scoop=(SCOOP, YA - Y0), travel=D_MAX * shape(YR - YF)),
-                cam=dict(ratio=CAM_R, inward=CAM_I, out=CAM_F, x0=XS0, d_max=D_MAX, footprint=footprint()),
+                target=dict(face=(GRIP, PAD_Z + RIDGE[2]), pad=(XN + TAB_W - (XLIP - TAB_FLARE), TAB_Y), ridges=(len(_ridge_pts()), RIDGE[2]),
+                            scoop=(SCOOP, YA - Y0), travel=k_point(D_MAX)[0] - k_point(0.0)[0], tilt=math.degrees(D_MAX * _at(beam()["th"], ARM_L))),
+                cam=dict(ratio=CAM_R, inward=CAM_I, out=CAM_F, start=S0, d_cam=D_CAM, d_max=D_MAX, footprint=footprint(),
+                         lock_mu=1.0 / CAM_R),
                 seat_face=TAB_FLARE * math.sqrt(2.0), lintel=lintel(), cavity_back=cavity_back, dback=DBACK, cell_access=cell_access())
 
 

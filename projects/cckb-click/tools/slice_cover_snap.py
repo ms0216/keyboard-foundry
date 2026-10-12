@@ -1,4 +1,4 @@
-"""蓋の別案 B4 の試し刷り（coupon_cover_snap_plate = B4 の枠の角・当て板・電池の代わり・蓋 3 つ）を精度優先の設定で**実際にスライスし**、
+"""蓋の別案 B5 の試し刷り（coupon_cover_snap_plate = B5 の枠の角・当て板・電池の代わり・蓋 3 つ）を精度優先の設定で**実際にスライスし**、
 G-code を設計と突き合わせる。
 
     .venv/bin/python3 projects/cckb-click/click_cover_snap.py           # 先に STL を出す
@@ -34,6 +34,7 @@ GAP_CLEAR = 0.3              # 空いているはずの所の真ん中から、�
 ON_LINE = 0.3                # 線があるはずの所から、いちばん近い線の中心まで
 MIN_LINES = 2
 FIRST_LAYER = ("20", "30")   # 1 層目の速さ [mm/s]（外周, 中）。精度優先の設定は 50・105
+SLOW = ("80", "100")         # 2 層目から上の、内の壁・詰まった中の速さ [mm/s]。精度優先の設定は 150・180（細い腕の上を速く走らない。層ごとに変える設定は無い）
 
 
 def crossings(layer, p0, p1):
@@ -86,16 +87,17 @@ def check(gcode, rc, shift=(0.0, 0.0)):
         for side, f in (("左", lambda x: x), ("右", B.mx)):
             for label, y in (("先の近く", B.YF + 5.0), ("中ほど", (B.YF + B.YR) / 2), ("付け根の近く", B.YR - 1.5)):
                 xo = B.XN - v["pre"] * B.shape(B.YR - y)             # 刷る形（腕が予圧ぶん外へ開いている）
+                tw = B.thick(B.YR - y)                                # 腕の厚さ（付け根の側 0.85 → かぎの近く 1.0）
                 a = to_plate(name, f(xo - 0.08), y, 1.4)
-                b = to_plate(name, f(xo + v["t"] + 0.08), y, 1.4)
+                b = to_plate(name, f(xo + tw + 0.08), y, 1.4)
                 k = crossings(layers[a[2]], a[:2], b[:2])
                 a1 = to_plate(name, f(xo - 0.08), y, 0.05)                # 1 層目（ベッドに着く層）でも、腕は線 2 本以上（底の縁を落としていない）
-                b1 = to_plate(name, f(xo + v["t"] + 0.08), y, 0.05)
+                b1 = to_plate(name, f(xo + tw + 0.08), y, 0.05)
                 k1 = crossings(layers[a1[2]], a1[:2], b1[:2])
                 fewest = min(fewest, k, k1)
                 if k < MIN_LINES or k1 < MIN_LINES:
                     problems.append(f"蓋 {n}・{side}の腕・{label}: 線が {k} 本・1 層目 {k1} 本（{MIN_LINES} 本以上）")
-                xm = (xo + v["t"] + B.body_edge(y)) / 2
+                xm = (xo + tw + B.body_edge(y)) / 2
                 for z in (1.4, 0.05):
                     d, _, _, zl = at(name, f(xm), y, z)
                     facts[f"蓋 {n}・{side}・{label}: 腕と胴の隙の真ん中から線まで（層 {zl}）"] = d
@@ -123,6 +125,15 @@ def check(gcode, rc, shift=(0.0, 0.0)):
         if d < GAP_CLEAR:
             problems.append(f"蓋 {n}: 帯の下（層 {zl}）のくぼみの中に線がある（{d}）")
     facts["腕を横切る線のいちばん少ない本数（中ほどの層と、1 層目）"] = fewest
+    # 腕の付け根と柱の間の隙: 1 層目は、柱の縁を余分に落としてある（0.7）→ 隙の真ん中から、線の中心まで 0.45 以上（膜にならない）
+    for n, v in sorted(B.VARIANTS.items()):
+        for side, f in (("左", lambda x: x), ("右", B.mx)):
+            y = B.YR - 2.5
+            xm = (B.XN + B.T_ROOT + B.body_edge(y) + B.GAP_L1) / 2
+            d, _, _, zl = at(f"cover{n}", f(xm), y, 0.05)
+            facts[f"蓋 {n}・{side}: 腕の付け根と柱の隙（1 層目・層 {zl}）の真ん中から線まで"] = d
+            if d < 0.45:
+                problems.append(f"蓋 {n}・{side}: 腕の付け根と柱の隙が、1 層目で狭い（{d}・0.45 以上）")
     # ベッドに着く面積: 1 層目の線の長さ × 幅を、蓋ごとに足す（G-code から。重なりを引かないので、立体の面積より少し大きい）
     z1 = SS.layer_at(layers, 0.05)
     for n in sorted(B.VARIANTS):
@@ -196,7 +207,7 @@ def draw(gcode, rc, out):
         ax.set_ylim(min(a[1], b[1]) + oy, max(a[1], b[1]) + oy)
         ax.set_aspect("equal")
         ax.set_title(f"{title}（層の上面 {zl}）。赤 = 宙を渡る線・橙 = 外周・灰 = 中", fontsize=11)
-    fig.suptitle("蓋の別案 B4 の G-code（Bambu Studio）。蓋は底が下・下が手前。枠は上面が下・上が手前", fontsize=12)
+    fig.suptitle("蓋の別案 B5 の G-code（Bambu Studio）。蓋は底が下・下が手前。枠は上面が下・上が手前", fontsize=12)
     fig.tight_layout()
     fig.savefig(out, dpi=80)
     plt.close(fig)
@@ -207,8 +218,8 @@ def main(argv):
     engine = next((a for a in argv if a in ("bambu", "orca")), "bambu")
     variant = next((a for a in argv if a in SP.S.PRINT_RECIPES), "n04")
     rc = SP.recipe(variant, SP.S, engine)
-    # **刷り方を 2 つだけ変える**（蓋がベッドから剥がれた = 利用者の 1 回目の刷り）: 1 層目を遅くする。ほかは、精度優先の設定のまま（縁取り〔brim〕は付けない）
-    for key, val in zip(("initial_layer_speed", "initial_layer_infill_speed"), FIRST_LAYER):      # 1 層目の外周 50 → 20・中 105 → 30 mm/s
+    # **刷り方を 4 つ変える**: 1 層目を遅く（B4 から）・内の壁と詰まった中を遅く（B5）。ほかは、精度優先の設定のまま（縁取り〔brim〕は付けない）
+    for key, val in zip(("initial_layer_speed", "initial_layer_infill_speed", "inner_wall_speed", "internal_solid_infill_speed"), FIRST_LAYER + SLOW):
         rc["process"][key] = [val]
         rc["overrides"][key] = [val]
     print(f"== {variant}・{engine}: {rc['preset']['name']}（{rc['machine']['name']}・{rc['filament']['name']}）")
